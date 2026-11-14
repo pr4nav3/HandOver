@@ -15,6 +15,8 @@ anyio==4.16.0
     #   httpx2
     #   starlette
     #   watchfiles
+attrs==26.1.0
+    # via phonemizer
 av==19.0.2
     # via faster-whisper
 certifi==2026.10.23
@@ -30,6 +32,8 @@ click==8.5.1
     # via
     #   huggingface-hub
     #   uvicorn
+cloudpickle==3.1.2
+    # via joblib
 colorama==0.4.6 ; sys_platform == 'win32'
     # via tqdm
 cryptography==50.0.2
@@ -38,8 +42,12 @@ ctranslate2==4.9.0
     # via faster-whisper
 distro==1.9.0
     # via google-genai
+dlinfo==2.0.0
+    # via phonemizer
 docstring-parser==0.18.0
     # via anthropic
+espeakng-loader==0.2.4
+    # via kokoro-onnx
 fastapi==0.163.0
     # via -r server/requirements.txt
 faster-whisper==1.2.1
@@ -88,12 +96,19 @@ idna==3.20
     #   requests
 jiter==0.19.0
     # via anthropic
+joblib==1.6.0
+    # via phonemizer
+kokoro-onnx==0.6.1
+    # via -r server/requirements.txt
 numpy==2.5.4
     # via
     #   ctranslate2
+    #   kokoro-onnx
     #   onnxruntime
 onnxruntime==1.32.0
-    # via faster-whisper
+    # via
+    #   faster-whisper
+    #   kokoro-onnx
 opentelemetry-api==1.45.2
     # via
     #   anthropic
@@ -102,6 +117,8 @@ packaging==26.3
     # via
     #   huggingface-hub
     #   onnxruntime
+phonemizer==3.6.0
+    # via kokoro-onnx
 pillow==13.0.0
     # via -r server/requirements.txt
 protobuf==7.36.2
@@ -160,6 +177,7 @@ typing-extensions==4.16.0
     #   httpx2
     #   huggingface-hub
     #   opentelemetry-api
+    #   phonemizer
     #   pydantic
     #   pydantic-core
     #   starlette
