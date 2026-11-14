@@ -841,6 +841,69 @@ def _audio_src() -> Path:
     return src
 
 
+def test_claude_prompts_carry_the_splitting_rules():
+    for prompt in (teach.CLAUDE_PROMPT, teach.CLAUDE_NARRATED_PROMPT):
+        low = prompt.lower()
+        assert "flipping or turning the object over is always its own step" in low
+        assert "crease-only step" in low and "check_question is exactly: manual" in low
+        assert "the first step is the setup" in low and "state at the end of that step" in low
+        assert "no filler steps" in low and "never use color" in low
+    assert "never merge two narrated actions" in teach.CLAUDE_NARRATED_PROMPT.lower()
+    assert "no audio" in teach.CLAUDE_PROMPT.lower() and "no audio" not in teach.CLAUDE_NARRATED_PROMPT.lower()
+
+
+def test_model_steps_made_contiguous_and_creases_manual():
+    def st(a, b, title, q="Is it folded?", pre=()):
+        return teach.Step(start=a, end=b, title=title, check_question=q, prerequisites=list(pre))
+
+    # the first e2e Haiku run: gaps (00:14 to 00:16, 00:22 to 00:25) and overlaps (00:41 vs 00:40)
+    ex = teach.Extraction(transcript=[], steps=[
+        st("00:00", "00:09", "Lay the sheet flat"), st("00:09", "00:14", "Fold corner to corner", pre=[1]),
+        st("00:16", "00:22", "Fold and unfold the other diagonal", pre=[2]),
+        st("00:25", "00:41", "Fold all four corners in", pre=[3]),
+        st("00:40", "00:48", "Fold in half both ways and unfold", pre=[4]),
+        st("00:48", "00:48.3", "Tiny", pre=[5]), st("00:48.3", "00:59", "Pinch the points", pre=[6]),
+    ])
+    out = teach._crease_steps_manual(teach._contiguous(ex))
+    spans = [(s.start, s.end) for s in out.steps]
+    assert spans == [("00:00", "00:09"), ("00:09", "00:16"), ("00:16", "00:25"), ("00:25", "00:40"),
+                     ("00:40", "00:48.3"), ("00:48.3", "00:59")], spans  # the 0.3 s step is dropped
+    assert out.steps[5].prerequisites == [] and out.steps[4].prerequisites == [4]
+    manual = [teach._is_manual(s.check_question) for s in out.steps]
+    assert manual == [False, False, True, False, True, False], manual
+    assert not teach._CREASE_TITLE.search("Unfold the paper") and teach._CREASE_TITLE.search("Make a crease")
+
+
+def test_merged_flip_is_split_at_the_narration():
+    seg = teach.Segment
+    ex = teach.Extraction(  # the second e2e Haiku run: the flip merged into step 4
+        transcript=[seg(start=25.5, end=28.0, text="Fold all four corners to the center."),
+                    seg(start=33.2, end=35.6, text="Now flip the whole thing over.")],
+        steps=[teach.Step(start="00:00", end="00:25", title="Lay it flat", check_question="manual", prerequisites=[]),
+               teach.Step(start="00:25", end="00:40", title="Fold all four corners into the center and flip over",
+                          check_question="Is the smooth side up?", prerequisites=[1], ref_time="00:39",
+                          common_mistake="Flip it over first."),
+               teach.Step(start="00:40", end="00:48", title="Fold the new corners in", check_question="Q?",
+                          prerequisites=[2])])
+    out = teach._split_flips(ex).steps
+    assert [(s.start, s.end, s.title) for s in out] == [
+        ("00:00", "00:25", "Lay it flat"), ("00:25", "00:33.2", "Fold all four corners into the center"),
+        ("00:33.2", "00:40", "Flip it over"), ("00:40", "00:48", "Fold the new corners in")]
+    assert [s.prerequisites for s in out] == [[], [1], [2], [3]]
+    assert out[1].check_question == "manual" and out[1].common_mistake == "" and out[1].ref_time == ""
+    assert (out[2].check_question, out[2].ref_time, out[2].common_mistake) == \
+        ("Is the smooth side up?", "00:39", "Flip it over first.")
+    # an existing flip step, or a flip line near the step edges, is left alone
+    alone = teach.Extraction(transcript=[seg(start=40.2, end=42.0, text="Flip it over.")], steps=[
+        teach.Step(start="00:40", end="00:48", title="Flip it over", check_question="Q?", prerequisites=[])])
+    assert teach._split_flips(alone) == alone
+    late = teach.Extraction(transcript=[seg(start=31.7, end=33.0, text="Flip the whole thing over.")], steps=[
+        teach.Step(start="00:25", end="00:34", title="Fold the corners in", check_question="Q?", prerequisites=[]),
+        teach.Step(start="00:34", end="00:40", title="Flip the whole thing over", check_question="Q?",
+                   prerequisites=[1])])
+    assert teach._split_flips(late) == late  # no second flip step when the model's flip starts late
+
+
 def test_transcript_reaches_claude_and_captions():
     lines = []
     with _no_env_file(), _env(**{**NO_KEYS, "ANTHROPIC_API_KEY": "sk-ant-fake", "HANDOVER_TRANSCRIBE": None}), \

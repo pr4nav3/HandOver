@@ -422,6 +422,83 @@ def _first_step_manual(ex: Extraction) -> Extraction:
     return ex.model_copy(update={"steps": [first, *ex.steps[1:]]})
 
 
+def _contiguous(ex: Extraction) -> Extraction:
+    """New model extractions only: each step ends where the next one starts (the prompt asks for this, but a
+    model may leave gaps or overlaps). Starts are kept because they follow the narration onsets; a step left
+    shorter than 0.5 s is dropped and its prerequisites renumbered. The last step keeps its own end."""
+    steps = list(ex.steps)
+    for _ in range(len(steps) + 1):
+        changed = False
+        for i in range(len(steps) - 1):
+            if steps[i].end != steps[i + 1].start:
+                steps[i] = steps[i].model_copy(update={"end": steps[i + 1].start})
+                changed = True
+        keep = [i for i, st in enumerate(steps) if parse_time(st.end) - parse_time(st.start) >= 0.5]
+        if len(keep) < len(steps):
+            renum = {old + 1: new + 1 for new, old in enumerate(keep)}
+            steps = [steps[i].model_copy(update={"prerequisites": sorted(
+                {renum[q] for q in steps[i].prerequisites if q in renum and renum[q] < new + 1})})
+                for new, i in enumerate(keep)]
+            changed = True
+        if not changed:
+            break
+    if not steps:
+        raise RuntimeError("extraction produced no usable steps")
+    return ex.model_copy(update={"steps": steps})
+
+
+_FLIP_WORDS = re.compile(r"\b(flip|flips|flipping|turn (it|the \w+|everything) over|turn over)\b", re.IGNORECASE)
+_FLIP_TAIL = re.compile(r"\s*(,\s*)?(and|then)?\s*(flip|turn)\b.*$", re.IGNORECASE)
+
+
+def _split_flips(ex: Extraction) -> Extraction:
+    """New model extractions only: flipping the object over is always its own step. When a step's narration has a
+    flip line starting more than 1 s inside the step (the model merged the flip into the action before it), the
+    step is split at that line. The flip part keeps the step's end, question, ref_time and common_mistake (they
+    describe the state after the flip); the part before has no question of its own, so it becomes manual."""
+    groups: list[list[Step]] = []  # the new steps each old step became
+    is_flip = [bool(_FLIP_WORDS.match(st.title.strip())) for st in ex.steps]
+    for i, st in enumerate(ex.steps):
+        a, b = parse_time(st.start), parse_time(st.end)
+        line = next((seg for seg in ex.transcript
+                     if a + 1.0 <= seg.start <= b - 1.0 and _FLIP_WORDS.search(seg.text)), None)
+        # skip when this step is the flip, or the next one already is (it only starts a little late)
+        if line is None or is_flip[i] or (i + 1 < len(is_flip) and is_flip[i + 1]):
+            groups.append([st])
+            continue
+        cut_at = fmt_mmss(quantize(line.start))
+        before = _FLIP_TAIL.sub("", st.title).strip(" ,") or st.title
+        groups.append([st.model_copy(update={"end": cut_at, "title": before, "check_question": "manual",
+                                             "ref_time": "", "common_mistake": ""}),
+                       st.model_copy(update={"start": cut_at, "title": "Flip it over"})])
+    if all(len(g) == 1 for g in groups):
+        return ex
+    first_new, last_new, n = {}, {}, 0  # old step number -> its first and last new step number
+    for old, group in enumerate(groups, start=1):
+        first_new[old], last_new[old] = n + 1, n + len(group)
+        n += len(group)
+    steps: list[Step] = []
+    for old, group in enumerate(groups, start=1):
+        for k, st in enumerate(group):
+            if k:  # the flip part follows the part before it
+                pre = [first_new[old]]
+            else:  # finishing an old step means finishing all of its parts
+                pre = sorted({last_new[q] for q in st.prerequisites if q in last_new and q < old})
+            steps.append(st.model_copy(update={"prerequisites": pre}))
+    return ex.model_copy(update={"steps": steps})
+
+
+_CREASE_TITLE = re.compile(r"\bcrease|\bfold\b.*\bunfold|\bunfold\b.*\bfold\b", re.IGNORECASE)
+
+
+def _crease_steps_manual(ex: Extraction) -> Extraction:
+    """New model extractions only: a fold-and-unfold or crease step leaves the object looking almost unchanged,
+    so a camera check cannot judge it. The prompt says so; this enforces it from the step title."""
+    steps = [st.model_copy(update={"check_question": "manual"}) if _CREASE_TITLE.search(st.title) else st
+             for st in ex.steps]
+    return ex.model_copy(update={"steps": steps})
+
+
 def make_proxy(norm: Path, dst: Path) -> None:
     """A small copy for the model: 480 p, 10 fps, mono 48 kbps audio. Same timeline as norm.mp4."""
     _run([_bin("ffmpeg"), "-y", "-i", str(norm), "-vf", "scale=-2:480", "-r", "10",
@@ -528,6 +605,18 @@ def mock_extraction(duration: float, steps_json: Path | None) -> Extraction:
 CLAUDE_MAX_FRAMES = 120
 CLAUDE_MAX_TOKENS = 8000
 
+# Splitting rules both Claude prompts share. Written after an end-to-end test where Haiku merged the flip into the
+# fold before it and Sonnet merged the setup with the first fold.
+_CLAUDE_STEP_RULES = """- Flipping or turning the object over is always its own step, never part of a fold or another action.
+- A fold-and-unfold or crease-only step, where the object looks almost the same afterwards, is manual: its
+  check_question is exactly: manual
+- The first step is the setup: the material laid out in its starting state, before the first change.
+- Each step's title describes the action performed inside that step's own start to end range, not the next one.
+- Each check_question asks about the state at the END of that step, after its action is complete.
+- Return only steps you can see or hear. No filler steps such as "check that it is finished" or "admire the
+  result".
+"""
+
 CLAUDE_PROMPT = """These are frames from one video of an expert doing a hands-on task, about one per second.
 The text before each image is its timestamp in the video. There is no audio: judge only what you see.
 Split the video into the ordered steps a beginner would follow to repeat the task.
@@ -539,8 +628,7 @@ How to find step boundaries:
 - Prefer 3 to 12 steps. One step is one physical action with a clear result. Do not merge unrelated actions
   and do not split one action into tiny pieces.
 - Only use timestamps that appear in the frame labels, or times between them.
-
-""" + PROMPT[PROMPT.index("For each step give:"):PROMPT.index("First give the transcript")].replace(
+""" + _CLAUDE_STEP_RULES + "\n" + PROMPT[PROMPT.index("For each step give:"):PROMPT.index("First give the transcript")].replace(
     "the narration and video give", "the video gives").replace(
     "the expert actually says or clearly shows", "the expert clearly shows").replace(
     "the expert names or uses", "the expert uses")
@@ -555,13 +643,14 @@ How to find step boundaries:
 - The narration is the primary boundary signal; the frames confirm it. A new step starts when the expert starts
   describing a new action ("now fold...", "next...", "then take..."). Use the frames to confirm the action
   really changes there and to place the boundary at the moment the hands start the new action.
+- Each separately narrated instruction is its own step. Never merge two narrated actions into one step, even
+  when they are short or close together.
 - Steps are in order, contiguous and cover the whole task: each step's end equals the next step's start.
   The first step starts at the beginning of the task and the last step ends when the task is finished.
 - Prefer 3 to 12 steps. One step is one physical action with a clear result. Do not merge unrelated actions
   and do not split one action into tiny pieces.
 - Only use timestamps from the frame labels or the transcript, or times between them.
-
-""" + PROMPT[PROMPT.index("For each step give:"):PROMPT.index("First give the transcript")]
+""" + _CLAUDE_STEP_RULES + "\n" + PROMPT[PROMPT.index("For each step give:"):PROMPT.index("First give the transcript")]
 
 
 # ---------------------------------------------------------------- 2b. local transcription (faster-whisper)
@@ -1233,7 +1322,8 @@ def build(srcs: list[Path], lesson_id: str, title: str, progress: Progress = noo
         else:
             progress("extracting", f"Finding steps with {_model()}")
             extraction = _gemini_transcript_mode(extract(norm, progress), norm, progress)
-        extraction = _first_step_manual(_clean_extraction(extraction, duration))
+        extraction = _clean_extraction(extraction, duration)
+        extraction = _first_step_manual(_crease_steps_manual(_contiguous(_split_flips(extraction))))
 
     progress("cutting", f"Cutting {len(extraction.steps)} step clips")
     lesson = cut(lesson_dir, extraction, lesson_id, title, progress=progress)
