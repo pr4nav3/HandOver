@@ -11,6 +11,9 @@ enum CameraKind: String, CaseIterable, Identifiable {
     var id: String { rawValue }
     /// `source` value in the hello message.
     var hubSource: String { self == .phone ? "phone" : "glasses" }
+
+    /// The phone camera starts at once; the glasses claim the hello only with their first frame.
+    var claimsAtStart: Bool { self == .phone }
 }
 
 /// Owns the hub client and the active FrameSource; switches to the phone camera on glasses fallback.
@@ -48,7 +51,7 @@ final class SessionController: ObservableObject {
     func selectionChanged(_ kind: CameraKind) {
         guard running, kind != liveKind else { return }
         note = nil
-        hub.setSource(kind.hubSource)
+        if kind.claimsAtStart { hub.setSource(kind.hubSource) }
         startSource(kind)
     }
 
@@ -75,7 +78,7 @@ final class SessionController: ObservableObject {
     private func start(host: String, kind: CameraKind) {
         self.host = host
         cameraStatus = nil
-        hub.setSource(kind.hubSource)
+        hub.setSource(CameraKind.phone.hubSource)
         hub.connect(to: host)
         startSource(kind)
         running = true
@@ -99,13 +102,13 @@ final class SessionController: ObservableObject {
         switch kind {
         case .phone:
             let phone = PhoneCameraSource(busy: hub.sendBusy)
-            phone.onFrame = SessionController.makeFrameHandler(hub: hub)
+            phone.onFrame = SessionController.makeFrameHandler(hub: hub, source: kind.hubSource)
             phone.onError = SessionController.makeMessageHandler(controller: self, isFallback: false)
             source = phone
             phone.start()
         case .glasses:
             let glasses = GlassesCameraSource(busy: hub.sendBusy)
-            glasses.onFrame = SessionController.makeFrameHandler(hub: hub)
+            glasses.onFrame = SessionController.makeFrameHandler(hub: hub, source: kind.hubSource)
             glasses.onStatus = SessionController.makeMessageHandler(controller: self, isFallback: false)
             glasses.onFallback = SessionController.makeMessageHandler(controller: self, isFallback: true)
             source = glasses
@@ -137,11 +140,11 @@ final class SessionController: ObservableObject {
     // Handlers are built in nonisolated functions so the closures are not main-actor
     // isolated; sources call them from their own queues and we hop to the main actor here.
 
-    nonisolated private static func makeFrameHandler(hub: HubClient) -> (Data) -> Void {
+    nonisolated private static func makeFrameHandler(hub: HubClient, source: String) -> (Data) -> Void {
         return { [weak hub] data in
             guard let hub = hub else { return }
             Task { @MainActor in
-                hub.send(frame: data)
+                hub.send(frame: data, source: source)
             }
         }
     }
@@ -245,11 +248,14 @@ private struct HubPanel: View {
                         Circle().fill(Color.red).frame(width: 10, height: 10)
                         Text("REC").font(.caption.bold()).foregroundStyle(.red)
                     }
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Sending frames to the hub")
                 }
                 Spacer()
                 Text(hub.active ? "Active" : "Idle")
                     .font(.subheadline.bold())
                     .foregroundStyle(hub.active ? Color.green : Color.secondary)
+                    .accessibilityLabel(hub.active ? "This camera is active" : "This camera is idle")
             }
 
             if running {
@@ -263,7 +269,7 @@ private struct HubPanel: View {
                     .foregroundStyle(.secondary)
             }
             if let note = note {
-                Text(note)
+                Label(note, systemImage: "info.circle")
                     .font(.footnote)
                     .foregroundStyle(.orange)
             }
@@ -275,22 +281,28 @@ private struct HubPanel: View {
                     Text(title)
                         .font(.title3)
                 }
-                if hub.hasState && !hub.status.isEmpty {
-                    Text(hub.status.capitalized)
+                if let words = statusWords {
+                    Text(words)
                         .font(.headline)
                         .foregroundStyle(statusColor)
                 }
             }
+            .accessibilityElement(children: .combine)
 
             if let mistake = hub.mistakeMessage, !mistake.isEmpty {
-                Text(mistake)
+                Label(mistake, systemImage: "exclamationmark.triangle.fill")
                     .font(.title3.bold())
-                    .foregroundStyle(Color(red: 1.0, green: 0.7, blue: 0.0))
+                    .foregroundStyle(Color(red: 1.0, green: 0.7, blue: 0.25))
+                    .accessibilityLabel("Mistake: \(mistake)")
             }
             if let error = hub.errorMessage, !error.isEmpty {
-                Text(error)
-                    .font(.footnote)
+                Label(error, systemImage: "exclamationmark.circle.fill")
+                    .font(.callout)
                     .foregroundStyle(.red)
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(RoundedRectangle(cornerRadius: 12).fill(Color.red.opacity(0.12)))
+                    .accessibilityLabel("Error: \(error)")
             }
 
             HStack(spacing: 16) {
@@ -302,6 +314,7 @@ private struct HubPanel: View {
                         .frame(maxWidth: .infinity, minHeight: 80)
                 }
                 .buttonStyle(.bordered)
+                .accessibilityHint("Goes back one step")
 
                 Button {
                     hub.next()
@@ -311,6 +324,7 @@ private struct HubPanel: View {
                         .frame(maxWidth: .infinity, minHeight: 80)
                 }
                 .buttonStyle(.borderedProminent)
+                .accessibilityHint("Marks this step done and goes to the next one")
             }
             .disabled(!hub.canNavigate)
 
@@ -332,11 +346,21 @@ private struct HubPanel: View {
         return "Step \(hub.step + 1) of \(hub.total)"
     }
 
+    /// The hub's status in words, as the web app shows it. Checking reads as Watching; nothing on Done
+    /// (the step line already says Done).
+    private var statusWords: String? {
+        guard hub.hasState, hub.total > 0 else { return nil }
+        switch hub.status {
+        case "watching", "checking": return "Watching"
+        case "verified": return "Verified"
+        case "manual": return "Manual step"
+        default: return nil
+        }
+    }
+
     private var statusColor: Color {
         switch hub.status {
-        case "verified", "done": return .green
-        case "checking": return .blue
-        case "manual": return .purple
+        case "verified": return .green
         default: return .secondary
         }
     }
@@ -351,7 +375,7 @@ private struct HubPanel: View {
             label = "Connected"
             color = .green
         } else if hub.connecting {
-            label = "Connecting..."
+            label = "Connecting"
             color = .orange
         } else {
             label = "Offline"
@@ -363,6 +387,7 @@ private struct HubPanel: View {
             .padding(.vertical, 4)
             .background(Capsule().fill(color.opacity(0.2)))
             .foregroundStyle(color)
+            .accessibilityLabel("Hub: \(label)")
     }
 }
 
