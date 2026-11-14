@@ -1,475 +1,105 @@
-# HandOver build plan (Saturday 2026-11-14 afternoon to Sunday noon)
+# HandOver build plan, lean (Saturday 2026-11-14 afternoon to Sunday noon)
 
-Owner: lead. Read-only for both developers. The wire contract is [CONTRACT_V2.md](CONTRACT_V2.md). The architecture is [research/architecture.md](research/architecture.md). Where they disagree with older docs, those two win. [ARCHITECTURE.md](ARCHITECTURE.md) is an older draft and is superseded. The full idea list with a status for each idea is [IDEAS.md](IDEAS.md). Review fixes applied to this plan are listed in [REVIEW_FIXES.md](REVIEW_FIXES.md).
+Owner: lead. This replaces the earlier 7,000-word plan. Scope decision: lean MVP wins. Android, Windows, desktop packaging, CI builds, QR pairing, spectator view, export/import and the every-OS demo beat are out (see docs/SCOPE.md). The wire contract is [CONTRACT.md](CONTRACT.md); items in it that only served cut features are optional and nobody has to implement them. Working rules (folder ownership, git) are in TEAM_RULES.md at the repo root. 
 
-Hacking ends **12:00 PM Sunday 2026-11-15**. Judging is **1:00 to 2:30 PM**. Every hour figure below is an estimate for one developer driving an AI coding agent ("est. h"). None of them is measured.
+Hacking ends **12:00 PM Sunday**. Judging **1:00 to 2:30 PM**. Hours are estimates, not measurements.
 
-**PLAN.md wins on times and drop order.** If a developer prompt and this plan disagree on a time, an id or a drop order, this plan is right.
+## 1. What we are building
+An expert does the task once on Meta glasses while narrating. HandOver cuts that take into steps and plays the expert's own clip, captioned, for each step. It moves on only when the learner's camera shows the step is done, or when the learner presses Next.
 
-## Lead decisions applied here
+Hook: "Experts teach the same task over and over. With HandOver they do it once, and the lesson watches the next person." Then the judge skips the flip and the screen says so.
 
-| Topic | Decision | Why |
-|---|---|---|
-| Glasses go/no-go | **8:00 PM Saturday** | Lead call. The 9 PM in research/scope.md is dropped |
-| Android app | Owned by **Developer 2** (id W11, was M13) | Lead call: Android moved to Developer 2 to balance hours (Dev 1 was about 23 est. h, Dev 2 about 15). Matches the Dev 2 row in architecture.md section 13 |
-| Android gate | At Sync 5, WATCH shows `camera.platform: "android"` when a real Android phone exists; with no phone, the APK built in CI is the evidence, labeled "APK built in CI" (emulator runs labeled "emulator") | No phone may exist; never claim a live run that did not happen |
-| Feature freeze | **8:00 AM Sunday** | Lead call. SCOPE.md's 1:30 AM is too early for two people |
-| Export and import (was M10) | SHOULD (S-P), first in line for Dev 1 after MUST. Contract priority NEW P1 | Dev 1's MUST list comes first. Until it lands, the Windows CI smoke test uses the committed `lessons/demo-v1` instead of an imported package |
-| Replay "hotkey" | A script (`scripts/demo_replay.sh`, Dev 1) plus a "Recording" banner on screen (Dev 2) | A browser key cannot start a process on the hub. One terminal command is as fast in practice |
-| Competitors named on stage | Retrocausal and Dozuki only (pages fetched in market.md) | DeepSight is search-only in market.md. Both scope docs forbid unsourced names |
-| Gemini latency gate | Pass at median 2.0 s or less. 2.0 to 2.5 s: wider motion gate. Over 2.5 s: one confident yes plus local agreement | Merges SCOPE.md and research/scope.md |
-| mDNS | STRETCH (contract NEW P2) | Both scope docs cut it. QR plus a typed address cover every case |
-| Offline test | Internet down, LAN up: the human turns off cellular data on the hotspot phone. Without a human, restart the hub with an invalid key (reason `errors`) and with no key (reason `no_key`). Supersedes "Wi-Fi off" in SCOPE.md section 5 | Turning Wi-Fi off also cuts the phone camera from the hub, so it tests nothing |
-| GitHub repo | `https://github.com/pr4nav3/MetaGlasses-ExpertKnowlegeTransfer` exists (private today, owned by teammate pr4nav3; Soham109 has write). The humans decide public vs private | Private: free Actions minutes are limited and macOS jobs count 10x |
-| CI triggers | `web` and `hub-test` (ubuntu, cheap) run on every push. `hub-mac`, `ios`, `hub-win` and `android` run only on pushes to `main`. Every job also runs on `workflow_dispatch`, so a developer can run their branch by hand, sparingly: `gh workflow run build.yml --ref dev2/clients`. `concurrency` with `cancel-in-progress: true` | Keeps macOS and Windows minutes for runs that matter |
-| Machines | Two Macs by default, one normal clone each, no worktrees | Simplest setup that two agents cannot break for each other |
+Never say "first", "only", a training-time saving, or a user count. Say "one take" only if the bike lesson really was one take. Name Retrocausal and Dozuki only (sourced in research/market.md).
 
-## 1. Thesis, hook, differentiation
-
-- **Thesis:** an expert does the task once on camera while narrating. HandOver cuts that take into steps and plays the expert's own clip for each step. It moves on only when the learner's camera shows the step is done.
-- **Hook:** "Experts teach the same task over and over. With HandOver they do it once, and the lesson watches the next person." Then the judge skips the flip, and the screen says so.
-- **Honest differentiation:**
-  - Dozuki turns video into documents; it does not play the expert's clip gated by a live camera check.
-  - Retrocausal tracks steps live, but needs a fixed station camera, captured cycles and a labeling pass.
-  - HandOver: one narrated take, no labeling, no headset required, any phone with any laptop on the same network.
-- **Never say:** "first", "only", any training-time saving, any user count. Say "one take" only if the bike lesson really was one take.
-
-## 2. Red team: top attacks and our answer
-
-| # | Attack | Answer in this plan |
-|---|---|---|
-| S1 | Too many platforms for 2 devs | One hub, one web UI. Native apps are thin camera clients on one contract. Claim only pairs we tested; the matrix in section 7 labels each pair live, CI, emulator or untested |
-| S2 | Venue Wi-Fi blocks devices from reaching each other | Our own phone hotspot plus a backup hotspot. Camera status shown big. Replay one command away. cloudflared tunnel as last resort for browser capture |
-| S3 | iOS blocks ws:// and local network | Plist keys `NSAllowsLocalNetworking`, `NSLocalNetworkUsageDescription`, `NSBonjourServices`; idle timer off; glasses gate at 8 PM; pitch "works with any phone, glasses optional" |
-| S4 | Gemini limits, outage, latency | Motion gate, 3 s timeout, circuit breaker, local OpenCV check with an "Offline check" badge, latency on screen, separate rehearsal and demo projects |
-| S5 | Check passes look fake or are wrong | Step 1 manual. Reference = stillest hands-free frame in the last 15% of the clip. Questions by shape and seam count, not color. Planted flip rehearsed 20 times, need 18 |
-| S6 | "This is a video player with a timer" | `reason` in the badge, the mistake banner that names the missed step, the bike lesson made from one take shown next to its lesson.json |
-| S7 | Judge too fast or too slow | Jump ahead (confirmed by one check of the next step). Next always works. Chest or stand mount over glasses for judges |
-| S8 | Loud hall breaks voice | Captions are primary. Voice "next" off by default. Next button and keyboard always work |
-| S9 | Hall lighting | Desk lamp, black foam board, matte duo-color paper. 8 AM rehearsal under venue light |
-| S10 | Privacy | "The hub never saves your camera frames. Each check sends one frame to Gemini's API under Google's free-tier terms." A test asserts learn frames never touch disk (M15). Recording dot on every camera client |
-| S11 | Small technical holes (ffmpeg on Windows, model ids, one learner per hub, teaching live) | ffmpeg bundled and looked up by path rules; model ids benchmarked at 6 PM; never claim multi-learner; never teach live over venue Wi-Fi |
+## 2. What already exists (keep, do not rebuild)
+- `server/main.py` hub: REST for lessons and teach jobs, `/ws/camera` (JPEG in), `/ws/ui` (state, advance), static lesson files, `/capture` page, http 8000 and https 8443 with certs.
+- `server/teach.py`: normalize, Gemini extraction, cut clips, captions, frames. `server/check.py`: Gemini two-image check with mock mode. `server/replay.py`: feed an MP4 into `/ws/camera`.
+- `web/`: Learn and Teach screens, top bar, chime, voice, UI socket hook.
+- `lessons/demo-v1`, `scripts/certs.sh`, `scripts/run_server.sh`, `scripts/make_demo_lesson.sh`, tests `server/test_server.py`, `server/test_check.py`.
 
 ## 3. Features
 
-Platforms key: Hub = Mac and Windows hub; Web = every browser; iOS; Android; CI.
+### MUST (the demo fails without these)
+| ID | Feature | Est. h | Where |
+|---|---|---|---|
+| M1 | Real Gemini check: confirm model ids, `python -m server.check --time` 20 calls on the hotspot, write down latency and limits. Gate at 6 PM | 0.5 | server |
+| M5 | Motion gate: call Gemini only when the frame is still and changed since the last check, heartbeat every 6 s; latency in `last_check` | 1 | server |
+| M6 | Breaker: after 3 Gemini errors or any 429, checks off for 30 s and the badge says "Checks off, use Next"; `check_offline` in state | 1 | server, web |
+| M8 | Clean reference frames (stillest hands-free frame in the last 15% of each clip); step 1 manual; check questions by shape and seam count, not color | 1 | server |
+| M14 | Two real lessons cut from takes recorded this afternoon and evening (fortune teller, bike front wheel) and committed; a clean fold recording and a skipped-flip recording filed for replay | 1 | lessons |
+| M15 | Privacy backed by code: a test asserts learn frames never touch disk | 0.25 | server |
+| W1 | Web served by the hub at `http://<ip>:8000/` (relative URLs) so the demo runs without Vite | 1 | web |
+| W4 | `capture.html`: recording dot, reconnect, idle notice | 0.75 | capture |
+| W5 | Honest live states: camera lost (last frame dimmed), "Checks off" badge, latency in small text, "Recording" banner when replay is the source | 1.5 | web |
+| W8 | iPhone app: SwiftUI, 1 fps JPEG to `/ws/camera`, typed hub address, step title and Next button, screen awake, local-networking plist keys. W8a phone camera first; W8b glasses source via DAT 1.0.1 with auto fallback to the phone camera, time-boxed, 8 PM gate | 5 + 3 | ios |
 
-### MUST, Developer 1 (about 19 est. h)
-
-| ID | Feature | Est. h | Platforms | Attack |
-|---|---|---|---|---|
-| M1 | Real Gemini check: confirm model ids, `python -m server.check --time` 20 calls on the hotspot, read project limits | 0.5 | Hub | S4, S11 |
-| M2 | Frozen-app fixes: `server/paths.py` (data dir, ffmpeg and ffprobe lookup, web dist), serve the web dist at `/` with explicit MIME types, recut keeps unknown fields, `start_hub()` and `stop_hub()`, `server/tests` runner, new deps in the lock, early PyInstaller Tk probe | 1.5 | Hub | S11 |
-| M3 | `/api/info`, `/api/qr`, `/join` route, `hub.json`, LAN address order, plus `scripts/smoke.py` (contract check, and a `watch` mode that prints every `state`, `advance`, `mistake` and can press Next on manual steps) | 1.5 | Hub | S1, S2 |
-| M4 | Camera `hello` and `welcome` (repeat hello updates the camera), active camera rule, `state.camera` and `state.cameras`, camera socket receives `state` and accepts `next` and `back`, `/ws/ui?frames=0` | 1.5 | Hub | S1 |
-| M5 | Motion gate with 6 s heartbeat; latency already in `last_check` | 1 | Hub | S4, S7 |
-| M6 | Circuit breaker, `HANDOVER_CHECK` modes, `check_source` and `check_offline` state, `last_check.reason` | 1 | Hub | S4, S6 |
-| M7 | Local OpenCV check (`server/local_check.py`), veto rule while Gemini is up | 2.5 | Hub | S2, S4 |
-| M8 | Clean reference frames (`ref_time`, stillest frame in the last 15%), step 1 manual for new extractions, questions by shape and seams | 1 | Hub | S5 |
-| M9 | Mistake check: behind and ahead, confirm before jumping, `common_mistake`, `dismiss_mistake`, mock test hook `HANDOVER_MOCK_MISTAKE` | 2.5 | Hub | S5, S6, S7 |
-| M11 | Launcher with Tk window (name, URL, QR, Open, Quit), `--headless`, PyInstaller onedir Mac `.app` with bundled ffmpeg and its license, `.icns` and `.ico` from Dev 2's icon | 2.5 | Mac | S11 |
-| M12 | CI: minimal `.github/workflows/build.yml` (web, android, ios) before Sync 2, then the full set (web, hub-test, hub-mac, hub-win, android, ios), Windows `.exe` built and smoke tested headless | 2.5 | CI, Windows | S1, S11 |
-| M14 | Two real lessons cut (fortune teller, bike), two replay recordings filed, `scripts/demo_replay.sh` | 1 | Hub | S2, S5, S11 |
-| M15 | Privacy backed by code: a test asserts learn frames never touch disk | 0.25 | Hub | S10 |
-
-Over capacity by design; the drop orders are the plan. **Drop order if behind at midnight:** M7 shrinks to "breaker shows Checks off, use Next"; then hub-win stays "build only"; then S-P waits until after Sync 7.
-
-### MUST, Developer 2 (about 20 est. h)
-
-| ID | Feature | Est. h | Platforms | Attack |
-|---|---|---|---|---|
-| W1 | Web works when served by the hub at `http://<ip>:8000/` (relative URLs, no Vite proxy needed); `web/mock/mock-server.mjs` mirrors CONTRACT_V2 | 1 | Web | S1 |
-| W2 | Connect panel: QR from `/api/qr`, address in text, "Wrong network?" picker over `urls.lan`, "{state.camera.name} connected" (else "Camera connected") in the top bar | 1.5 | Web | S1, S2 |
-| W3 | `server/static/join.html`: a minimal self-contained page by Sync 1 (W3a), then "Open in HandOver app" and, when HTTPS exists, "Use this browser" | 0.5 | Web | S1 |
-| W4 | `capture.html`: `hello` with a name from the user agent, recording dot, idle notice on `camera_status`, no reconnect on close code 4000 | 0.75 | Web | S2, S10 |
-| W5 | Honest live states: camera lost (last frame dimmed), "Offline check" badge, check source and latency in small text, "Recording" banner when `camera.source == "file"`, `reason` shown at confidence 0.7 or more, privacy line | 1.5 | Web | S2, S4, S6, S10 |
-| W6 | Mistake banner: amber, spoken with `speechSynthesis` on `#/learn` only; behind shows "Show step {looks_like + 1}" (goto) and "I'm fine" (`dismiss_mistake`); ahead shows "You're ahead." and "OK" and stays 4 s | 1.5 | Web | S5, S6, S7 |
-| W7 | Spectator view: read-only mirror of the learn screen on a phone browser; clips muted and `playsinline` with "Tap for sound"; never speaks | 1 | Web | S1 |
-| W8 | iPhone app (W8a: skeleton streaming plain JPEGs; W8b: complete): SwiftUI, xcodegen, AVCapture 1 fps JPEG, `hello`, step title, Next and Back, haptics (verified, mistake), screen awake, `handover://connect` and typed address, plist keys, `apps/ios/ci.sh` | 5 | iOS | S1, S3 |
-| W9 | App icon in `assets/icon/`: SVG plus a 1024 PNG (Dev 1 makes `.icns` and `.ico`), iOS AppIcon, Android adaptive icon | 0.5 | All | |
-| W10 | Submission: `docs/TESTED.md` (matrix results), `docs/DEVPOST.md`, one slide with the tested matrix, real screenshots | 2 | | S1 |
-| W11 | Android app (was M13): Kotlin, CameraX 1 fps JPEG over OkHttp, `hello`, step title, Next and Back, haptics, `handover://connect` and typed address, cleartext config, `apps/android/ci.sh` | 4 | Android | S1 |
-| W12 | Learn polish: "Up next" preview in the empty right-column band; teach thumbnails cache-busted by `rev` (or a local counter after recutting a lesson that is not active) | 1 | Web | S6 |
-
-**Dev 2 drop order if behind at midnight:** (1) W11 becomes "APK built in CI, emulator only", labeled; (2) W12 waits; (3) W7 reuses the learn layout read-only; (4) W9 uses a plain placeholder mark. SHOULD items (S-Q, S-D and the rest) start only after W1 to W12 pass; if S-D has started, it shows counts only.
-
-### SHOULD (only after every MUST passes its gate)
-
-| ID | Feature | Owner | Est. h | Platforms |
-|---|---|---|---|---|
-| S-G | Ray-Ban Meta source in the iPhone app (DAT 1.0.1), auto fallback to the phone camera. **Time-boxed 6:30 to 8:00 PM, only if Sync 2 passed; 8 PM gate decides** | Dev 2 | 3 | iOS |
-| S-D | Done screen: your time vs the expert's per step, steps checked by camera, mistakes caught, all from real events | Dev 2 | 2 | Web |
-| S-P | `.handover` export and import endpoints, Windows CI smoke imports a Mac-made package | Dev 1 | 1.5 | Hub, CI |
-| S-PB | Export and import buttons in the lesson list | Dev 2 | 0.5 | Web |
-| S-T | Check self-test at teach time (own frame yes, previous frame no), step field `self_test`, green or amber per step | Dev 1 (1.5), Dev 2 badge (0.5) | 2 | Hub, Web |
-| S-A | Keyboard (Space, arrows, R, C, F), `aria-live` step announcements, reduced motion, caption size | Dev 2 | 1.5 | Web |
-| S-W | "Why" (narration around the step) and slow replay | Dev 2 | 1 | Web |
-| S-F | Target frame toggle and confidence ring | Dev 2 | 1 | Web |
-| S-K | `PUT /api/settings` (Gemini key) and a key field in the web app | Dev 1 (0.5), Dev 2 (1) | 1.5 | Hub, Web |
-| S-S | Safety warnings and tools list from the narration (bike), top-level `safety` and `tools` | Dev 1 (1), Dev 2 (1) | 2 | Hub, Web |
-| S-Q | In-app QR scanner: iOS (1 h) and Android (1 h) | Dev 2 | 2 | iOS, Android |
-| S-I | `.dmg` (Dev 1, 0.5 h) and Inno Setup installer with firewall rule (Dev 1, 1 h) | Dev 1 | 1.5 | Mac, Windows |
+### SHOULD (in this order, only after the live fold works end to end at 6:30 PM)
+| ID | Feature | Est. h | Where |
+|---|---|---|---|
+| M9 + W6 | The catch: after 5 s of settled "no", compare live vs refs k-1, k, k+1; amber banner and voice "Still step 4: flip it over"; matching a later step says "You're ahead" | 2.5 + 1.5 | server, web |
+| S-D | Done screen: your time vs the expert's per step, camera-checked steps, mistakes caught, from real events | 2 | web |
+| DB | Databricks: `server/databricks.py` batches events (run, step, check result, advance) into Unity Catalog tables; clips to a Volume; one AI/BI dashboard; one Genie question. Warm the warehouse before judging | 4 | server, Databricks |
+| S-T | Check self-test at teach time: each question vs its own frame (yes) and the previous frame (no); amber steps suggested manual | 2 | server |
+| S-S | Safety and tools list from narration (bike) | 2 | server, web |
 
 ### STRETCH
+Review editor (rename, drag boundaries). Printable one-page guide. Translated captions. Hand ghost.
 
-| Feature | Owner | Est. h |
-|---|---|---|
-| Glasses source in the Android app (needs a real Android phone and the glasses) | Dev 2 | 4 |
-| Filmstrip of the learner's verified frames on the Done screen | Dev 2 | 1.5 |
-| Translated caption tracks (hub job plus picker) | Dev 1 (2), Dev 2 (1) | 3 |
-| Review editor: rename and drag boundaries | Dev 2 | 5 |
-| `/record` page and multi-file teach upload | Dev 2 (1.5), Dev 1 (0.5) | 2 |
-| Printable one-page guide | Dev 2 | 2 |
-| mDNS advertise and browse | Dev 1 hub, Dev 2 iOS and Android | 2.5 |
-| Playwright on windows-latest loading the hub and playing a clip | Dev 1 | 1 |
+### CUT (decided by the founder; do not build, do not claim)
+Android app, Windows exe, PyInstaller Mac app, installers, GitHub Actions CI, QR pairing and `/join`, spectator view, `.handover` export/import, local OpenCV offline checker, app icons, interoperability matrix, `docs/TESTED.md`, mDNS, multiple cameras arbitration beyond "newest camera wins", Gemini Live API, accounts, cloud deploy, gemini-3.1-pro-preview, voice "next" on by default (stays built, off).
 
-### CUT
-
-Hand ghost, multiple learners, Gemini Live API, ask-the-expert chat, voice cloning, accounts, cloud deploy, offline service worker, Tauri or Electron, Mica and native window chrome, pairing code, re-record one step, paid code signing, gemini-3.1-pro-preview (no free tier), teaching live at the venue, naming DeepSight or VSight, any "first" claim or savings number. Voice "next" stays built but off by default.
-
-## 4. Architecture
-
-```mermaid
-flowchart LR
-  subgraph Cameras
-    GL[Ray-Ban Meta glasses] -- DAT 1.0.1 --> IOS[iPhone app]
-    IPC[iPhone camera] --> IOS
-    ACAM[Android CameraX] --> AND[Android app]
-    CAP[capture.html in any phone browser]
-    REP[server.replay]
-  end
-  subgraph Hub["Hub laptop: Mac app, Windows app, or source run"]
-    API[FastAPI :8000 http/ws, :8443 https/wss with certs]
-    ENG[Engine: one session, motion gate, Gemini check, breaker, local check, mistake check]
-    TEACH[Teach: ffmpeg normalize, Gemini steps, cut clips, captions, frames]
-    LES[(lessons/ folders, .handover packages)]
-  end
-  IOS -- ws /ws/camera JPEG + hello --> API
-  AND -- ws /ws/camera --> API
-  CAP -- wss /ws/camera --> API
-  REP -- ws /ws/camera --> API
-  API --- ENG
-  API --- TEACH
-  TEACH --- LES
-  ENG -- flash-lite --> GEM[Gemini API]
-  TEACH -- flash --> GEM
-  API -- /ws/ui state, advance, mistake --> V[Viewers: laptop browser, projector, judge phone]
-```
-
-1. One Python FastAPI hub is the only server and the only stateful node. It runs on the laptop.
-2. The web app (Vite, React) is the only learn and teach UI; the hub serves it at `/`.
-3. Cameras only send JPEGs to `/ws/camera`, about 1 fps, with an optional `hello` first.
-4. Viewers join `/ws/ui`; every viewer gets the same `state`, `advance` and `mistake` messages.
-5. One learner per hub. The newest active camera wins; other cameras stay idle.
-6. Check order: motion gate, Gemini flash-lite (3 s timeout), debounce, then advance. Breaker falls back to the local OpenCV check.
-7. Mistake check runs after 5 s of settled "no" and compares steps k-1, k and k+1.
-8. Pairing is a QR of `http://<ip>:8000/join?hub=<id>`; join.html hands off to the app or to the HTTPS capture page.
-9. A lesson is a folder with relative paths; a `.handover` zip moves it between hubs on any OS.
-10. Desktop apps are the frozen hub (PyInstaller onedir) plus a Tk window and the system browser. No webview.
-
-Details: [research/architecture.md](research/architecture.md). Every message, field and error string: [CONTRACT_V2.md](CONTRACT_V2.md).
+## 4. Architecture (unchanged, smaller)
+One FastAPI hub on the Mac. Cameras (iPhone app, glasses through the iPhone app, `capture.html` in Safari, `server.replay`) send JPEGs to `/ws/camera`. The hub runs motion gate, Gemini check, debounce, advance, and broadcasts `state` and `advance` on `/ws/ui`. The web app is the only UI and is served by the hub. One learner per hub; newest camera wins. Lessons are folders on disk.
 
 ## 5. Ownership
-
-Every path has exactly one owner. Nobody edits a file they do not own; ask the owner in one message with the exact change.
-
-| Path | Owner | Notes |
-|---|---|---|
-| `server/main.py`, `check.py`, `teach.py`, `replay.py`, `__init__.py` | Dev 1 | EXISTS |
-| `server/test_check.py`, `server/test_server.py`, `server/tests/**` | Dev 1 | plain-assert tests; `server/tests/__main__.py` runs every `server/tests/test_*.py` |
-| `server/paths.py`, `discovery.py`, `package.py`, `gate.py`, `local_check.py`, `mistake.py`, `launcher.py`, `translate.py` | Dev 1 | NEW |
-| `server/requirements.txt`, `server/requirements.lock` | Dev 1 | M2 adds segno, ifaddr, opencv-python-headless, numpy; the lock is always made with `uv pip compile --universal` (DEV1 section 4); pyinstaller only in `packaging/requirements-build.txt` |
-| `server/static/**` (`capture.html`, `join.html`) | Dev 2 | Dev 1 only serves these files |
-| `server/uploads/` | nobody | runtime output, gitignored |
-| `scripts/**` (`certs.sh`, `run_server.sh`, `make_demo_lesson.sh`, `smoke.py`, `demo_replay.sh`) | Dev 1 | |
-| `packaging/**` (PyInstaller spec, Mac dmg script, Inno Setup, ffmpeg fetchers, licenses) | Dev 1 | |
-| `.github/workflows/**` | Dev 1 | minimal workflow before Sync 2; triggers per the CI row in Lead decisions; calls `apps/*/ci.sh` and `npm` scripts, never edits them |
-| `lessons/**` | Dev 1 | sample and demo lessons |
-| `recordings/` (replay MP4s, gitignored) | Dev 1 | humans record, Dev 1 files and names them |
-| `apps/android/**` including `apps/android/ci.sh` and `apps/android/.gitignore` | Dev 2 | lead decision: moved from Dev 1 to balance hours. The `android` CI job stays in Dev 1's workflow and only calls `apps/android/ci.sh` |
-| `apps/ios/**` including `apps/ios/ci.sh` and `apps/ios/.gitignore` | Dev 2 | |
-| `web/**` (src, mock, e2e, screenshots, package files, vite and ts config, `web/.gitignore`) | Dev 2 | learn, teach, connect and QR, join flow, spectator, mistake banner, offline badge, done screen |
-| `assets/icon/**` | Dev 2 | Dev 1 reads it for app and installer icons |
-| `docs/TESTED.md`, `docs/DEVPOST.md`, `docs/pitch/**` | Dev 2 | Dev 1 sends result rows by message |
-| `docs/DECISIONS_DEV1.md` | Dev 1 | decisions, measurements, rehearsal tries |
-| `docs/DECISIONS_DEV2.md` | Dev 2 | decisions and requests for Dev 1 |
-| `docs/CONTRACT_V2.md` | Dev 1 | shared, change process below |
-| `README.md`, `.gitignore` | Dev 1 | shared, change process below |
-| `CONTRACT.md` | Dev 1 | add "Superseded by docs/CONTRACT_V2.md" at the top |
-| `docs/PLAN.md`, `docs/IDEAS.md`, `docs/SPEC.md`, `docs/SCOPE.md`, `docs/ARCHITECTURE.md`, `docs/RESEARCH_GLASSES_GEMINI.md`, `docs/research/**`, `docs/DEV1_PROMPT.md`, `docs/DEV2_PROMPT.md`, `docs/REVIEW_FIXES.md` | lead | read-only for both devs |
-| `.env`, `certs/`, `.venv*/`, `node_modules/`, `web/dist/`, `build/`, `dist/`, `/uploads/`, `/hub.json`, `/logs/`, `*.log` | nobody | local or generated, never committed (all in `.gitignore`) |
-
-**Change process for shared files** (`docs/CONTRACT_V2.md`, `README.md`, `.gitignore`):
-1. Dev 2 sends Dev 1 one message with the exact text (field, type, which side sends it).
-2. Dev 1 edits, bumps the `Revision` line of CONTRACT_V2, commits, and replies with the commit hash.
-3. Additive optional changes: Dev 1 decides alone. Renames, removals or type changes need both humans and land with the hub and client change in the same hour.
-4. **6:00 AM contract freeze.** Dev 1 tags `contract-freeze`. After that, bug fixes only, both humans agree. The freeze check (Sync 7 commands) must print nothing.
-5. A new top-level path needs the lead's OK and a row in this table first.
-
-**Machines and clones.** Two Macs by default. Each developer works in a normal clone (no worktrees) on one branch: Dev 1 on `dev1/hub` in the lead Mac's existing repo, Dev 2 on `dev2/clients` in a fresh clone of `https://github.com/pr4nav3/MetaGlasses-ExpertKnowlegeTransfer`. Fresh clone setup:
-
-```
-uv venv --python 3.12 --python-preference only-managed .venv
-uv pip install --python .venv/bin/python -r server/requirements.lock
-# create .env with GEMINI_API_KEY=... by hand (never print it)
-npm --prefix web ci
-```
-
-If both developers share one Mac: Dev 2 uses a separate clone folder, runs its hub with `HANDOVER_PORT=8100`, and points Vite at it with `VITE_API_TARGET=http://localhost:8100`.
-
-**Merge gate** (every merge to `main`; `server.tests` exists once M2 lands):
-
-```
-.venv/bin/python -m server.test_server
-.venv/bin/python -m server.test_check
-.venv/bin/python -m server.tests
-npm --prefix web run build
-git diff origin/main...HEAD | perl -CSD -ne 'print if /^\+.*[\x{2013}\x{2014}]/'   # must print nothing
-```
-
-Dev 1 also runs `scripts/smoke.py` against a fresh mock hub. Dev 2 also runs `apps/ios/ci.sh` or `apps/android/ci.sh` when it touched that app.
-
-**Merge to main** (at sync points; a fix for a red CI job you own may merge any time after the full gate):
-
-```
-git fetch origin && git rebase origin/main
-# rerun the merge gate
-git push --force-with-lease origin dev1/hub      # Dev 2: dev2/clients
-git push origin dev1/hub:main                    # Dev 2: git push origin dev2/clients:main
-```
-
-If the push to `main` is rejected, fetch, rebase, rerun the gate and push again. Never force push `main`.
+Folder ownership and git rules: TEAM_RULES.md. Contract changes: say it in the group, one person edits CONTRACT.md and bumps its Revision line, everyone pulls.
 
 ## 6. Timeline
-
-Before any heavy step (PyInstaller, Gradle, Xcode build, full tests), wait for the Mac load to drop. At most one simulator or emulator at a time.
-
-```
-while [ "$(sysctl -n vm.loadavg | awk '{print int($2)}')" -gt "$(sysctl -n hw.ncpu)" ]; do sleep 30; done
-```
-
-**Late start rule:** if a developer starts after a sync's clock time, run that sync as soon as both sides' milestones for it are merged, in order. Never skip a sync. Fixed times: contract freeze 6:00 AM, feature freeze 8:00 AM, code freeze 10:30 AM, submit 11:30 AM, hacking ends 12:00 PM, judging 1:00 PM.
-
-### Per developer
-
-| Time | Developer 1 (hub, packaging, CI) | Developer 2 (web, iOS, Android, capture, join) |
-|---|---|---|
-| Sat 2:30 to 3:00 PM | Humans add the existing GitHub remote and push `main`; branch `dev1/hub` | Fresh clone, branch `dev2/clients`; `xcodegen` project skeleton for `apps/ios`; `apps/android` Gradle skeleton once the SDK is confirmed |
-| 3:00 to 4:30 PM | M2, M3 (with `scripts/smoke.py`) | W8a phone camera streaming plain JPEGs (works against today's hub); W1; W3a minimal `join.html` |
-| **4:30 PM** | **Sync 1: contract smoke (M2, M3)** | |
-| 4:30 to 6:30 PM | M4; minimal CI workflow; M1 (gate at 6 PM), M5, M6 | W8b `hello`, state, Next, haptics on the real iPhone; W4; W2 |
-| **6:30 PM** | **Sync 2: first live loop with the iPhone app, camera assertions (M4)** | |
-| 6:30 to 8:00 PM | M8, M9; cut the fortune teller take (M14, take due 6:30 PM) | S-G glasses source, time-boxed, only if Sync 2 passed; else W8b |
-| **8:00 PM** | **Sync 3: glasses gate and drop check** | |
-| 8:00 to 10:00 PM | M7; M11 Mac `.app` | W5, W6, W3 |
-| **10:00 PM** | **Sync 4: Mac app checkpoint** | |
-| 10:00 PM to 12:00 AM | M15; cut the bike take (M14, take due 10:00 PM); file the replays (due 11:00 PM); grow M12 CI | W11 Android on a phone or emulator; W7, W9 |
-| **Sun 12:00 AM** | **Sync 5: midnight full run** | |
-| 12:00 to 2:00 AM | M12 full CI, hub-win smoke; then S-P export and import | Fix bugs from Sync 5; W12; then SHOULD (S-A); Dev 2 sleeps 12:30 to 5:30 AM |
-| **2:00 AM** | **Sync 6: CI green gate** (Dev 1 alone, reports to Dev 2 in writing) | |
-| 2:00 to 6:00 AM | Dev 1 sleeps 2:30 to 6:00 AM | 5:30 AM: S-D done screen, S-W, S-F, screenshots for W10 |
-| **6:00 AM** | **Sync 7: contract freeze** | |
-| 6:00 to 8:00 AM | S-P if not done, S-T self-test, bug fixes | S-PB, S-T badge, matrix tests on every device (W10) |
-| **8:00 AM** | **Sync 8: feature freeze and venue-light rehearsal** | |
-| 8:00 to 10:00 AM | Bug fixes only; Windows verification; S-I if green; version 0.2.0 in Dev 1 files | Bug fixes only; Android verification; `docs/TESTED.md`; Devpost draft; version 0.2.0 in `web/package.json`, iOS and Android |
-| **10:00 AM** | **Sync 9: Devpost draft** | |
-| 10:00 to 10:30 AM | Code freeze 10:30, tag, release | Backup demo video recorded |
-| **11:30 AM** | **Sync 10: submit** | |
-| 12:00 to 1:00 PM | Setup at the table, three run-throughs | same |
-| 1:00 to 2:30 PM | Judging | Judging |
-
-**8:00 PM drop check (at Sync 3):** Dev 1: if M9 is not green, M7 shrinks now to "breaker shows Checks off, use Next". Dev 2: if Sync 2 failed, S-G was dropped at 6:30 PM and the 6:30 to 8:00 slot went to W8b; Sync 3 then records glasses as not shipped.
-
-### Sync points (each one is pass or fail)
-
-Hub under test, unless a row says otherwise: `HANDOVER_CHECK=mock HANDOVER_MOCK_PASS_SECONDS=3 .venv/bin/python -m server.main`. Commands for each sync are in the code blocks under the table.
-
-| When | Sync | Pass test | On fail |
-|---|---|---|---|
-| Sat 4:30 PM | 1. Contract smoke (M2, M3) | `smoke.py` PASS for info (`contract: 2`), qr, lessons and the `/assets` JavaScript MIME type (camera checks may FAIL until M4); unit tests pass; web builds and `e2e/real-server.mjs` passes against the real hub with a looping replay | Dev 1 fixes the hub before anything else; Dev 2 keeps working against `web/mock` |
-| Sat 6:00 PM | Gemini gate (inside Dev 1's block) | 20 real calls, median 2.0 s or less, limits written down | 2.0 to 2.5 s: wider gate; over 2.5 s: one yes plus local agreement |
-| Sat 6:30 PM | 2. First live loop, iPhone app, camera assertions | `smoke.py` all PASS on the mock hub (replay `hello`, `state.camera.name` is `Replay: norm.mp4`, an `advance` with reason `camera`); real iPhone on the hotspot, typed address; `watch` shows `camera.platform: "ios"`, one `advance` reason `camera`, and Next on the phone gives an `advance` reason `button` on every screen | Dev 2 switches to capture.html for later syncs while fixing the app; Dev 1 fixes M4 first |
-| Sat 8:00 PM | 3. Glasses gate, drop check | Glasses frames reach the hub through the iPhone app for 60 s without a gap over 5 s; `camera.source: "glasses"`; one camera advance on the demo lesson. Drop check above applied | Glasses leave the demo, the pitch and the Devpost. Code stays behind the source toggle, never claimed |
-| Sat 10:00 PM | 4. Mac app | Frozen `.app` starts headless and passes smoke. Dev 2: iPhone app streams to the frozen Mac app if Dev 1 has it | Mac: demo runs from source |
-| Sun 12:00 AM | 5. Midnight full run | Android: WATCH shows `camera.platform: "android"` when a phone exists, else the CI APK, labeled. Real Gemini, iPhone app, fortune teller lesson folded to done; planted skipped flip gives a `mistake` with `kind: "behind"`; internet down with LAN up gives `check_offline: true` and the lesson still finishes (local check or Next); the clean replay in local mode reaches done with `smoke.py watch --press-next-on-manual 3`, every camera step advanced with reason `camera` | Stop all SHOULD work; both devs fix the loop |
-| Sun 2:00 AM | 6. CI green | Latest `main` run green on web, hub-test, hub-mac, hub-win, android, ios | A red platform is dropped from the claim; hub-win red means "Windows: not shipped" |
-| Sun 6:00 AM | 7. Contract freeze | Smoke passes against the source hub and the CI Mac artifact; tag set; freeze check prints nothing from then on | Both humans approve any bug fix |
-| Sun 8:00 AM | 8. Feature freeze, rehearsal | Under venue light: 20 tries, at least 18 pass (a try passes when it has at least one `behind` mistake); full fold finishes in every try; per-try caught yes or no logged in `docs/DECISIONS_DEV1.md` | Step 5 becomes manual and the demo plants a mistake that is caught reliably |
-| Sun 10:00 AM | 9. Devpost draft | Every device claim maps to a live or CI row in `docs/TESTED.md`; real screenshots; no dashes; no banned claims | Fix copy before 10:30 |
-| Sun 10:30 AM | Code freeze, release | Version 0.2.0 everywhere; tag pushed; release has the dmg or zipped `.app`, the Windows build, the APK | Release whatever is green, list the rest as not shipped |
-| Sun 11:30 AM | 10. Submit | Devpost shows submitted; video and repo links open in a private window | Submit with what exists; never miss noon |
-
-**Sync 1** (needs Google Chrome; Playwright uses channel `chrome`):
-
-```
-.venv/bin/python scripts/smoke.py --base http://localhost:8000
-.venv/bin/python -m server.test_server && .venv/bin/python -m server.test_check && .venv/bin/python -m server.tests
-.venv/bin/python -m server.replay lessons/demo-v1/norm.mp4 --loop --select demo-v1 & REPLAY=$!
-(cd web && npm run build && APP=http://localhost:8000 node e2e/real-server.mjs); kill $REPLAY
-```
-
-Before M2 merges (the hub does not serve the dist yet), start `npx vite --port 5173 &` in `web/` instead, and run `node e2e/real-server.mjs` without `APP`.
-
-**Gemini gate:**
-
-```
-.venv/bin/python -m server.check --time lessons/demo-v1/frames/02.jpg lessons/demo-v1/frames/02.jpg "Is this step finished?" -n 20
-```
-
-**Sync 2 and Sync 3:**
-
-```
-.venv/bin/python scripts/smoke.py --base http://localhost:8000          # mock hub, all PASS
-.venv/bin/python scripts/smoke.py watch --base http://<hub ip>:8000     # during the live loop
-```
-
-**Sync 4:**
-
-```
-export HANDOVER_DATA="$PWD/build/data-test"
-HANDOVER_CHECK=mock HANDOVER_MOCK_PASS_SECONDS=3 HANDOVER_OPEN_BROWSER=0 dist/HandOver.app/Contents/MacOS/HandOver --headless &
-.venv/bin/python scripts/smoke.py --base http://localhost:8000
-curl -s -X POST http://localhost:8000/api/shutdown
-```
-
-**Sync 5:**
-
-```
-.venv/bin/python scripts/smoke.py watch --base http://<hub ip>:8000     # during the real fold
-# Offline, preferred: the human turns off cellular data on the hotspot phone; Wi-Fi stays on.
-# Offline, no human: restart the hub each way and watch check_offline_reason.
-env -u GOOGLE_API_KEY GEMINI_API_KEY=invalid-key HANDOVER_CHECK=gemini .venv/bin/python -m server.main
-env -u GOOGLE_API_KEY GEMINI_API_KEY= HANDOVER_DATA="$PWD/build/nokey" HANDOVER_LESSONS="$PWD/lessons" HANDOVER_CHECK=gemini .venv/bin/python -m server.main
-# Clean replay in local mode:
-HANDOVER_CHECK=local .venv/bin/python -m server.main &
-scripts/demo_replay.sh recordings/fold-clean.mp4 &
-.venv/bin/python scripts/smoke.py watch --press-next-on-manual 3
-```
-
-Expected: the invalid key gives reason `errors` after 3 failed calls, the empty key gives `no_key`, and both show `check_offline: true` while the lesson still finishes by local check or Next.
-
-**Sync 6:**
-
-```
-gh run list --branch main --limit 1
-gh run view <id> --json jobs --jq '.jobs[] | [.name, .conclusion]'
-```
-
-**Sync 7:**
-
-```
-git tag contract-freeze && git push origin contract-freeze
-gh run download <id> -n hub-mac -D build/ci-mac
-# unzip the .app under build/ci-mac, then run the Sync 4 commands with that .app path
-# from now on this must print nothing:
-git diff contract-freeze -- docs/CONTRACT_V2.md | grep '^[+-][^+-]' | grep -v 'EXISTS\|NEW\|Revision'
-```
-
-**Sync 8** (one `watch` for the whole rehearsal; mark each try first):
-
-```
-.venv/bin/python scripts/smoke.py watch | tee -a rehearsal.log
-echo "TRY $N" >> rehearsal.log                                          # before try N, in a second shell
-grep '"type": "mistake"' rehearsal.log | grep -c '"kind": "behind"'     # total behind mistakes
-awk '/^TRY /{t=$2} /"type": "mistake"/ && /"kind": "behind"/{c[t]=1} END{print length(c)}' rehearsal.log   # tries passed
-```
-
-**Sync 9:**
-
-```
-perl -CSD -ne 'print "$.: $_" if /[\x{2013}\x{2014}]/' docs/DEVPOST.md
-grep -niwE 'first|only' docs/DEVPOST.md
-```
-
-Both must print nothing.
-
-**Code freeze:**
-
-```
-git tag v0.2.0 && git push origin v0.2.0
-gh release view v0.2.0 --json assets --jq '.assets[].name'
-```
-
-## 7. Cross-OS interoperability matrix
-
-Labels: **live** = run by hand on real hardware; **CI** = automated on a GitHub runner; **emulator**; **untested**. Only live and CI pairs go on the slide. A platform with only CI evidence is described as "built and smoke tested in CI, not tested by hand". Results are recorded in `docs/TESTED.md` (Dev 2).
-
-### Cameras to hubs
-
-| Camera | Mac app (frozen) | Windows app (frozen) | Source run on Mac |
-|---|---|---|---|
-| iPhone app, phone camera | live (Dev 2, after Sync 4) | untested unless a Windows laptop exists; then live (Dev 1) | live (Dev 2, Sync 2) |
-| iPhone app, glasses | live only if the 8 PM gate passes (Dev 2) | untested | live at Sync 3 (Dev 2) |
-| Android app, phone camera | live with a real phone, else emulator (Dev 2) | untested unless a Windows laptop exists (Dev 2) | live with a real phone (Dev 2, Sync 5), else emulator, else "APK built in CI" |
-| Android app, glasses | untested (STRETCH) | untested | untested (STRETCH) |
-| iPhone Safari, capture.html | live only if mkcert certs are copied to the app data dir (Dev 2) | untested | live with mkcert root trusted on the phone (Dev 2) |
-| Android Chrome, capture.html | live with the `chrome://flags/#unsafely-treat-insecure-origin-as-secure` exception for `http://<ip>:8000` if a phone exists, else a cloudflared tunnel with the humans' OK (Dev 2) | untested | same as the Mac app column, else untested (Dev 2) |
-| Replay (`server.replay`) | CI (hub-mac smoke) and live (Dev 1) | CI (hub-win smoke, Dev 1) | live and CI on Linux (hub-test, Dev 1) |
-
-### Viewers (learn screen, spectator, teach)
-
-| Browser | Mac | Windows | Phones |
-|---|---|---|---|
-| Chrome | live and Playwright (Dev 2) | untested unless a Windows laptop exists; STRETCH: Playwright on windows-latest (Dev 1) | Android Chrome: live with a real phone, else emulator (Dev 2) |
-| Edge | live if installed, else untested (Playwright Chromium results are recorded under Chrome, not Edge) (Dev 2) | untested unless a Windows laptop exists (Dev 2 tests on it) | not targeted |
-| Safari | live (Dev 2) | not available | iPhone Safari: live (Dev 2) |
-| Firefox (no voice) | live (Dev 2) | untested | not targeted |
-
-### Lessons across hubs
-
-| From to | How verified |
+| Time | What |
 |---|---|
-| Mac-made lesson on the Windows hub | CI (hub-win imports a `.handover` made in hub-mac) once S-P lands, else untested |
-| Mac-made lesson on another Mac | live (Dev 1) once S-P lands |
+| 3:30 PM | Kickoff on main (names into TEAM_RULES.md first). `uv pip install -r server/requirements.lock`; `npm --prefix web ci`; Developer Mode on; two Gemini keys (rehearsal, demo) in `.env`. Someone buys paper, black board, lamp, chest mount and borrows a bike with a QR front wheel. Ask an organizer about pre-recorded footage as input |
+| 3:30 to 6:30 | server: M1 (time 20 calls first), M5, M6, M8. capture/ios: W4, then W8a. web: W1, W5. lessons: work against `lessons/demo-v1` until the take arrives; record three glasses takes of the fortune teller by 5:00 PM (narrating, pause after each step, mat and paper in frame) and cut it (M14) |
+| 6:00 | **Gemini gate** (M1 numbers): median 2.0 s or less passes; 2.0 to 2.5 s widens the motion gate; over 2.5 s means one confident yes plus Next |
+| 6:30 | **Integrate.** First live fortune teller with the phone (Safari or W8a). Ugly is fine. Nothing in SHOULD starts before this passes |
+| 6:30 to 8:00 | ios: W8b glasses source, time-boxed. server: M9. web: W6 |
+| 8:00 | **Glasses gate.** Frames reach the hub through the iPhone app for 60 s with no gap over 5 s and one camera advance; else glasses leave the demo, pitch and Devpost. Then ten live folds by someone who has never folded one: count camera-verified steps, manual steps, false passes, false alarms. Tune debounce and questions |
+| 8:00 to 12:00 | SHOULD in order: catch, done screen, Databricks. record three glasses takes of the bike front wheel by 9 PM and cut by 10 PM; replays filed by 11 PM. Poster draft |
+| 12:00 AM | **Midnight full run** on real Gemini: fold to done; planted skipped flip caught; breaker shows "Checks off" with an invalid key and the lesson still finishes by Next. Fail: stop SHOULD, everyone fixes the loop. Two sleep 12:30 to 4:30, two sleep 4:30 to 8 |
+| 6:00 AM | **Feature freeze and contract freeze.** Bug fixes only, each run on the Mac before merge |
+| 8:00 AM | Venue-light rehearsal: 20 folds, the planted flip must be caught in at least 18, else step 5 becomes manual and the plant moves. Warm the Databricks warehouse |
+| 10:00 | Devpost draft, backup demo video recorded. 10:30 code freeze, tag |
+| 11:30 | Devpost submitted. 12:00 to 1:00 setup and two run-throughs. 1:00 judging |
 
-## 8. Demo script (4 minutes)
-
-| Time | Beat | What is on screen | Fallback |
-|---|---|---|---|
-| 0:00 to 0:20 | Hook | Learn screen idle with the QR. "Experts teach the same task over and over. With HandOver they do it once, and the lesson watches the next person." | None needed |
-| 0:20 to 0:55 | Teach | Bike lesson made from one take: timeline, clip thumbnails, lesson.json beside it. Click a clip, it plays in the expert's voice with captions | Everything is pre-cut on disk; no network needed. If the browser misbehaves, reload; last resort is the backup video of this beat, said out loud |
-| 0:55 to 2:10 | Judge folds | Black board, desk lamp, iPhone app on a stand (glasses only if Sync 3 passed). Clips advance as each fold is seen; chime on each camera advance | Ladder: glasses, then iPhone app (swap under 10 s), then capture.html, then `scripts/demo_replay.sh` with the "Recording" banner. Gemini down: "Offline check" badge appears on its own. Any misfire: "Next always works" |
-| 2:10 to 2:40 | The catch | At step 5 the judge leaves the paper unflipped and pauses. After 5 s of settled "no", the amber banner and voice say step 5's `common_mistake`: "Flip it over first." Judge fixes it, lesson continues | Not caught within 10 s: say so, press Next, and play the skipped-flip recording labeled "Recording" |
-| 2:40 to 3:00 | Done | Finished fortune teller on the table; Done screen with real times if S-D shipped | Skip to the next beat |
-| 3:00 to 3:30 | Every OS | Android phone scans the QR and takes over as the camera; a judge's phone opens the spectator view; Next on one phone moves every screen. Then the CI page: Mac, Windows, iOS, Android builds green | No Android phone: the judge's own phone joins as spectator. Windows is only ever shown as the CI run unless tested by hand |
-| 3:30 to 3:50 | Why it is different | "Dozuki turns video into documents. Retrocausal needs a station camera and labeled cycles. HandOver needs one take and any phone." | None |
-| 3:50 to 4:00 | Close | "The hub never saves your camera frames. Each check sends one frame to Gemini's API under Google's free-tier terms." Repeat the hook line | None |
-
-## 9. Risks and mitigations
-
-| Risk | Mitigation | Owner |
+## 7. Demo script (4 minutes)
+| Time | Beat | Fallback |
 |---|---|---|
-| Either developer falls behind | Over capacity by design; drop orders for both in section 3 and the 8 PM drop check; Dev 2 runs device testing | both |
-| Android SDK not on the Mac | Ask the humans before the large install; CI builds the APK regardless; emulator is the fallback, labeled | Dev 2 |
-| No Windows machine | Windows ships as "built and smoke tested in CI, not tested by hand" | Dev 1 |
-| Windows blocks the hub | Firewall prompt: allow Private and Public, or set the hotspot network to Private. SmartScreen: More info, Run anyway. Both in README and the Tk window on Windows | Dev 1 |
-| Glasses stream fails | 8 PM gate; phone camera is the main path in the pitch | Dev 2 |
-| Free-tier limits hit during rehearsal | Motion gate; rehearsal project key separate from demo key; local check | Dev 1, humans |
-| Check misfires under hall light | Lamp, foam board, matte paper; step 1 manual; 8 AM rehearsal count | both |
-| Planted flip not caught reliably | Count at 8 AM; if under 18 of 20, step 5 manual and a different plant | Dev 1 |
-| Hotspot drops or blocks devices | Second hotspot ready; replay; localhost-only mode with a USB camera | humans |
-| iOS refuses ws to a raw IP | `NSAllowsLocalNetworking`; if still refused, `NSAllowsArbitraryLoads` for this build | Dev 2 |
-| PyInstaller misses a lazy import or tkinter | Tk probe early in M2; headless smoke in CI; source run on Mac is the demo fallback | Dev 1 |
-| macOS blocks the unsigned app | System Settings, Privacy and Security, Open Anyway; or `xattr -dr com.apple.quarantine` | Dev 1 |
-| Contract drift between hub and clients | Contract freeze at 6 AM; smoke tests at every sync; mock mirrors V2 | both |
-| Mac overheats or loads up | Load check before heavy steps; one emulator or simulator at a time | both |
-| Running out of time for Devpost | Draft at 10 AM, submit 11:30 AM, not noon | Dev 2 |
+| 0:00 to 0:20 | Hook line, learn screen idle | none |
+| 0:20 to 0:55 | Teach: bike lesson from one take, timeline, click a clip, expert's voice and captions | pre-cut on disk; reload; backup video |
+| 0:55 to 2:10 | Judge folds on the black board under the lamp, camera on a stand or chest (glasses only if the 8 PM gate passed). Clips advance as folds are seen, chime on each | ladder: glasses, iPhone app, Safari capture, replay with "Recording" banner. Gemini down: "Checks off, use Next" |
+| 2:10 to 2:40 | The catch: judge leaves the paper unflipped at step 5; amber banner and voice name the step | not caught in 10 s: say so, press Next, show the skipped-flip recording labeled "Recording" |
+| 2:40 to 3:10 | Done screen with real times; Databricks dashboard and one Genie question ("which step do people get stuck on?") | skip to close |
+| 3:10 to 3:40 | Why different: Dozuki turns video into documents; Retrocausal needs a station camera and labeled cycles; HandOver needs one take and any phone | none |
+| 3:40 to 4:00 | Privacy line ("the hub never saves your camera frames") and the hook again | none |
 
-## 10. Humans-only checklist
+## 8. Risks
+| Risk | Mitigation |
+|---|---|
+| Glasses stream fails | 8 PM gate; phone camera is the main path; glasses stay as the expert's recorder in the story |
+| Gemini slow or rate limited | Motion gate, 3 s timeout, breaker, rehearsal key separate from demo key, Next always works |
+| Checks misfire under hall light | Lamp, black board, matte duo-color paper, step 1 manual, 8 AM count |
+| Planted flip not caught | 8 AM count; under 18 of 20 means step 5 manual |
+| Hotspot drops | Second hotspot; replay; localhost mode with a USB camera |
+| iOS refuses ws to a raw IP | `NSAllowsLocalNetworking`; if still refused, `NSAllowsArbitraryLoads` for this build |
+| Dependency drift | `server/requirements.lock` frozen on the Mac; google-genai 3.3 broke defaults on Nov 12 |
+| Databricks daily quota | Batch writes, never poll, warm once before judging |
 
-- [ ] Before pasting the prompts: the repo exists at `https://github.com/pr4nav3/MetaGlasses-ExpertKnowlegeTransfer`. Decide public vs private (private: free Actions minutes are limited and macOS jobs count 10x). On the lead Mac: `git remote add origin https://github.com/pr4nav3/MetaGlasses-ExpertKnowlegeTransfer.git && git push -u origin main`. Dev 2 clones it.
-- [ ] Create two Google Cloud projects and one Gemini key in each (rehearsal and demo). Put the demo key in `.env`. Read limits on the AI Studio rate-limit page. Do not enable billing.
-- [ ] Confirm prize tracks and Devpost deadline on the MadHacks Discord.
-- [ ] Meta AI app: Developer Mode on, glasses updated, charged and paired, before 6:30 PM.
-- [ ] iPhone: allow free Apple ID signing (trust the developer profile), trust the mkcert root, turn off auto-lock for the demo. Tell Dev 2 the Personal Team ID of the Apple ID signed in to Xcode on their Mac.
-- [ ] OK `brew install mkcert` and running `scripts/certs.sh` on the hub Mac before 6:30 PM; re-run it after any hotspot IP change.
-- [ ] Android phone with USB debugging on, if anyone has one. Say yes or no by 6 PM. For browser capture on it, set the Chrome flag for `http://<ip>:8000`; a cloudflared tunnel needs your OK (frames pass through Cloudflare).
-- [ ] A Windows laptop, if anyone has one. Say yes or no by 6 PM.
-- [ ] OK the Android command line tools, JDK 17, Gradle and an emulator image install on the Mac (large download), or decline.
-- [ ] Buy or bring: 10 or more duo-color kami sheets (20 to 25 cm, matte), pre-folded examples, paper cups, black foam board or felt, desk lamp, phone stand or chest mount, earbuds, chargers, power strip.
-- [ ] Record takes and hand the files to Dev 1: fortune teller (narrated) by 6:30 PM, bike (one take, narrated) by 10:00 PM, a clean fold replay and a skipped-flip replay by 11:00 PM.
-- [ ] Set up both hotspots and test every demo device on them.
-- [ ] Sync 5: turn off cellular data on the hotspot phone for the offline test.
-- [ ] 8 AM rehearsal under venue light; mark each try and count the planted flip catches.
-- [ ] Record the backup demo video.
-- [ ] Submit the Devpost by 11:30 AM. Pitch, and ask a judge to fold.
+## 9. Humans-only checklist
+- [ ] Two Gemini keys (rehearsal, demo) in `.env`; read limits on the AI Studio rate-limit page; no billing.
+- [ ] Meta AI app Developer Mode on, glasses charged and paired, before 6:30 PM; recheck Sunday morning.
+- [ ] iPhone: free Apple ID signing trusted, mkcert root trusted, auto-lock off.
+- [ ] `brew install mkcert`, run `scripts/certs.sh` before 6 PM; rerun after any hotspot IP change.
+- [ ] Props: 10+ duo-color kami sheets, pre-folded examples, paper cups, black foam board, desk lamp, phone stand or chest mount, chargers, power strip.
+- [ ] Takes to the lessons owner: fortune teller by 5 PM, bike by 9 PM, clean fold and skipped-flip replays by 11 PM.
+- [ ] Both hotspots tested with every device.
+- [ ] Databricks Free Edition workspace created; PAT in `.env`.
+- [ ] 8 AM rehearsal; Devpost by 11:30; ask a judge to fold.
