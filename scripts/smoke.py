@@ -5,8 +5,8 @@
     .venv/bin/python scripts/smoke.py watch [--base http://localhost:8000] [--log FILE]
 
 run: lists lessons, selects one over /ws/ui, streams the lesson's own video into /ws/camera with
-server.replay, and checks that the camera advances a step within 30 s, that Next works on a manual
-step, and that the lesson reaches done. Prints a PASS/FAIL table; exit code 0 only when nothing failed.
+server.replay, and checks that the camera advances a step within 30 s (--advance-timeout), that Next
+works on a manual step, and that the lesson reaches done. Prints a PASS/FAIL table; exit code 0 only when nothing failed.
 It takes over the hub's one learn session, so do not run it during a live fold.
 
 watch: prints one timestamped line per state, advance, mistake and error from /ws/ui (binary live
@@ -34,7 +34,6 @@ from urllib.parse import quote, urlsplit, urlunsplit
 import websockets
 
 REPO = Path(__file__).resolve().parent.parent
-FIRST_ADVANCE_S = 30.0
 
 
 # ---------------------------------------------------------------- helpers
@@ -192,8 +191,11 @@ async def smoke(a: argparse.Namespace, rep: Report, tmp: Path) -> str:
     manual_steps = [i for i, s in enumerate(steps) if s.get("check_type") == "manual"]
     camera_steps = [i for i, s in enumerate(steps) if s.get("check_type", "camera") == "camera"]
 
-    # 2. video for the fake camera
-    if a.video:
+    # 2. video for the fake camera (an empty lesson needs none)
+    video = None
+    if total == 0:
+        pass
+    elif a.video:
         video = a.video
     else:
         video = tmp / Path(lesson.get("video") or "norm.mp4").name
@@ -217,7 +219,7 @@ async def smoke(a: argparse.Namespace, rep: Report, tmp: Path) -> str:
                 rep.add("FAIL", "lesson selected", m.get("message", ""))
                 return lesson_id
             if (m.get("type") == "state" and m.get("lesson_id") == lesson_id and m.get("step") == 0
-                    and m.get("status") != "done"):
+                    and (m.get("status") != "done" or total == 0)):  # an empty lesson is done at once
                 selected = m
         if selected is None:
             rep.add("FAIL", "lesson selected", "no state confirmed the selection in 5 s")
@@ -238,7 +240,7 @@ async def smoke(a: argparse.Namespace, rep: Report, tmp: Path) -> str:
         mistakes = 0
         try:
             while time.monotonic() - t0 < a.timeout:
-                if first_cam_adv is None and time.monotonic() - t0 > FIRST_ADVANCE_S and camera_steps:
+                if first_cam_adv is None and time.monotonic() - t0 > a.advance_timeout and camera_steps:
                     break
                 if proc.poll() is not None:
                     rep.add("FAIL", "replay running", f"exited with {proc.returncode}; see output below")
@@ -288,7 +290,7 @@ async def smoke(a: argparse.Namespace, rep: Report, tmp: Path) -> str:
             t, frm, to = first_cam_adv
             rep.add("PASS", "camera advance", f"step {frm + 1} -> {step_label(to, total)} after {t:.1f} s")
         else:
-            rep.add("FAIL", "camera advance", f"none within {FIRST_ADVANCE_S:.0f} s of the camera starting")
+            rep.add("FAIL", "camera advance", f"none within {a.advance_timeout:g} s of the camera starting")
         if not manual_steps:
             rep.add("SKIP", "manual next", "lesson has no manual steps")
         elif manual_ok:
@@ -377,6 +379,8 @@ def main() -> int:
     r.add_argument("--video", type=Path, help="video for the fake camera (default: the lesson's own norm.mp4)")
     r.add_argument("--fps", type=float, default=1.0)
     r.add_argument("--timeout", type=float, default=120.0, help="seconds to reach done (default 120)")
+    r.add_argument("--advance-timeout", type=float, default=30.0,
+                   help="seconds for the first camera advance (default 30)")
     r.add_argument("-v", "--verbose", action="store_true", help="print every event while running")
     w = sub.add_parser("watch", help="print every state, advance and mistake, one line each")
     w.add_argument("--base", default="http://localhost:8000")
