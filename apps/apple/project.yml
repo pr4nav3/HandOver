@@ -1,0 +1,89 @@
+# The native HandOver app for iPhone, iPad and Mac. Generate the Xcode project with `xcodegen generate`
+# (the .xcodeproj is not committed). Signing team comes from HANDOVER_TEAM; leave it unset for simulator builds.
+name: HandOver
+options:
+  bundleIdPrefix: com.handover
+  deploymentTarget:
+    iOS: "18.0"
+    macOS: "15.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+settingGroups:
+  signing:
+    DEVELOPMENT_TEAM: "${HANDOVER_TEAM}"
+    CODE_SIGN_STYLE: Automatic
+    "CODE_SIGN_IDENTITY[sdk=iphoneos*]": Apple Development
+    # With no team, the Mac build signs to run locally (identity "-"), so `xcodebuild test` works without an
+    # Apple ID. With a team, both platforms use automatic signing. The _NONE settings pick the no-team case.
+    "CODE_SIGN_STYLE[sdk=macosx*]": "$(HANDOVER_MAC_STYLE_$(DEVELOPMENT_TEAM:default=NONE):default=Automatic)"
+    "CODE_SIGN_IDENTITY[sdk=macosx*]": "$(HANDOVER_MAC_IDENTITY_$(DEVELOPMENT_TEAM:default=NONE):default=Apple Development)"
+    HANDOVER_MAC_STYLE_NONE: Manual
+    HANDOVER_MAC_IDENTITY_NONE: "-"
+targets:
+  HandOver:
+    type: application
+    supportedDestinations: [iOS, macOS]
+    sources:
+      - path: Sources
+        excludes: ["**/README.md"]
+    settings:
+      groups: [signing]
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.handover.app
+        PRODUCT_NAME: HandOver
+        TARGETED_DEVICE_FAMILY: "1,2"
+        GENERATE_INFOPLIST_FILE: NO
+        "CODE_SIGN_ENTITLEMENTS[sdk=macosx*]": Support/HandOver-macOS.entitlements
+        ENABLE_HARDENED_RUNTIME: YES
+        SUPPORTS_MACCATALYST: NO
+    info:
+      path: Support/Info.plist
+      properties:
+        CFBundleDisplayName: HandOver
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSApplicationCategoryType: public.app-category.education
+        UILaunchScreen: {}
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
+        "UISupportedInterfaceOrientations~ipad": [UIInterfaceOrientationPortrait, UIInterfaceOrientationPortraitUpsideDown, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
+        CFBundleURLTypes:
+          - CFBundleURLName: com.handover.app
+            CFBundleURLSchemes: [handover]
+        NSCameraUsageDescription: HandOver uses the camera to watch your hands, so it can tell when a step is done and play the next one.
+        NSLocalNetworkUsageDescription: HandOver connects to the HandOver hub on this Wi-Fi network to load lessons and follow along.
+        NSPhotoLibraryUsageDescription: HandOver opens the video you pick so it can turn it into a lesson.
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+        ITSAppUsesNonExemptEncryption: false
+  HandOverTests:
+    type: bundle.unit-test
+    supportedDestinations: [iOS, macOS]
+    sources:
+      - Tests
+    dependencies:
+      - target: HandOver
+    settings:
+      groups: [signing]
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.handover.app.tests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: $(BUILT_PRODUCTS_DIR)/HandOver.app/HandOver
+        "TEST_HOST[sdk=macosx*]": $(BUILT_PRODUCTS_DIR)/HandOver.app/Contents/MacOS/HandOver
+        BUNDLE_LOADER: $(TEST_HOST)
+schemes:
+  HandOver:
+    build:
+      targets:
+        HandOver: all
+        HandOverTests: [test]
+    test:
+      targets:
+        - HandOverTests
