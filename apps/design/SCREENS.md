@@ -27,6 +27,13 @@ Contents
 18. Errors and banners
 19. Hub needs
 20. Score and stats rules
+21. Home and Explore
+22. Organizations
+23. Public profile
+24. Permission-aware UI
+25. Onboarding
+
+Sections 21 to 25 were added after the first draft. Where they change an earlier section, the earlier section says so.
 
 ---
 
@@ -34,19 +41,21 @@ Contents
 
 | Platform | Root |
 |---|---|
-| iPhone | Tabs: Library, Teach, Profile. Gear (Settings) top left on every tab; hub pill top right only when something is off. Learn, Record, Camera Mode open as full screen covers |
-| iPad | `NavigationSplitView` sidebar: Library, Teach, Insights, Profile, Settings, then "Recent" lessons |
+| iPhone | Tabs: Home, Organizations, Teach (only for people who can teach in at least one org, or on hubs without accounts), Profile. Library (section 5) is "Browse All" inside Home. Gear (Settings) top left on every tab; hub pill top right only when something is off. Learn, Record, Camera Mode open as full screen covers |
+| iPad | `NavigationSplitView` sidebar: Home, Browse All, Teach, Insights, Profile, Settings, then an "Organizations" section with each org |
 | Mac | Window with source list sidebar (same items), unified toolbar. Learn and the editor open in their own windows. Settings window via Command comma |
-| Android | `NavigationBar` Library, Teach, Profile; rail or drawer on wide screens |
+| Android | `NavigationBar` Home, Organizations, Teach, Profile; rail or drawer on wide screens |
 | Windows | `NavigationView` left pane; Settings at the pane foot |
 
 Insights is inside Teach on iPhone and Android phones (a row per lesson), a top-level item elsewhere.
 
-Who sees what (roles from section 15): learners see Library, Profile, Settings. Editors and owners also see Teach and Insights. With no accounts on the hub (section 4), everyone sees everything, as the web app does today.
+Who sees what: section 24. In short, people see only the actions their roles allow. With no accounts on the hub (section 4), everyone sees everything, as the web app does today.
 
 ---
 
 ## 2. First run
+
+Section 25 (Onboarding) replaces this screen as the first launch. The screen below remains as the "Connect" page inside that flow (25.3) and as what shows when someone removes their last hub.
 
 Pattern from Vibeflux `OnboardingView.swift`: the mark, one line, one primary and one secondary button, nothing else.
 
@@ -153,7 +162,44 @@ Shown after connecting when the hub requires accounts. Sheet on iPhone (large de
 | Primary | "Sign In" |
 | Divider text | "or" |
 | Secondary | "Ask the Hub Owner" |
+| Quiet (only when the hub allows sign up) | "Create an Account" |
 | Footer | "Passcodes stay on this hub. HandOver has no cloud account." |
+
+The first field is labeled "Username" once usernames exist (section 4.4); people may type their username or display name if the hub accepts both.
+
+### 4.4 Sign up
+
+From "Create an Account". Shown only when the hub allows sign up (open, or with an invite code). **Needs hub**.
+
+| Element | Copy |
+|---|---|
+| Title | "Create an Account" |
+| Field | "Name", placeholder "Sam Rivera", footer "Shown on lessons you teach and in your organizations." |
+| Field | "Username", placeholder "sam", lowercase letters, numbers and dashes, 3 to 24 characters. Live check under the field: "Available" in `good` or "Taken" in `bad` |
+| Field | "Passcode" and "Confirm Passcode", 4 to 12 characters |
+| Field (only when the hub requires one) | "Invite Code", placeholder "K7QM 2XPA", with a scan button (`qrcode.viewfinder`) |
+| Primary | "Create Account" |
+| Footer | "Your account lives on this hub only. The hub owner can remove it." |
+
+Errors: "Passcodes do not match.", "That username is taken.", "That invite code is not valid or has expired.", "This hub is not taking new accounts. Ask the hub owner to add you." (when sign up is closed, the "Create an Account" button is not shown at all; this message only appears if it closes mid-flow).
+
+Success: `success` haptic, signed in, then Home. If an invite code was used, the org it belongs to opens first with the toast "You joined <org name>."
+
+### 4.5 First-run owner setup
+
+Shown when the app connects to a hub that has accounts turned on and no owner yet. Only one device ever sees it; the hub accepts the first completed setup. **Needs hub**.
+
+Step layout: one card per step, a small "Step 1 of 3" above the title, Back and Continue at the bottom.
+
+| Step | Title | Content | Continue |
+|---|---|---|---|
+| 1 | "Set up <hub name>" | Line: "You are the first person here, so you become the hub owner. Owners manage accounts and organizations." Field "Hub name", placeholder "Workshop hub" | "Continue" |
+| 2 | "Your owner account" | Fields Name, Username, Passcode, Confirm Passcode (as 4.4) | "Continue" |
+| 3 | "Who can join" | Radio rows: "Anyone on this network can sign up", "Only people with an invite code", "Only people I add". Footer "You can change this later in Settings > Hub." | "Finish Setup" |
+
+Then: `success`, title "<hub name> is ready", line "Create an organization to group lessons and people, or start teaching right away.", buttons "Create Organization" (primary) and "Not Now".
+
+If another device finishes first: "Someone else set up this hub. Sign in with the account they give you." Button "Sign In".
 
 States: wrong passcode: field shakes, `error` haptic, text under the field in `bad`: "That name and passcode do not match." Too many tries: "Too many tries. Wait a minute, then try again." (no countdown estimate; the button re-enables when the hub allows).
 
@@ -166,7 +212,7 @@ After Ask the Hub Owner. Symbol `person.badge.clock`, title "Waiting for approva
 Tab on iPhone and Android, sidebar item elsewhere. Navigation title "Profile".
 
 Sections:
-1. Header card: initials circle 56 pt (`accentSoft` fill, `accentInk` letters), name (`title`), "Learner" / "Editor" / "Owner" badge, hub name (`callout`, `ink2`).
+1. Header card: avatar 56 pt (DESIGN 7.4: initials on the person's chosen hue, or their photo), name (`title`), "Learner" / "Editor" / "Owner" badge, hub name (`callout`, `ink2`).
 2. "Progress" (only real events; **Needs hub** for history across devices):
    - Stat row of up to three: "Lessons done" <n>, "Steps checked by camera" <n>, "Mistakes caught" <n>. Numbers in `numeral`.
    - Empty: symbol `chart.bar`, title "No progress yet", message "Finish a lesson and your results show up here."
@@ -180,7 +226,7 @@ No accounts on the hub: Profile shows only "This device" progress kept locally, 
 
 ## 5. Library
 
-Navigation title "Library" (large). Data: `GET /api/lessons` (id, title, step count). Cover, duration, description, visibility and owner are **Needs hub** fields; until then cover is the first step's `frames/01.jpg` and duration is the last step's `end` from the lesson file.
+Since section 21, this screen is "Browse All", reached from Home and from search. Its filter row becomes "Everyone", "Mine", "Shared with Me", then one segment per org (a scrolling chip row once there are more than four). Navigation title "Browse All" (large). Data: `GET /api/lessons` (id, title, step count). Cover, duration, description, visibility and owner are **Needs hub** fields; until then cover is the first step's `frames/01.jpg` and duration is the last step's `end` from the lesson file.
 
 **Layout**
 - Search field in the navigation bar drawer: placeholder "Search lessons".
@@ -685,7 +731,8 @@ From the editor's Publish button. Medium detent on iPhone, form sheet elsewhere.
 |---|---|
 | Title | "Publish <title>" |
 | Section | "Who can find it" |
-| Options (radio rows) | "Only Me", "People with Access", "Everyone on This Hub" |
+| Options (radio rows) | "Only Me", "People with Access", one row per org where the person is Admin or Teacher: "Publish to <org name>" with the org avatar and "<m> members", and "Everyone on This Hub" (only when the hub owner allows hub-wide lessons, or the person is the hub owner) |
+| Org footer (when an org row is picked) | "Members of <org name> see it on their Home and on the org page." |
 | Toggle | "Unlisted" with footer "Not shown in Library. Share the link instead." |
 | Checklist (read only, from the lesson) | "<n> steps", "<c> checked by camera", "<m> manual", warnings in caution: "Step <n> has no check question.", "Step <n> failed its test." (from `self_test.ok == false`) |
 | Primary | "Publish" (or "Update" when already published) |
@@ -807,6 +854,13 @@ Features above that need hub work. None of these exist in `CONTRACT.md` Revision
 | Per-step voiceover and voice list | per-step voiceover regenerate and remove, list of voices |
 | Drafts | a draft copy separate from the live lesson |
 | Publish, access | visibility, unlisted links, access lists |
+| Sign up, owner setup | sign up policy (open, invite code, owner adds), usernames with an availability check, first-owner claim that only one device can win |
+| Organizations | orgs, memberships with roles (Admin, Teacher, Member), lessons published to an org, a per-person "can create orgs" flag |
+| Invites | invite codes with role, expiry, use cap, revoke; invites by username; a `handover://join` link that also carries the hub address |
+| Home and Explore | feeds: lessons from my orgs, lessons for everyone on the hub, in-progress runs per account |
+| Public profile | public fields only: name, username, lessons taught that the viewer may see, orgs the viewer may see |
+| Permissions | a per-person capabilities list in the session so the app can hide what is not allowed (section 24) |
+| Onboarding | hub name and accounts flag before sign in, avatar photo and hue per account, Home preference (learn or teach) per account, the org preview for a code before joining (name, member count, up to 3 lessons) |
 
 Exists today and usable now: lessons list and detail, upload with job polling, recut, delete, `/ws/ui` and `/ws/camera` with hello, next, back, goto, dismiss_mistake, `state` with status, last_check and reason, camera, check_offline and reason (`no_key`, `rate_limited`, `errors`, `budget`), mistake, advance.
 
@@ -855,3 +909,372 @@ The first rule that matches:
 ### 20.5 Insights aggregates
 
 Medians, not means. Counts always shown next to rates. A step row needs 3 runs that reached it. Times come from `advance.step_seconds` and `step_enter.expert_seconds` in the hub's learn events; mistakes from `mistake` events; check-off periods from `breaker` events.
+
+---
+
+## 21. Home and Explore
+
+The first tab. Navigation title "Home" (large). **Needs hub** for the org and hub-wide feeds and for in-progress runs per account; on a hub without accounts, Home shows Continue (from this device) and All Lessons only.
+
+**Layout (iPhone)**: vertical scroll of sections. Each section has a header (`section` style) with a trailing quiet "See All" that opens Browse All with the matching filter. A section with nothing in it is left out entirely, not shown empty.
+
+1. Search field in the navigation bar drawer: "Search lessons, people and organizations". Results group under "Lessons", "Organizations", "People" (people link to public profiles, section 23).
+2. "Continue Learning": horizontal cards as in section 5 (cover, title, "Step 4 of 8", progress ring). Newest first, up to 10.
+3. "From Your Organizations": one block per org the person belongs to, newest lessons first. Block header: org avatar 28, org name, "See All" (opens the org page). Up to 6 lesson cards per org in a horizontal row.
+4. "Everyone on <hub name>": lessons published to the whole hub. Grid on iPad and Mac, horizontal row on iPhone.
+5. "New Lessons": only when the hub has lessons the person has not opened, newest first, limited to 10.
+
+iPad: same sections, two to four cards per row. Mac: same in the main pane, with Browse All in the sidebar.
+
+Empty states (only when every section is empty):
+
+| Case | Symbol | Title | Message | Action (only if allowed) |
+|---|---|---|---|---|
+| no lessons anywhere, can teach | `film.stack` | "Nothing here yet" | "Record a task once and HandOver turns it into steps." | "Make a Lesson" |
+| no lessons, not in any org | `person.3` | "Nothing here yet" | "Join an organization to see its lessons, or ask someone to share one with you." | "Join with a Code" |
+| no lessons, in orgs | `film.stack` | "Nothing here yet" | "When your organizations publish lessons, they show up here." | |
+
+---
+
+## 22. Organizations
+
+An organization groups people and lessons on one hub: a team, a class, a shop. Roles inside an org: Admin (manages members and invites, publishes), Teacher (makes lessons and publishes them to the org), Member (takes lessons). The hub owner can see and manage every org. Lesson-level roles from section 15 (Owner, Editor, Learner) still apply to a single lesson. **Needs hub** for all of section 22.
+
+### 22.1 My organizations
+
+Tab "Organizations" on iPhone and Android; the sidebar section elsewhere. Navigation title "Organizations" (large).
+
+- Toolbar trailing: "Join" (`qrcode.viewfinder`, label "Join with a Code") and, only for people allowed to create orgs, "New" (`plus`, VoiceOver "New Organization").
+- List of org rows (DESIGN 3.24), sorted by name. Admin and Teacher roles show as a trailing badge.
+- Pending invites by username appear at the top in a section "Invitations": org row with "Invited by <name>, joins as <role>" and two buttons "Join" (primary small) and "Decline" (quiet small).
+
+Empty:
+
+| Case | Symbol | Title | Message | Actions |
+|---|---|---|---|---|
+| not in any org, can create | `person.3` | "No organizations yet" | "Organizations group people and lessons, like a team or a class." | "Join with a Code" (primary), "Create Organization" (secondary) |
+| not in any org, cannot create | `person.3` | "No organizations yet" | "Ask an admin for an invite code, then join here." | "Join with a Code" |
+
+### 22.2 Create an organization
+
+Sheet. Title "New Organization".
+
+| Element | Copy |
+|---|---|
+| Avatar well | shows the letters preview; "Choose Image" (optional) |
+| Field | "Name", placeholder "Bike Shop Crew", 2 to 40 characters |
+| Field (optional) | "About", placeholder "What this group learns together.", 200 characters |
+| Primary | "Create" |
+| Footer | "You become the admin. You can invite people next." |
+
+Name taken on this hub: "An organization with that name already exists." After Create: `success`, the org page opens with the invite sheet (22.5) on top.
+
+### 22.3 Join with a code
+
+From Join. Two ways in one sheet (large detent on iPhone).
+
+- Segmented control: "Type Code" / "Scan QR".
+- Type Code: field "Invite code", placeholder "K7QM 2XPA", uppercase, ignores spaces and dashes, `code` type; primary "Join".
+- Scan QR: the scanner from section 3.1 with the title "Scan the invite code" and the hint "Ask an admin to show the code from the organization's page." A QR from another hub carries that hub's address (`handover://join?host=...&code=...`); the app then asks "Join <org name> on <hub name>?" with "Connect and Join" and "Cancel", connects (section 3.3), and signs in or signs up (section 4) before joining.
+
+Result:
+- Valid: preview card with org avatar 72, name, "<m> members, <n> lessons", "You join as <role>.", primary "Join <org name>", quiet "Cancel". After joining: `success`, toast "You joined <org name>.", the org page opens.
+- Already a member: "You are already in <org name>." Button "Open".
+- Invalid: field shakes, `error` haptic: "That code does not work. Check it with the admin."
+- Expired: "That code has expired. Ask the admin for a new one."
+- Revoked: same copy as invalid (do not reveal that a code once existed).
+- Use cap reached: "That code has been used up. Ask the admin for a new one."
+
+Deep links: opening a `handover://join` link (from Messages, Mail or a scanned QR in the Camera app) goes to the same preview.
+
+### 22.4 Org page
+
+Push from the list, Home or search. Navigation title inline: org name.
+
+**Header**: avatar 72, name (`display`), about line (`body`, `ink2`, up to 3 lines), meta "<m> members, <n> lessons". Buttons in a row, each only if allowed:
+- "Teach" (primary, `video.badge.plus`), for Admins and Teachers. Opens Teach home (section 11) with the publish target preset to this org.
+- "Invite" (secondary, `person.badge.plus`), for Admins.
+- More menu (`ellipsis.circle`): "Edit Organization" (Admins), "Leave Organization" (members who are not the last admin), "Delete Organization" (Admins; destructive).
+
+**Segmented control under the header**: "Lessons" / "Members" (Members visible to everyone in the org; admin actions only for Admins). On Mac and iPad the two are side by side when the window is wide enough.
+
+**Lessons**: the org's published lessons, cards or rows as in section 5. Teachers and Admins also see a "Drafts" section at the top with their own drafts for this org. Sort menu: "Newest", "Name", "Most Taken" (Most Taken needs run counts; hidden until the hub has them).
+
+Empty lessons: for Teachers and Admins: symbol `film.stack`, "No lessons yet", "Make the first lesson for <org name>.", action "Teach". For Members: "No lessons yet", "When teachers publish here, lessons show up in this list." No action.
+
+**Members**: member rows (DESIGN 3.26), grouped "Admins", "Teachers", "Members". Search field when there are more than 20.
+
+Leave confirm: "Leave <org name>?", message "You lose access to its lessons. Your progress stays on the hub.", button "Leave". The last admin cannot leave: the menu item is replaced by "Make Someone Admin to Leave" which opens Members.
+
+Delete confirm: "Delete <org name>?", message "Members lose access to its lessons. Lessons go back to their owners as Only Me.", button "Delete Organization". Second confirm by typing the org name, field placeholder the name, button enabled only when it matches.
+
+### 22.5 Invite people (Admins)
+
+Sheet from Invite. Title "Invite to <org name>". Segmented control: "Invite Code" / "By Username".
+
+**Invite Code**
+- "New Code" form: "Joins as" menu (Member, Teacher, Admin; default Member), "Expires" menu ("In 1 Hour", "In 1 Day", "In 7 Days", "In 30 Days", "Never"; default 7 days), "Uses" menu ("1", "10", "50", "No Limit"; default No Limit). Primary "Create Code".
+- The new code appears as an invite code card (DESIGN 3.25) with "Share" opening the system share sheet. Share text: "Join <org name> on HandOver: <code>. Or open <handover://join link>." No em dashes in the text.
+- "Active Codes" list below: each card with its role, expiry and uses; "Revoke" with confirm "Revoke this code?", message "People who already joined stay in the org. The code stops working now.", button "Revoke Code". `warning` haptic.
+- "Expired Codes" collapsed group, each with "Delete".
+
+**By Username**
+- Field "Username", placeholder "@sam", suggestions as you type (name and username, avatar). "Joins as" menu. Primary "Send Invite".
+- Pending list: "Invited <name> as <role>", trailing "Cancel Invite" (quiet). Accepted invites move to Members.
+- Errors: "No one on this hub has that username.", "<name> is already in <org name>."
+
+### 22.6 Manage members (Admins)
+
+In Members, each row's role is a menu: "Admin", "Teacher", "Member". Changing it applies at once, toast "<name> is now a <role>." with Undo for 4 s.
+
+Remove: swipe "Remove" or the row menu. Confirm "Remove <name> from <org name>?", message "They lose access to this organization's lessons. Lessons they made stay in the org.", button "Remove". `warning` haptic.
+
+Guard rails: an admin cannot demote or remove the last admin; that row shows no role menu and no swipe action (not a disabled one), with a footer under the Admins group: "Every organization needs at least one admin."
+
+### 22.7 Edit organization (Admins)
+
+Same form as 22.2 with title "Edit Organization", primary "Save". Plus a "Who can see lessons" note: "Lessons published to this organization are visible to its members only."
+
+---
+
+## 23. Public profile
+
+What anyone signed in on this hub can see about a person. Nothing private: no progress, no scores, no ratings given, no email, no passcode, no devices, no run history. **Needs hub**.
+
+Opened from a member row, a lesson's "By <name>" line on Lesson detail, a comment author in Insights (only for people who may see Insights), or search.
+
+**Layout**: centered header: avatar 72 (letters unless the person uploaded an image), name (`display`), "@username" (`callout`, `ink2`).
+
+Sections (each left out when empty or not visible to the viewer):
+1. "Teaches": lessons this person owns or edits that the viewer is allowed to see, as lesson rows. Header detail "<n> lessons".
+2. "Organizations": orgs the person belongs to that the viewer is also in, or that are visible hub-wide, as org rows with the person's role badge ("Admin", "Teacher"). Members are not labeled.
+
+If both sections are empty: line "<name> has no public lessons or shared organizations." in `callout` `ink2`, no symbol, no button.
+
+Own profile: the Profile tab (section 4.3) gains a row "View Public Profile" that shows this screen exactly as others see it, with the footer "This is what other people on <hub name> see."
+
+---
+
+## 24. Permission-aware UI
+
+Rule: show only the actions this person can take. Do not show disabled or locked versions of actions their role forbids. Empty states offer an action only if it is allowed; otherwise they say who can help. **Needs hub**: the session lists capabilities (for example `can_create_org`, `can_teach_in: [org ids]`, `is_hub_owner`, and per-org role); the app reads them, never guesses from names.
+
+| Action | Shown to | Elsewhere |
+|---|---|---|
+| Teach tab, Make a Lesson, Record a Take | Teachers or Admins in at least one org, the hub owner, anyone on a hub without accounts | Tab is not created |
+| Teach button on an org page | Admins and Teachers of that org | Left out |
+| Publish to <org> rows | orgs where the person is Admin or Teacher | Left out |
+| Everyone on This Hub (publish) | hub owner, or anyone when the owner allows it | Left out |
+| Edit, Insights on a lesson | the lesson's Owner and Editors, admins of the org it is published to | Left out of menus |
+| Delete Lesson | the lesson's Owner, the hub owner | Left out |
+| Create Organization | people with `can_create_org` (default: everyone on open hubs, owner only on closed hubs) | "New" toolbar button and empty-state action left out |
+| Invite, Edit Organization, Delete Organization | that org's Admins | Left out |
+| Role menu, Remove member | that org's Admins, never on the last admin | Role shown as plain text |
+| Revoke code | that org's Admins | Codes list is not shown |
+| Leave Organization | any member who is not the last admin | Replaced by "Make Someone Admin to Leave" for the last admin |
+| Manage Access on a lesson | the lesson's Owner | Left out |
+| Hub settings (sign up policy, accounts) | hub owner | Section not shown in Settings |
+
+When a role changes while the app is open (the hub pushes a new session or the next request returns new capabilities), screens update in place: buttons appear or leave with `snappy`, and if the current screen is no longer allowed (for example the editor after losing Editor), it closes with the toast "You no longer have access to edit <lesson title>."
+
+A request that fails with a permission error anyway (out of date capabilities) shows a toast "You do not have permission to do that." and refreshes capabilities. It never shows a raw status code.
+
+---
+
+## 25. Onboarding
+
+The first launch, from the welcome pages to Home. It should feel calm and well made because it is plain, with nothing flashy. Visual and motion rules are in DESIGN.md section 7.
+
+### 25.1 Flow
+
+```
+Welcome pages (4) -> Connect to a hub -> [hub state]
+   no accounts on hub        -> Choose your role -> Theme -> Home
+   accounts, no users yet    -> Owner setup (4.5) -> Your profile -> Choose your role -> Theme -> Home
+   accounts, users exist     -> Sign in or Create account -> Your profile (new accounts only)
+                                -> Join an organization (optional) -> Choose your role -> Theme -> Home
+```
+
+Required: Connect, and sign in or sign up when the hub has accounts. Everything else is optional and has "Not Now".
+
+Shared chrome on every onboarding page:
+- Page dots at the bottom for the welcome pages only (system `TabView` page style, 4 dots). Later steps show a quiet "Step 2 of 5" in `footnote` `ink2` above the title, counting only the steps this person will actually see.
+- Top trailing: "Skip" (quiet) on welcome pages; "Not Now" on optional steps. Required steps show no skip.
+- Top leading: Back (`chevron.left`) from the second step on.
+- Bottom: one primary button, full width, `controlLarge`, `l` margins, above the safe area.
+- Background: `paper` of the Default theme in the system appearance (the person has not picked a theme yet).
+
+### 25.2 Welcome pages
+
+Four pages, swipe or Continue. Each page: an illustration area (top 55% of the height), then title (`display`, centered), then one line (`body`, `ink2`, centered, max width 340), then the primary button.
+
+Illustrations are vector drawings built from SF Symbols and simple shapes in the theme's own roles (DESIGN.md 7.2), or a short muted loop from the real sample lesson `lessons/synthetic-fortune-teller-v1` (8 steps of 3 s each, rendered, not filmed). Do not use `lessons/demo-v1`: it is a test pattern. Bundle the clips and frames used here in the app so the pages work before any hub is connected. No people photos. No numbers that did not come from that lesson.
+
+| Page | Title | Line | Illustration | Motion | Button |
+|---|---|---|---|---|---|
+| 1 | "An expert does it once" | "They record the task on their phone or Ray-Ban Meta glasses and talk through each step." | A rounded 16:9 panel on `stage` playing the muted 3 s clip `lessons/synthetic-fortune-teller-v1/clips/02.mp4` on a loop, captioned in `caption` under it: "Sample lesson, rendered". Below the panel, a `waveform` symbol and a red `record` dot capsule reading "Recording". | Waveform symbol uses `.symbolEffect(.variableColor.iterative)` while the page is visible; the panel fades in 0.30 s ease out | "Continue" |
+| 2 | "We turn it into steps" | "HandOver finds where each step starts and ends, cuts a clip for each one, and adds captions." | The same panel shrinks into a row of step tiles: the real frames `frames/01.jpg` to `frames/08.jpg` of the sample lesson, each 64 x 40 with its number pill (two rows of four on iPhone). Under them, the timeline (DESIGN 3.18) with the sample lesson's real step spans (eight equal 3 s segments). | Matched geometry: the page 1 panel morphs into tile 1 (0.5 s, `layout` spring). The timeline segments fill left to right, each 0.35 s ease out, starting every 0.12 s | "Continue" |
+| 3 | "Your camera follows along" | "Point a phone at your work. When a step looks done, the next clip starts." | Two panes side by side: left a `stage` pane with a large `camera.viewfinder` symbol in white 70% and a corner bracket frame; right the step 3 tile from page 2, grown to a pane. Under them the status badge animating Watching to Verified. | Tile 3 matched geometry from page 2 into the right pane (0.5 s). The badge changes after 1.2 s, with `snappy`, and the `checkmark.circle.fill` symbol plays `.bounce` once | "Continue" |
+| 4 | "You get a score and a tip" | "See how each step went against the expert, and what to practice next." | The score ring (DESIGN 3.21) with no number in it, only the label "Your score", and three time bars below, drawn with no figures (bars only). A `lightbulb` card with the placeholder line "One tip, from your own run." | The ring draws from 0 to 70% over 0.6 s ease out; bars grow in sequence, 0.25 s each, every 0.08 s | "Get Started" |
+
+Why the numbers are absent on page 4: there is no run yet. Showing a score would be a fake stat.
+
+Parallax: while swiping, the illustration moves at 0.6x of the page offset and the text at 1.0x, so the picture lags a little. No tilt, no device-motion parallax.
+
+Skip on any welcome page goes straight to 25.3. The welcome pages are shown once per install; Settings > About > "Show Welcome Again" replays them.
+
+VoiceOver: each page is one container: title, line, and an illustration label: page 1 "A sample lesson playing, with a recording indicator", page 2 "The lesson split into 8 steps on a timeline", page 3 "Your camera beside the expert's clip. The status changes to verified.", page 4 "A score ring and a time bar for each step". Animations do not delay focus.
+
+### 25.3 Connect to a hub
+
+The page from section 2 (title "HandOver", buttons "Connect to a Hub" and "Enter Address"), with the title changed to "Connect to your hub" and the line "The hub is HandOver running on a computer near you. It keeps your lessons."
+
+Pre-permission cards appear just before each system prompt, never earlier (25.8): Local Network before the first connect attempt on iOS, Camera before the scanner opens.
+
+The connect moment:
+1. Scanner (3.1): native viewfinder, dim around a rounded square, corner brackets in white.
+2. Code found: brackets close in to 86% (`layout` spring, response 0.34, damping 0.86) and turn `good`; `soft` haptic.
+3. Connecting: the viewfinder cross-fades (0.25 s) to `paper` with a spinner and "Connecting to <hub name>".
+4. Connected: `checkmark.circle.fill` in `good` at 64 pt draws in with `.symbolEffect(.drawOn)` on iOS 26 (or `.bounce` before 26), `success` haptic at the same frame. Title "Connected to <hub name>", line "<n> lessons on this hub." Holds 1.2 s, then continues by itself.
+5. Reduce Motion: no bracket move, no draw; the check appears with a 0.15 s fade. The haptic still plays.
+
+Failure states are those in 3.3.
+
+### 25.4 Account
+
+Shown when the hub has accounts. First, a choice page:
+
+| Element | Copy |
+|---|---|
+| Title | "Sign in to <hub name>" |
+| Line | "Your account lives on this hub. There is no HandOver cloud account." |
+| Primary | "Create an Account" (only when the hub allows sign up) |
+| Secondary | "I Have an Account" |
+| Quiet | "Ask the Hub Owner" (device approval, 4.2) |
+
+If sign up is closed, "I Have an Account" becomes the primary and "Create an Account" is not shown.
+
+**Create an Account** is 4.4 split into two calm pages:
+
+Page A, "What should we call you?":
+- Field "Name", placeholder "Sam Rivera". Footer "Shown on lessons you teach and in your organizations."
+- Field "Username", placeholder "sam", live "Available" / "Taken" (0.4 s after typing stops).
+- Primary "Continue".
+
+Page B, "Choose a passcode":
+- Field "Passcode" (secure, with a show or hide eye button, VoiceOver "Show passcode"), field "Confirm Passcode".
+- Strength hint under the first field: a 3-segment bar (4 pt tall, `small` radius) and one line. Rules are simple and honest; they describe guessability, not a promise of security:
+
+| Passcode | Bar | Line |
+|---|---|---|
+| under 4 characters | empty | "At least 4 characters." |
+| 4 to 5 characters, or all one character, or a run like 1234 or abcd | 1 segment, `caution` | "Easy to guess. Anyone nearby could try it." |
+| 6 to 7 characters, not a run | 2 segments, `accent` | "OK for a shared workshop hub." |
+| 8 or more with letters and numbers | 3 segments, `good` | "Hard to guess." |
+
+- Mismatch (after the confirm field loses focus): "Passcodes do not match." in `bad`.
+- Primary "Create Account". Errors as in 4.4.
+
+**Sign in** is 4.1.
+
+### 25.5 Your profile (avatar)
+
+After creating an account or finishing owner setup. Optional; "Not Now" keeps the initials avatar.
+
+| Element | Copy |
+|---|---|
+| Title | "Add a picture" |
+| Line | "People see it next to your name. Initials work fine." |
+| Avatar preview | 96 pt circle (DESIGN 7.4) |
+| Color row | 8 color swatches, 44 pt hit areas, VoiceOver "Blue", "Teal", "Violet", "Berry", "Olive", "Slate", "Rust", "Green"; the selected one has a 2 pt `ink` ring |
+| Buttons | "Choose Photo" (secondary, opens the system photo picker with no library permission needed), "Take Photo" (secondary, camera; pre-permission card 25.8) |
+| Primary | "Continue" |
+
+A chosen photo shows a system crop to a circle. "Remove Photo" (quiet) returns to initials. Changing color animates the fill with `snappy`.
+
+### 25.6 Join an organization
+
+Shown when the hub has organizations and the person is not in one yet. Optional.
+
+| Element | Copy |
+|---|---|
+| Title | "Join your team" |
+| Line | "If someone gave you an invite code, enter it or scan it. You can do this later from Organizations." |
+| Field | "Invite code", placeholder "K7QM 2XPA" |
+| Secondary | "Scan QR Code" |
+| Primary | "Join" (disabled until 8 characters) |
+| Top trailing | "Not Now" |
+
+Valid code: the welcome card replaces the form with a matched geometry move of the code field into the card's top (0.4 s, `layout`):
+- Org avatar 72, name (`display`), "<m> members".
+- "Lessons in <org name>": up to 3 real lessons from the org as compact rows (cover, title, "<n> steps"). With none: "No lessons here yet." Nothing is invented to fill space.
+- "You join as <role>."
+- Primary "Join <org name>", quiet "Use a Different Code".
+
+Joined: `success` haptic, toast-free (the next step appears), the org shows first on Home.
+
+Errors as in 22.3.
+
+### 25.7 Choose your role
+
+| Element | Copy |
+|---|---|
+| Title | "What brings you here?" |
+| Line | "This only changes what Home shows first. You can do both anytime." |
+| Option card 1 | `graduationcap` tile, "I Want to Learn", "Lessons to take and where you left off." |
+| Option card 2 | `video.badge.plus` tile, "I Want to Teach", "Record a task and turn it into a lesson." |
+| Option card 3 (quiet row) | "Both" |
+| Primary | "Continue" |
+
+Cards are `raised` with a hairline; selected: `accentSoft` fill, 1.5 pt `accent` edge, `checkmark.circle.fill` in `accentInk` at the trailing corner, `tap` haptic.
+
+What it changes, and only this: the order of Home sections (Learn puts Continue Learning first; Teach puts a "Your Lessons" section with a Make a Lesson card first when the person can teach). It never grants or removes permissions; a person who picks Teach but cannot teach anywhere sees the learn order and, once, the line on Home "You can teach once an organization admin makes you a teacher." Stored per account on the hub when possible, else on the device. Changeable in Settings > Learn > "Home Shows First".
+
+### 25.8 Permission pre-prompts
+
+One card just before each system prompt, at the moment the feature is first used. Never a batch of prompts at launch. Layout: symbol tile 56, title (`title`), line (`body`, `ink2`), primary "Continue" (which triggers the system prompt), quiet "Not Now".
+
+| Permission | When | Symbol | Title | Line |
+|---|---|---|---|---|
+| Local Network (iOS) | first connect attempt | `network` | "Find your hub" | "HandOver looks for the hub on your Wi-Fi. iPhone will ask to allow devices on your local network." |
+| Camera | opening the scanner, Camera Mode, Record or Take Photo | `camera` | "Use the camera" | "The camera scans the hub's code and shows your work while you learn. Frames go to your hub only and are not saved." |
+| Microphone | first Record | `mic` | "Record your voice" | "Talk through each step while you record. HandOver uses your words to find where steps start and end." |
+| Bluetooth | first Glasses connect | `eyeglasses` | "Reach your glasses" | "HandOver connects to Ray-Ban Meta glasses through Bluetooth and the Meta AI app." |
+| Speech (Voice Next) | turning on Voice Next | `waveform` | "Hear \"next\" and \"back\"" | "Speech is recognized on this device to move between steps." |
+
+"Not Now" returns to the screen without the system prompt, so the system prompt is never spent on a no. If the system permission was already denied, the card's primary becomes "Open Settings" and the line ends with "It is off in Settings."
+
+Android uses the same cards before `requestPermissions`. Mac shows them only for camera and microphone. Windows shows them before the first camera or microphone use.
+
+### 25.9 Theme
+
+Last step. Title "Pick a look". Line "You can change it anytime in Settings."
+
+- Appearance segmented control: System, Light, Dark.
+- A live preview at the top (40% of the height): a miniature Learn screen drawn with real components in the highlighted theme: progress bar, a black clip pane showing `frames/04.jpg` of the sample lesson with a caption line, the step title "Fold all four corners to center" (the sample lesson's step 4), the Watching badge and a Next button. It updates as the person scrolls the theme row.
+- Theme row: horizontal snapping carousel of the 14 theme cards (THEMES.md picker cards), the centered card is highlighted. Tap or scroll to center selects. Grain themes show their grain in the card and the preview.
+- Selecting cross-fades the preview in 0.2 s (`clip` timing); the rest of the onboarding screen re-themes too, so the person sees it applied for real.
+- Primary "Start Using HandOver". Haptic `success` on the final tap.
+- Quiet "Keep Default" (top trailing).
+
+### 25.10 Finish
+
+No extra screen. The theme page dissolves into Home (0.35 s cross-fade, Home content rises 12 pt with `panel`; fade only with Reduce Motion). If the person joined an org, Home scrolls that org's block into view. If the role was Teach and they can teach, the Make a Lesson card is first.
+
+### 25.11 Skip and resume
+
+- Progress is saved after each step on the device (and the account step results on the hub).
+- Quitting mid-flow resumes at the first unfinished required step on next launch. Welcome pages are not shown again once seen or skipped.
+- Optional steps skipped with "Not Now" never block later. Home shows one dismissible card "Finish setting up" (`raised`, `checklist` symbol) listing only the skipped items that still apply: "Join an organization", "Add a picture", "Pick a look". Each row opens that step as a sheet. "Hide" (quiet) removes the card for good.
+- Connecting to a second hub later runs only 25.3 and 25.4 for that hub. Theme, role and avatar are not asked again (avatar and role are per account, so a new account on a new hub gets 25.5 and 25.7 only).
+- If the hub becomes unreachable mid-flow, the current page shows the banner from section 18 and keeps what was typed.
+
+### 25.12 Platforms
+
+| Platform | Differences |
+|---|---|
+| iPhone | As above. Portrait only for onboarding (Learn and Record still rotate). |
+| iPad | Centered sheet-like card 600 x 720 on `paper`, illustrations 1.3x. Landscape supported. Welcome pages swipe or use Continue; Left and Right Arrow keys move pages with a keyboard. |
+| Mac | One window 720 x 560, not resizable during onboarding. Welcome pages use Back and Continue buttons (no swipe), Left and Right Arrow keys, Return for the primary. Default button is "Enter Address" on the connect page. Pre-prompts only for camera and microphone. Theme carousel becomes a 7 x 2 grid with the preview above. |
+| Android | `HorizontalPager` with Material page indicator for welcome pages; matched geometry via shared element transitions in Compose; symbol effects become `AnimatedVectorDrawable` versions of the same drawings; haptics per DESIGN 4. System back goes back one step; on the first welcome page it exits. Photo picker is the Android photo picker (no storage permission). |
+| Windows | A single window 760 x 600 with Back and Continue; connected animations stand in for matched geometry; no haptics. Theme grid as on Mac. |
