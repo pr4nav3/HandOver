@@ -35,8 +35,12 @@ from server import config
 
 REPO = Path(__file__).resolve().parent.parent
 HDR_TRANSFERS = {"smpte2084", "arib-std-b67"}  # PQ and HLG, what iPhones record in HDR
-SDR_TAGS = ["-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709"]
-SDR_FRAME_TAGS = "setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709"
+SDR_TAGS = ["-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709", "-color_range", "tv"]
+SDR_FRAME_TAGS = "setparams=range=tv:color_primaries=bt709:color_trc=bt709:colorspace=bt709"
+# Full range input (yuvj420p from cameras or JPEG-built videos) is squeezed to TV range 8-bit 4:2:0: browsers
+# and our lesson lint expect plain yuv420p.
+TV_RANGE = "in_range=auto:out_range=tv"
+CLIP_VF = f"scale={TV_RANGE},format=yuv420p,{SDR_FRAME_TAGS}"
 # a keyframe every second and none from scene cuts, so the player can seek a clip smoothly
 SEEK_TAGS = ["-force_key_frames", "expr:gte(t,n_forced*1)", "-sc_threshold", "0", "-pix_fmt", "yuv420p"]
 
@@ -344,9 +348,9 @@ def normalize(src: Path, dst: Path) -> None:
     dst.parent.mkdir(parents=True, exist_ok=True)
     audio = has_audio(src)
     if color_transfer(src) in HDR_TRANSFERS:
-        vf = "scale=-2:1080:in_color_matrix=bt2020:out_color_matrix=bt709,format=yuv420p"
+        vf = f"scale=-2:1080:in_color_matrix=bt2020:out_color_matrix=bt709:{TV_RANGE},format=yuv420p"
     else:
-        vf = "scale=-2:1080,format=yuv420p"
+        vf = f"scale=-2:1080:{TV_RANGE},format=yuv420p"
     vf += "," + SDR_FRAME_TAGS  # the encoder flags alone lose to the frame tags ffmpeg carries from the input
     cmd = [_bin("ffmpeg"), "-y", "-i", str(src)]
     if not audio:
@@ -982,7 +986,8 @@ def _cut_steps(norm: Path, out_dir: Path, extraction: Extraction, spans: list[tu
         nn = f"{n:02d}"
         clip = out_dir / "clips" / f"{nn}.mp4"
         _run([_bin("ffmpeg"), "-y", "-ss", f"{a:.3f}", "-to", f"{b:.3f}", "-i", str(norm),
-              "-c:v", "libx264", "-crf", "20", "-preset", "veryfast", *SEEK_TAGS, *SDR_TAGS, "-c:a", "aac",
+              "-vf", CLIP_VF, "-c:v", "libx264", "-crf", "20", "-preset", "veryfast", *SEEK_TAGS, *SDR_TAGS,
+              "-c:a", "aac",
               "-movflags", "+faststart", str(clip)])
         length = probe_duration(clip)
         _write_vtt(out_dir / "captions" / f"{nn}.vtt", extraction.transcript, a, length)

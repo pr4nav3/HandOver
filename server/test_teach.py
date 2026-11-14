@@ -260,6 +260,35 @@ def test_clips_have_a_keyframe_every_second():
     assert max(b - a for a, b in zip(keys, keys[1:])) <= 1.05, keys
 
 
+def test_full_range_input_gives_tv_range_clips():
+    src = TMP / "full-range.mp4"
+    _ffmpeg("-f", "lavfi", "-i", "testsrc2=s=320x240:r=30:d=4", "-c:v", "libx264", "-preset", "ultrafast",
+            "-pix_fmt", "yuvj420p", str(src))
+
+    def probe(path):
+        out = subprocess.run([teach._bin("ffprobe"), "-v", "error", "-select_streams", "v:0", "-show_entries",
+                              "stream=pix_fmt,color_range,color_primaries,color_transfer,color_space",
+                              "-of", "default=nw=1", str(path)], capture_output=True, text=True, encoding="utf-8")
+        return dict(line.split("=", 1) for line in out.stdout.split())
+
+    assert probe(src)["pix_fmt"] == "yuvj420p"
+    steps = TMP / "full-range-steps.json"
+    steps.write_text(json.dumps({"steps": [
+        {"start": "00:00", "end": "00:02", "title": "A", "check_question": "Is it a square?", "prerequisites": []},
+        {"start": "00:02", "end": "00:04", "title": "B", "check_question": "Is it folded?", "prerequisites": [1]},
+    ], "transcript": []}), encoding="utf-8")
+    teach.build([src], "full-range", "Full range", steps_json=steps)
+    d = teach.lessons_root() / "full-range"
+    expect = {"pix_fmt": "yuv420p", "color_range": "tv", "color_primaries": "bt709", "color_transfer": "bt709",
+              "color_space": "bt709"}
+    for f in (d / "norm.mp4", d / "clips" / "01.mp4", d / "clips" / "02.mp4"):
+        assert probe(f) == expect, (f.name, probe(f))
+    # a recut of an old lesson whose norm.mp4 is still full range also gives tv range clips
+    shutil.copy(src, d / "norm.mp4")
+    teach.recut(d)
+    assert probe(d / "clips" / "01.mp4") == expect
+
+
 # ---------------------------------------------------------------- extraction request (faked Gemini client)
 
 class _FakeFiles:
