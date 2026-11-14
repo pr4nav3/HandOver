@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The hub is a laptop on the local network at an address the user types or scans, so no fixed
+     domain list is possible. Cleartext is allowed for every host; the app only talks to the hub. -->
+<network-security-config xmlns:tools="http://schemas.android.com/tools">
+    <base-config cleartextTrafficPermitted="true" tools:ignore="InsecureBaseConfiguration">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>
