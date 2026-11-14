@@ -3,7 +3,8 @@
 Calling the model on every frame (about 1 fps) breaks rate limits and wastes
 calls on blurry, mid-motion frames. The gate allows a check only when the scene
 has settled after motion and looks different from the last checked frame, plus
-a heartbeat every few seconds so a slow change is never missed.
+a heartbeat every few seconds (even during motion) so a slow change or a shaky
+camera is never left unchecked.
 
 Pillow only (no numpy or OpenCV). Each frame is decoded straight to a small
 grayscale image using the JPEG decoder's built-in downscaling, blurred, and
@@ -127,19 +128,21 @@ class MotionGate:
         motion = diff_fraction(prev, cur)
         self._last_motion = motion
         self._still_count = self._still_count + 1 if motion < self.still_thresh else 0
-        if motion > self.motion_thresh:
-            return False
 
-        settled = self._still_count >= self.still_frames
-        if self._checked is None:
-            self._last_change = None
-            changed = True  # nothing checked yet on this step
+        # Heartbeat wins even in motion: a shaky chest-mounted phone may never settle,
+        # and the contract promises a check at least every heartbeat_s.
+        if now - self._since >= self.heartbeat_s:
+            allow = True
+        elif motion > self.motion_thresh:
+            allow = False  # motion only holds the change-triggered checks
         else:
-            self._last_change = diff_fraction(self._checked, cur)
-            changed = self._last_change > self.change_thresh
-        # Heartbeat also covers a scene that jitters but never fully settles.
-        heartbeat = now - self._since >= self.heartbeat_s
-        allow = (settled and changed) or heartbeat
+            if self._checked is None:
+                self._last_change = None
+                changed = True  # nothing checked yet on this step
+            else:
+                self._last_change = diff_fraction(self._checked, cur)
+                changed = self._last_change > self.change_thresh
+            allow = self._still_count >= self.still_frames and changed
         if allow:
             self._checks_allowed += 1
         return allow
