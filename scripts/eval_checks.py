@@ -1,0 +1,322 @@
+"""Score a lesson's camera check questions before a learner meets them.
+
+    .venv/bin/python scripts/eval_checks.py lessons/demo-v1 [--n 1] [--next] [--mock]
+
+For each camera step k it asks the real check (server.check.check_frame):
+  own   reference k against itself          expect yes
+  prev  reference k against reference k-1   expect no (step 1 has no previous)
+  next  reference k against reference k+1   reported only, with --next; a later
+        state may still satisfy the question, so neither answer is wrong
+
+A step passes when every own probe is a confident yes (HANDOVER_MIN_CONF, 0.8)
+and every prev probe is a no. Steps that fail are recommended "make manual".
+Prints a table and writes markdown to scripts/out/eval-<id>-<timestamp>.md.
+
+Needs a Gemini key (GEMINI_API_KEY, GOOGLE_API_KEY, or the repo .env); the key
+is never printed. --mock runs offline: identical images say yes, others no.
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import json
+import os
+import statistics
+import sys
+import time
+from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
+
+SCRIPTS = Path(__file__).resolve().parent
+REPO = SCRIPTS.parent
+sys.path.insert(0, str(SCRIPTS))
+from lesson_lint import resolve  # noqa: E402
+
+KEY_NAMES = ("GEMINI_API_KEY", "GOOGLE_API_KEY")
+DEFAULT_MODEL_LABEL = "gemini (server.check default)"
+ANSWERS = ("yes", "no", "unsure")
+
+
+@dataclass
+class Probe:
+    kind: str  # own, prev, next
+    done: str  # yes, no, unsure
+    confidence: float
+    latency_ms: int
+
+
+@dataclass
+class StepScore:
+    n: int
+    title: str
+    question: str
+    probes: list[Probe]
+    min_conf: float
+
+    def _of(self, kind: str) -> list[Probe]:
+        return [p for p in self.probes if p.kind == kind]
+
+    @property
+    def own_yes(self) -> float:
+        own = self._of("own")
+        return sum(p.done == "yes" and p.confidence >= self.min_conf for p in own) / len(own)
+
+    @property
+    def prev_no(self) -> float | None:
+        prev = self._of("prev")
+        return sum(p.done == "no" for p in prev) / len(prev) if prev else None
+
+    @property
+    def next_yes(self) -> float | None:
+        nxt = self._of("next")
+        return sum(p.done == "yes" for p in nxt) / len(nxt) if nxt else None
+
+    @property
+    def mean_conf(self) -> float:
+        scored = [p.confidence for p in self.probes if p.kind != "next"]
+        return statistics.fmean(scored) if scored else 0.0
+
+    @property
+    def mean_latency(self) -> float:
+        return statistics.fmean(p.latency_ms for p in self.probes) if self.probes else 0.0
+
+    @property
+    def passed(self) -> bool:
+        return self.own_yes == 1.0 and (self.prev_no is None or self.prev_no == 1.0)
+
+
+# ---------------------------------------------------------------- key
+
+def has_key(environ: dict | None = None, env_file: Path | None = None) -> bool:
+    """True when a Gemini key is set in the environment or the .env file. Never returns or prints the key."""
+    environ = os.environ if environ is None else environ
+    if any(environ.get(k, "").strip() for k in KEY_NAMES):
+        return True
+    env_file = REPO / ".env" if env_file is None else env_file
+    if not env_file.is_file():
+        return False
+    for line in env_file.read_text(encoding="utf-8", errors="ignore").splitlines():
+        line = line.strip()
+        if "=" not in line or line.startswith("#"):
+            continue
+        k, v = line.split("=", 1)
+        if k.strip().removeprefix("export ").strip() in KEY_NAMES and v.strip().strip("\"'"):
+            return True
+    return False
+
+
+# ---------------------------------------------------------------- checkers
+
+async def mock_check(ref: bytes, live: bytes, question: str) -> Probe:
+    """Offline stand-in: yes 0.9 for the same image, no 0.85 otherwise."""
+    if ref == live:
+        return Probe("", "yes", 0.9, 0)
+    return Probe("", "no", 0.85, 0)
+
+
+def gemini_checker():
+    """Wrap server.check.check_frame (positional ref, live, question) into a Probe."""
+    os.environ.pop("HANDOVER_CHECK", None)  # this process always uses the real check
+    sys.path.insert(0, str(REPO))
+    from server.check import check_frame
+
+    async def run(ref: bytes, live: bytes, question: str) -> Probe:
+        r = await check_frame(ref, live, question)
+        return Probe("", str(r.done), float(r.confidence), int(r.latency_ms))
+
+    return run
+
+
+# ---------------------------------------------------------------- evaluation
+
+def load_steps(folder: Path) -> tuple[str, list[dict]]:
+    data = json.loads((folder / "lesson.json").read_text(encoding="utf-8"))
+    steps = data.get("steps", [])
+    out = []
+    for i, s in enumerate(steps, 1):
+        out.append({
+            "n": i,
+            "title": s.get("title", ""),
+            "type": s.get("check_type", "camera"),
+            "question": (s.get("check_question", "Is this step finished?") or "").strip(),
+            "frame": folder / s.get("ref_frame", f"frames/{i:02d}.jpg"),
+        })
+    return data.get("id", folder.name), out
+
+
+async def evaluate(steps: list[dict], checker, n: int, with_next: bool, pause: float,
+                   min_conf: float, progress=None) -> list[StepScore]:
+    frames = {s["n"]: s["frame"].read_bytes() for s in steps if s["frame"].is_file()}
+    scores = []
+    for s in steps:
+        if s["type"] != "camera" or not s["question"] or s["n"] not in frames:
+            continue
+        k = s["n"]
+        pairs = [("own", frames[k])]
+        if k - 1 in frames:
+            pairs.append(("prev", frames[k - 1]))
+        if with_next and k + 1 in frames:
+            pairs.append(("next", frames[k + 1]))
+        probes = []
+        for kind, live in pairs:
+            for _ in range(n):
+                p = await checker(frames[k], live, s["question"])
+                p.kind = kind
+                probes.append(p)
+                if progress:
+                    progress(k, p)
+                if pause:
+                    await asyncio.sleep(pause)
+        scores.append(StepScore(k, s["title"], s["question"], probes, min_conf))
+    return scores
+
+
+# ---------------------------------------------------------------- output
+
+def pct(v: float | None) -> str:
+    return "n/a" if v is None else f"{v * 100:.0f}%"
+
+
+def table_rows(scores: list[StepScore], with_next: bool) -> tuple[list[str], list[list[str]]]:
+    head = ["Step", "Own yes", "Prev no"] + (["Next yes"] if with_next else []) + ["Mean conf", "Latency", "Verdict"]
+    rows = []
+    for s in scores:
+        row = [f"{s.n} {s.title}".strip(), pct(s.own_yes), pct(s.prev_no)]
+        if with_next:
+            row.append(pct(s.next_yes))
+        row += [f"{s.mean_conf:.2f}", f"{s.mean_latency:.0f} ms", "ok" if s.passed else "make manual"]
+        rows.append(row)
+    return head, rows
+
+
+def confusion(scores: list[StepScore]) -> dict:
+    """Counts of answers for probes that expect yes (own) and no (prev)."""
+    out = {"yes": {"yes": 0, "no": 0, "unsure": 0}, "no": {"yes": 0, "no": 0, "unsure": 0}}
+    for s in scores:
+        for p in s.probes:
+            if p.kind in ("own", "prev"):
+                out["yes" if p.kind == "own" else "no"][p.done if p.done in ANSWERS else "unsure"] += 1
+    return out
+
+
+
+def render_text(scores: list[StepScore], with_next: bool) -> str:
+    head, rows = table_rows(scores, with_next)
+    widths = [max(len(head[i]), *(len(r[i]) for r in rows)) for i in range(len(head))] if rows else [len(h) for h in head]
+    lines = ["  ".join(h.ljust(w) for h, w in zip(head, widths))]
+    lines += ["  ".join(c.ljust(w) for c, w in zip(r, widths)).rstrip() for r in rows]
+    return "\n".join(lines)
+
+
+def render_markdown(lesson_id: str, mode: str, n: int, with_next: bool, scores: list[StepScore],
+                    skipped: list[dict], stamp: str) -> str:
+    head, rows = table_rows(scores, with_next)
+    md = [f"# Check eval: {lesson_id}", "",
+          f"- When: {stamp}", f"- Checker: {mode}", f"- Probes per pair: {n}",
+          f"- Pass rule: every own probe is yes at confidence {scores[0].min_conf if scores else 0.8:.2f}+, "
+          "every prev probe is no", ""]
+    md += ["## Per step", "", "| " + " | ".join(head) + " |", "|" + "---|" * len(head)]
+    md += ["| " + " | ".join(r) + " |" for r in rows]
+    if skipped:
+        md += ["", "Not scored: " + ", ".join(f"step {s['n']} ({s['why']})" for s in skipped) + "."]
+
+    c = confusion(scores)
+    md += ["", "## Confusion (own and prev probes)", "",
+           "| Expected | Got yes | Got no | Got unsure |", "|---|---|---|---|",
+           f"| yes (own) | {c['yes']['yes']} | {c['yes']['no']} | {c['yes']['unsure']} |",
+           f"| no (prev) | {c['no']['yes']} | {c['no']['no']} | {c['no']['unsure']} |"]
+    false_pass = c["no"]["yes"]
+    md += ["", f"False passes (a previous state judged done): {false_pass}."]
+
+    if with_next:
+        md += ["", "Next probes are informational: a later state can still satisfy an earlier question."]
+
+    failing = [s for s in scores if not s.passed]
+    md += ["", "## Recommendation", ""]
+    if not failing:
+        md.append("Every scored step passed. Keep them as camera steps.")
+    for s in failing:
+        why = []
+        if s.own_yes < 1.0:
+            why.append(f"own yes {pct(s.own_yes)}")
+        if s.prev_no is not None and s.prev_no < 1.0:
+            why.append(f"prev no {pct(s.prev_no)}")
+        md.append(f"- Step {s.n}: make manual, or rewrite the question ({', '.join(why)}). Question: \"{s.question}\"")
+    return "\n".join(md) + "\n"
+
+
+# ---------------------------------------------------------------- main
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(prog="eval_checks.py", description="Score a lesson's camera check questions.")
+    ap.add_argument("lesson", help="lesson folder, for example lessons/demo-v1")
+    ap.add_argument("--n", type=int, default=1, help="probes per image pair (default 1)")
+    ap.add_argument("--next", action="store_true", help="also probe reference k against k+1 (reported separately)")
+    ap.add_argument("--mock", action="store_true", help="offline: no Gemini, identical images say yes")
+    ap.add_argument("--pause", type=float, default=None, help="seconds between Gemini calls (default 1, mock 0)")
+    ap.add_argument("--out", default=str(SCRIPTS / "out"), help="folder for the markdown report")
+    a = ap.parse_args(argv)
+    if a.n < 1:
+        ap.error("--n must be 1 or more")
+
+    folder = resolve(a.lesson)
+    if not (folder / "lesson.json").is_file():
+        print(f"eval_checks: {a.lesson}: no lesson.json there", file=sys.stderr)
+        return 2
+    try:
+        lesson_id, steps = load_steps(folder)
+    except (OSError, ValueError, AttributeError) as e:
+        print(f"eval_checks: lesson.json unreadable ({type(e).__name__}); run scripts/lesson_lint.py first",
+              file=sys.stderr)
+        return 2
+
+    if a.mock:
+        checker, mode = mock_check, "mock (offline)"
+    else:
+        if not has_key():
+            print("eval_checks: no Gemini key found. Set GEMINI_API_KEY or add it to .env, "
+                  "or run with --mock for an offline dry run.", file=sys.stderr)
+            return 2
+        checker = gemini_checker()
+        mode = os.environ.get("HANDOVER_CHECK_MODEL") or DEFAULT_MODEL_LABEL
+    pause = a.pause if a.pause is not None else (0.0 if a.mock else 1.0)
+    min_conf = float(os.environ.get("HANDOVER_MIN_CONF", "0.8"))
+
+    skipped = []
+    for s in steps:
+        if s["type"] != "camera":
+            skipped.append({"n": s["n"], "why": "manual"})
+        elif not s["question"]:
+            skipped.append({"n": s["n"], "why": "no question"})
+        elif not s["frame"].is_file():
+            skipped.append({"n": s["n"], "why": "frame missing"})
+
+    def progress(k: int, p: Probe) -> None:
+        print(f"  step {k} {p.kind:4s}  {p.done:6s}  conf {p.confidence:.2f}  {p.latency_ms} ms", flush=True)
+
+    print(f"{lesson_id}: scoring with {mode}")
+    t0 = time.monotonic()
+    scores = asyncio.run(evaluate(steps, checker, a.n, a.next, pause, min_conf, progress))
+    print()
+    print(render_text(scores, a.next) if scores else "No camera steps to score.")
+
+    now = datetime.now()
+    md = render_markdown(lesson_id, mode, a.n, a.next, scores, skipped, now.strftime("%Y-%m-%d %H:%M:%S"))
+    out_dir = Path(a.out)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out = out_dir / f"eval-{lesson_id}-{now.strftime('%Y%m%d-%H%M%S')}.md"
+    out.write_text(md, encoding="utf-8")
+
+    failing = [s.n for s in scores if not s.passed]
+    c = confusion(scores)
+    print()
+    print(f"{len(scores) - len(failing)} of {len(scores)} steps pass, {c['no']['yes']} false passes, "
+          f"{time.monotonic() - t0:.1f} s. Make manual: {', '.join(map(str, failing)) or 'none'}.")
+    print(f"Report: {out}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
