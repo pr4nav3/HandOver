@@ -28,7 +28,7 @@ Risk key: **none** means docs only. **low** means behavior a careful client may 
 | P16 | 6 | Camera input limits: 5 frames per second, hello field limits, 8 KB text | Not listed | low |
 | P17 | 7 | Delivery: newest frame only, latest state replaces unsent states | Contract implies one state per change | clients must update |
 | P18 | 7 | No lesson loaded: unknown types also get `no lesson selected` | Contract says unknown types are ignored | low |
-| P19 | 7 | `state.mistake` holds only `behind`; `ahead` is a message then an advance | Not spelled out | low |
+| P19 | 7 | `state.mistake` holds the shown mistake (`behind`, `ahead`, `live`); `ahead` skips only with `HANDOVER_AHEAD_SKIP=1` | Not spelled out | low |
 | P20 | 8 | Check rule: "before" image, evidence-first answer, reason from `differs`, thinking per model | Contract describes the old two-image call | none |
 | P21 | 8 | Breaker: `no_key` covers invalid keys and never retries | Not listed | low |
 | P22 | 8 | Motion gate: heartbeat fires even during motion; settled and change rules | Contract is one line | none |
@@ -255,7 +255,7 @@ And for `hello`: "`device_id` is cut to 128 characters and `name` to 64, both tr
 > `mistake` | the current mistake object (7.2 fields minus `type`) or null; cleared on step change, `dismiss_mistake`, or a yes on this step
 
 **Proposed**
-> `mistake` | the current `behind` mistake (7.2 fields minus `type`) or null; cleared on step change, `dismiss_mistake`, or a yes on this step. An `ahead` mistake never appears here: the hub sends the `mistake` message, then `advance` from k to k+2 with reason `camera`. In mock mode the `HANDOVER_MOCK_MISTAKE` hook fires only after a `no` result, once per visit, and its `ahead` skips the confirming check.
+> `mistake` | the mistake being shown (7.2 fields minus `type`) or null; cleared on step change, `dismiss_mistake`, or a yes on this step. `behind`, `ahead` and `live` stay here and never move the step. Only with `HANDOVER_AHEAD_SKIP=1` does a doubly confirmed `ahead` send the `mistake` message, then `advance` from k to k+2 with reason `camera` (which clears it). In mock mode the `HANDOVER_MOCK_MISTAKE` hook fires once per visit unless the last check said yes; its `ahead` still runs the confirming check.
 
 **Code**: server/main.py:877-887, 953-971, server/mistake.py:117-135
 
@@ -357,6 +357,32 @@ Open points for Pranav (code facts, not proposals to change his file):
 
 ---
 
+## P27. Provenance, latency and learner fields (sections 5, 6, 7, 10)
+
+Built in `server/main.py` with tests in `server/test_engine.py`. Readers ignore unknown fields, so all of these are optional for clients.
+
+> State fields:
+> | Field | Type | Meaning |
+> |---|---|---|
+> | `check_mode` | `"mock"`, `"claude"` or `"gemini"` | who answers the live checks |
+> | `next_clip` | string or null | the next step's clip as a lesson-relative path, exactly like `"clips/03.mp4"`, as soon as this step has one confident yes (and while `verified`); null otherwise and on the last step. Clients preload it |
+> | `progress` | number 0..1 or null | from understanding (`HANDOVER_UNDERSTAND=1` with a rubric); null otherwise; reset on step change |
+> | `stage` | `{"index":int,"count":int,"label":str}` or null | same source and reset as `progress` |
+>
+> Section 5, advance by camera: `verified` (with `next_clip`) goes out at once, then `go(position + 1, "camera")` after `HANDOVER_VERIFIED_HOLD` (0.8 s). Up to `HANDOVER_MAX_INFLIGHT` (2) checks run at once on different settled frames; debounce is N confident yes answers on N different frames, in frame order. Fast path: one yes at `HANDOVER_FAST_CONF` (0.92) whose `differs` is `nothing` advances alone (`HANDOVER_FAST_PATH=1`). State from check results is sent only when it changed.
+>
+> Section 6: a camera that never sends hello gets `source: "unknown"` (was `"phone"`). `platform` accepts `ios`, `android`, `web`, `macos`, `windows`, `linux`, `replay`; any other string becomes `"other"` and the hello still counts (next and back stay unlocked); a non-string platform makes the hello malformed. Frame rate: "about 2 fps, long side at most 960" (was "about 1 fps, long side 640 to 1280"); the hub accepts frames 0.2 s apart (`HANDOVER_MIN_FRAME_GAP`).
+>
+> Section 7, `select_lesson`: optional `"token"` (a sign-in token). When it resolves, the run is tagged with the learner's user id; otherwise the run is anonymous. Never an error.
+>
+> Section 7.2, `mistake.kind`: `behind`, `ahead`, or `live` (advisory, from understanding with `HANDOVER_LIVE_MISTAKES=1`, carries `label` and no `looks_like`, never moves the step). `ahead` only shows the banner and never moves the step unless `HANDOVER_AHEAD_SKIP=1`, which also needs the k+1 confirm at 0.9 and a yes for step k on the same frame. `source` is `claude`, `gemini` or `mock`.
+>
+> Section 10: `run_start` carries `learner` (user id or null), `source` (the active camera's source or null) and `check_mode`, and the adapter passes them to `databricks.start_run` (only the arguments its signature accepts).
+
+New settings for section 1 (not yet in `server/config.py`): `HANDOVER_MAX_INFLIGHT` (int, 2, 1 to 4), `HANDOVER_FAST_PATH` (bool, 1), `HANDOVER_FAST_CONF` (float, 0.92, 0.5 to 1), `HANDOVER_AHEAD_SKIP` (bool, 0). Test-only: `HANDOVER_MOCK_LATENCY_MS` (`scripts/latency_bench.py`, 600, 0 to 10000).
+
+---
+
 ## Suggested Revision 6 changelog
 
 - Section 1: added an optional Tuning table (16 owner-only env vars); `HANDOVER_CHECK` ignores case; bad values warn and use the default; runtime notes on startup cleanup, websocket ping and the 8 MB message cap.
@@ -364,8 +390,9 @@ Open points for Pranav (code facts, not proposals to change his file):
 - Section 3: `self_test` may carry `mock: true` and comes from the CLI only; Recut rule now rewrites `ref_time`, keeps `check_type`, and keeps unknown fields (removed "Today recut drops unknown fields").
 - Section 4: listed every upload, recut and delete error (411, 413 before the body, 415, 422 shape, 429, 409, 500 formats); `x-request-id` on every response; `/assets` caching; NEW `GET /api/health` and `GET /api/metrics`.
 - Section 5: verified hold is 0.8 s (`HANDOVER_VERIFIED_HOLD`); fast confirm; `checking` only after 1.5 s in flight; states only on change; `rev` rules spelled out; active camera handover as coded.
-- Sections 6 and 7: close 1011 (stalled sender, reconnect) and 1013 (connection cap); 5 frames per second cap per camera; hello field limits; 8 KB text cap; newest frame only and latest state only per client (do not assume one state per advance); with no lesson, unknown types also get `no lesson selected`; `state.mistake` holds only `behind`.
+- Sections 6 and 7: close 1011 (stalled sender, reconnect) and 1013 (connection cap); 5 frames per second cap per camera; hello field limits; 8 KB text cap; newest frame only and latest state only per client (do not assume one state per advance); with no lesson, unknown types also get `no lesson selected`; `state.mistake` holds the shown mistake, and `ahead` skips only with `HANDOVER_AHEAD_SKIP=1`.
 - Section 8: check sends the previous step's reference as a "before" image, answers evidence first, takes `reason` from `differs`, and picks thinking per model; breaker `no_key` covers invalid keys and never retries; heartbeat fires during motion; mistake check details.
 - Section 9: replay `--no-hello`, `device_id`, reconnect with back-off, stops on 4000.
 - New section 10: learn events and the Databricks adapter.
 - Statuses: built server items moved from NEW to EXISTS.
+- Provenance, latency and learner fields (P27): `check_mode`, `next_clip`, `progress`, `stage`; pipelined confirm and fast path; camera default source `unknown`; more hello platforms; 2 fps; `select_lesson` token; `live` mistakes; ahead never skips by default.

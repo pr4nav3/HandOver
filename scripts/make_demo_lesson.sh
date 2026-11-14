@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Builds lessons/demo-v1 from a generated 40 s test video, without Gemini.
+# Builds lessons/demo-v1 from a generated 40 s test video, without Gemini. It is a test pattern, not a real
+# lesson: titles, questions and captions say so.
 # Each 8 s segment has its own background color, N white bars for step N, and its own tone.
 # (This ffmpeg build has no drawtext, so the step number is shown as bars.)
 set -euo pipefail
@@ -34,24 +35,24 @@ filters+="${joins}concat=n=5:v=1:a=1[v][a]"
 cat > "$TMP/steps.json" <<'JSON'
 {
   "steps": [
-    {"start": "00:00", "end": "00:08", "title": "Lay the blue sheet flat", "check_question": "Is there one white bar on a blue background?", "prerequisites": []},
-    {"start": "00:08", "end": "00:16", "title": "Fold the sheet in half", "check_question": "Are there two white bars on a green background?", "prerequisites": [1]},
-    {"start": "00:16", "end": "00:24", "title": "Crease the fold and unfold it", "check_question": "manual", "prerequisites": [2]},
-    {"start": "00:24", "end": "00:32", "title": "Fold all four corners inward", "check_question": "Are there four white bars on a red background?", "prerequisites": [3]},
-    {"start": "00:32", "end": "00:40", "title": "Open the finished shape", "check_question": "Are there five white bars on a purple background?", "prerequisites": [4]}
+    {"start": "00:00", "end": "00:08", "title": "Pattern 1", "check_question": "Does the frame show one white bar?", "prerequisites": []},
+    {"start": "00:08", "end": "00:16", "title": "Pattern 2", "check_question": "Does the frame show two white bars?", "prerequisites": [1]},
+    {"start": "00:16", "end": "00:24", "title": "Pattern 3", "check_question": "manual", "prerequisites": [2]},
+    {"start": "00:24", "end": "00:32", "title": "Pattern 4", "check_question": "Does the frame show four white bars?", "prerequisites": [3]},
+    {"start": "00:32", "end": "00:40", "title": "Pattern 5", "check_question": "Does the frame show five white bars?", "prerequisites": [4]}
   ],
   "transcript": [
-    {"start": 0.5, "end": 3.5, "text": "Start with the sheet flat on the table."},
-    {"start": 4.0, "end": 7.5, "text": "Make sure the colored side faces down."},
-    {"start": 8.5, "end": 12.0, "text": "Now fold it in half, edge to edge."},
-    {"start": 13.0, "end": 17.0, "text": "Press the fold down firmly."},
-    {"start": 17.5, "end": 23.5, "text": "Crease it hard, then unfold it again."},
-    {"start": 24.5, "end": 31.5, "text": "Bring each corner to the center point."},
-    {"start": 32.5, "end": 39.5, "text": "Open it up and you are done."}
+    {"start": 0.5, "end": 3.5, "text": "Test pattern step 1."},
+    {"start": 4.0, "end": 7.5, "text": "Test pattern step 1."},
+    {"start": 8.5, "end": 12.0, "text": "Test pattern step 2."},
+    {"start": 13.0, "end": 17.0, "text": "Test pattern step 2."},
+    {"start": 17.5, "end": 23.5, "text": "Test pattern step 3."},
+    {"start": 24.5, "end": 31.5, "text": "Test pattern step 4."},
+    {"start": 32.5, "end": 39.5, "text": "Test pattern step 5."}
   ]
 }
 JSON
 
 cd "$ROOT"
 rm -rf "${HANDOVER_LESSONS:-$ROOT/lessons}/demo-v1"
-"$ROOT/.venv/bin/python" -m server.teach "$TMP/demo.mp4" --id demo-v1 --title "Demo lesson" --steps-json "$TMP/steps.json"
+"$ROOT/.venv/bin/python" -m server.teach "$TMP/demo.mp4" --id demo-v1 --title "Test pattern (not a real lesson)" --steps-json "$TMP/steps.json"

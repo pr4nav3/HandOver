@@ -54,9 +54,13 @@ class Hub:
         self.base = f"http://127.0.0.1:{port}"
         self.ws = f"ws://127.0.0.1:{port}"
         self.log = tmp / f"hub-{port}.log"
+        # No keys and no Databricks credentials reach the test hub, and its event mirror is a temp file, so a
+        # test run never writes into logs/events.jsonl or calls an outside service.
         env = {k: v for k, v in os.environ.items()
-               if not k.startswith("HANDOVER_") and k not in ("GEMINI_API_KEY", "GOOGLE_API_KEY")}
+               if not k.startswith(("HANDOVER_", "DATABRICKS_"))
+               and k not in ("GEMINI_API_KEY", "GOOGLE_API_KEY", "ANTHROPIC_API_KEY")}
         env.update({
+            "HANDOVER_EVENTS_JSONL": str(tmp / f"events-{port}.jsonl"), "HANDOVER_DATA": str(tmp / f"data-{port}"),
             "HANDOVER_PORT": str(port), "HANDOVER_HTTPS_PORT": str(https_port), "HANDOVER_CERTS": "/nonexistent",
             "HANDOVER_CHECK": "mock", "HANDOVER_NO_NETWORK": "1", "HANDOVER_MOCK_PASS_SECONDS": str(PASS_SECONDS), "HANDOVER_TEACH_MOCK": "1",
             "HANDOVER_LESSONS": str(lessons),
@@ -384,6 +388,11 @@ def check_state_types(st: dict) -> None:
         assert isinstance(st["check_offline"], bool), st["check_offline"]
     if "mistake" in st and st["mistake"] is not None:
         assert isinstance(st["mistake"], dict) and "type" not in st["mistake"], st["mistake"]
+    if "check_mode" in st:  # proposed: who answers the checks; this hub runs mock
+        assert st["check_mode"] == "mock", f"check_mode {st['check_mode']!r}"
+    if "next_clip" in st and st["next_clip"] is not None:  # proposed: preload hint, a relative lesson path
+        nc = st["next_clip"]
+        assert isinstance(nc, str) and not nc.startswith("/") and ".." not in nc, f"next_clip {nc!r}"
 
 
 @test
@@ -450,7 +459,7 @@ async def test_rest_list_sorted_and_filtered():
     for bad in ("broken", "bad.id", "empty-folder"):
         assert bad not in ids, f"{bad} should be skipped: {ids}"
     by = {d["id"]: d for d in data}
-    assert by[LESSON] == {"id": LESSON, "title": "Demo lesson", "steps": TOTAL}, by[LESSON]
+    assert by[LESSON] == {"id": LESSON, "title": "Test pattern (not a real lesson)", "steps": TOTAL}, by[LESSON]
     assert by["zeta"]["title"] == "zeta" and by["zeta"]["steps"] == 1, by["zeta"]
     assert by["alpha"]["steps"] == 0, by["alpha"]
 
@@ -460,7 +469,7 @@ async def test_rest_get_lesson():
     status, headers, body = await http("GET", f"/api/lessons/{LESSON}")
     assert status == 200, status
     assert "no-cache" in headers.get("cache-control", ""), headers.get("cache-control")
-    assert json.loads(body)["steps"][0]["title"] == "Lay the blue sheet flat"
+    assert json.loads(body)["steps"][0]["title"] == "Pattern 1"
     expect_error(await http("GET", "/api/lessons/-bad"), 400, "bad lesson id")
     expect_error(await http("GET", "/api/lessons/bad.id"), 400, "bad lesson id")
     expect_error(await http("GET", "/api/lessons/" + "a" * 65), 400, "bad lesson id")
@@ -839,7 +848,7 @@ async def test_camera_default_identity():
         st = await ui.wait(lambda m: is_type("state")(m) and m.get("camera"), what="state with camera")
         c = st["camera"]
         assert re.fullmatch(r"Camera \d+", str(c.get("name"))), c
-        assert c.get("platform") == "other" and c.get("source") == "phone", c
+        assert c.get("platform") == "other" and c.get("source") == "unknown", c
         # A malformed hello is ignored: identity stays the default and next stays locked.
         await cam.send({"type": "hello", "device_id": 7, "name": 7, "platform": 7, "source": 7})
         await cam.send({"type": "next", "reason": "button", "from": MANUAL_STEP})
@@ -1014,6 +1023,8 @@ async def test_check_camera_advance_verified_then_advance():
         assert st["step"] == 0, st
         assert st["last_check"] and st["last_check"]["done"] == "yes", st
         assert st["last_check"]["confidence"] >= 0.8, st
+        if "next_clip" in st:
+            assert st["next_clip"] == "clips/02.mp4", st  # the next clip can preload during the hold
         assert not [m for m in texts(seen) if m.get("type") == "advance"], "advanced before verified"
         nos = [m for m in texts(seen) if m.get("type") == "state" and (m.get("last_check") or {}).get("done") == "no"]
         for m in nos:

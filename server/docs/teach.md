@@ -7,7 +7,7 @@ Back to [server/README.md](../README.md).
 ```mermaid
 flowchart LR
   v["Expert video<br/>(one or more files)"] --> n["1. Normalize<br/>ffmpeg"]
-  n --> e["2. Extract<br/>one Gemini call"]
+  n --> e["2. Extract<br/>Gemini, or Claude<br/>plus local Whisper"]
   e --> c["3. Clean<br/>sort, clamp, renumber"]
   c --> k["4. Cut<br/>clips, captions, frames"]
   k --> l["lesson.json"]
@@ -25,7 +25,7 @@ From the repo root.
 .venv/bin/python -m server.teach part1.mov --concat part2.mov part3.mov --id bike-wheel-v1 --title "Remove a bike front wheel"
 
 # Your own steps instead of Gemini (same JSON shape as the extraction)
-.venv/bin/python -m server.teach demo.mp4 --id demo-v1 --title "Demo lesson" --steps-json steps.json
+.venv/bin/python -m server.teach demo.mp4 --id demo-v1 --title "Test pattern (not a real lesson)" --steps-json steps.json
 
 # Rebuild clips after editing lesson.json
 .venv/bin/python -m server.teach --recut lessons/fortune-teller-v1
@@ -55,7 +55,16 @@ The web Teach screen does the same through `POST /api/lesson`, with job status `
 
 Several inputs are normalized one by one, then joined without re-encoding.
 
-## 2. Extract (one Gemini call)
+## 2. Extract
+
+`HANDOVER_TEACH_PROVIDER=auto` uses Gemini when a Gemini key is found, else Claude when `ANTHROPIC_API_KEY` is found, else placeholder steps.
+
+| Provider | How |
+|---|---|
+| Gemini | One call with the whole video; the model hears the narration itself |
+| Claude | Frames only (`HANDOVER_CLAUDE_TEACH_MODEL`), plus a narration transcript made on this Mac by faster-whisper (`HANDOVER_WHISPER_MODEL`, `HANDOVER_TRANSCRIBE`). Without a transcript it falls back to frames only |
+
+Gemini details:
 
 | Part | Value |
 |---|---|
@@ -88,19 +97,22 @@ Every timestamp is validated before anything is cut. A step under 0.2 s after cl
 
 | | Rule |
 |---|---|
-| Today (live) | Last frame of the clip (tries 0.1 s, 0.5 s, then 1.0 s from the end) |
-| Planned, M8 (in progress) | Stillest hands-free frame in the last 15% of the clip; time saved as `ref_time`. Step 1 made manual on new extractions. Check questions about shape and seam count, not color |
+| Live | Stillest, not black frame in the last 15% of the clip (the model's `ref_time` hint is used when it is valid); the time is saved as `ref_time`. Without one, the last frame of the clip. Step 1 is made manual on new extractions. Questions that name colors are reworded or made manual |
 
-## Self-test (in progress, S-T)
+## Self-test (live)
 
-At teach time each step's question is asked against its own reference (expect yes) and the previous step's reference (expect no). Steps that fail are suggested as manual. Result saved as `self_test: {own, prev, ok}`. No code yet.
+At teach time each step's question is asked against its own reference (expect yes) and the previous step's reference (expect no). Steps that fail are suggested as manual. Result saved as `self_test: {own, prev, ok}`.
+
+## Voiceover (in progress)
+
+A narrated voiceover for lessons is being built by another agent (`server/voice.py`). A recut through the hub drops a stale `voiceover` field from `lesson.json`, because the recut clips carry the original audio.
 
 ## Lesson folder
 
 ```
 lessons/<id>/
   lesson.json        steps, timestamps, questions (CONTRACT 3)
-  extraction.json    steps and transcript from Gemini; recut reads the transcript
+  extraction.json    steps and transcript from the extraction; recut reads the transcript
   norm.mp4           the normalized full video
   clips/01.mp4 ...
   captions/01.vtt ...
@@ -135,7 +147,4 @@ A bad timestamp returns 400 with the reason and the old `lesson.json` is restore
 
 | | What recut keeps |
 |---|---|
-| Today (live) | Rebuilds `lesson.json` from `id`, `title`, and per step `title`, `start`, `end`, `check_type`, `check_question`, `prerequisites`. Every other field is dropped. A camera step with an empty question becomes manual |
-| Planned, M8 (in progress) | Rewrites only `n`, `start`, `end`, `clip`, `captions`, `ref_frame`, `check_question`, `prerequisites`; keeps every other field (`common_mistake`, `ref_time`, `self_test`, `safety`, `tools`) |
-
-Until the planned rule lands, re-add hand-written fields such as `common_mistake` after each recut.
+| Live | Keeps the other fields of `lesson.json` (`common_mistake`, `ref_time`, `self_test`, `safety`, `tools`) while it rebuilds clips, captions and reference frames. Through the hub, a stale `voiceover` field is dropped |

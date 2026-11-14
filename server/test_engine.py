@@ -27,6 +27,8 @@ os.environ["HANDOVER_GATE"] = "0"
 os.environ["HANDOVER_MIN_FRAME_GAP"] = "0"  # tests stream faster than the 5 fps cap; test_frame_gap covers it
 os.environ.pop("HANDOVER_MOCK_MISTAKE", None)
 os.environ["HANDOVER_EVENTS_JSONL"] = str(TMP / "scratch" / "events.jsonl")  # server.databricks local mirror
+os.environ["HANDOVER_DATA"] = str(TMP / "data")  # accounts and library state, never the repo's
+os.environ.pop("HANDOVER_AUTH", None)
 
 import anyio  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
@@ -99,8 +101,9 @@ def patched(obj: Any, **attrs: Any) -> Iterator[None]:
 
 @contextlib.contextmanager
 def gemini() -> Iterator[None]:
-    """Gemini mode with a key present; each test replaces the Gemini calls itself."""
-    with env(HANDOVER_CHECK=None), patched(check, has_key=lambda: True):
+    """Gemini mode with a key present; each test replaces the Gemini calls itself. The provider is pinned, so a
+    Claude key in the environment or <repo>/.env cannot turn this into a Claude run."""
+    with env(HANDOVER_CHECK=None, HANDOVER_CHECK_PROVIDER="gemini"), patched(check, has_key=lambda: True):
         yield
 
 
@@ -170,8 +173,8 @@ def test_hello_sets_identity_and_state() -> None:
             assert recv_json(cam) == {"type": "camera_status", "active": True}
             st = recv_json(ui, is_state)
             assert st["camera_connected"]
-            assert st["camera"] == {"name": "Camera 1", "platform": "other", "source": "phone"}
-            for bad in ({"platform": "android"}, {"source": 5}, {"name": ["x"]}, {"device_id": {}}):
+            assert st["camera"] == {"name": "Camera 1", "platform": "other", "source": "unknown"}
+            for bad in ({"platform": 5}, {"source": 5}, {"name": ["x"]}, {"device_id": {}}):
                 cam.send_json(hello(**bad))  # malformed: ignored, no state for this camera
             cam.send_text("not json")
             assert drain(cam) == [] and not main.engine.cams[0].said_hello
@@ -185,6 +188,23 @@ def test_hello_sets_identity_and_state() -> None:
             assert recv_json(cam, is_state)["camera"]["source"] == "glasses"
         st = recv_json(ui, is_state)
         assert not st["camera_connected"] and st["camera"] is None
+
+
+def test_hello_platforms_new_apps_and_other() -> None:
+    """Android and desktop apps are named; any other platform string is "other" and still unlocks next."""
+    for platform, want in (("android", "android"), ("macos", "macos"), ("windows", "windows"), ("linux", "linux"),
+                           ("ios", "ios"), ("Android", "android"), ("visionos", "other"), ("  ", None)):
+        fields = main.parse_hello({"type": "hello", "platform": platform})
+        assert fields is not None and fields.get("platform") == want, (platform, fields)
+    assert main.parse_hello({"type": "hello", "platform": None}) is None
+    make_lesson()
+    with hub() as c, c.websocket_connect("/ws/ui") as ui, c.websocket_connect("/ws/camera") as cam:
+        select(ui)
+        cam.send_json(hello(platform="tizen"))
+        assert recv_json(ui, lambda m: is_state(m) and m["camera"] and m["camera"]["name"] == "Test phone"
+                         )["camera"]["platform"] == "other"
+        cam.send_json({"type": "next", "reason": "button", "from": 0})
+        assert recv_json(ui, lambda m: m["type"] == "advance")["reason"] == "button"
 
 
 def test_hello_grace_avoids_identity_flicker() -> None:
@@ -527,6 +547,405 @@ def test_breaker_never_offline_in_mock() -> None:
         assert main.engine.state()["check_offline"] is False
 
 
+# ---------------------------------------------------------------- provenance and latency
+
+def test_state_check_mode_names_the_real_provider() -> None:
+    with hub():
+        assert main.engine.state()["check_mode"] == "mock"
+        with gemini():
+            assert main.engine.state()["check_mode"] == "gemini"
+        with env(HANDOVER_CHECK=None, HANDOVER_CHECK_PROVIDER="claude"):
+            assert main.engine.state()["check_mode"] == "claude"
+            assert main.engine.snapshot()["check_mode"] == "claude"
+
+
+def test_check_event_and_mistake_source_name_the_real_provider() -> None:
+    make_lesson()
+    events: list[dict] = []
+
+    async def compare(live: bytes, pairs: list[tuple[int, bytes]], question: str | None = None) -> check.MatchResult:
+        return check.MatchResult(0, 0.9, 3)  # behind: looks like step 0 while on step 1
+
+    with env(HANDOVER_CHECK=None, HANDOVER_CHECK_PROVIDER="claude", HANDOVER_CLAUDE_CHECK_MODEL="claude-test-model"), \
+            patched(check, compare_refs=compare), patched(main, EVENT_SINKS=[events.append]):
+        engine = main.Engine()
+        engine.select(LESSON)
+        engine.go(1, "button")
+        job = main.CheckJob(1, "Is step 2 done?", engine.ref_bytes(1), FRAME, engine.version)
+        engine._record_check(job, check.CheckResult("no", 0.9, 5))
+        anyio.run(engine._compare_and_raise, job)
+    chk = next(e for e in events if e["kind"] == "check")
+    assert chk["model"] == "claude-test-model", chk
+    mis = next(e for e in events if e["kind"] == "mistake")
+    assert mis["source"] == "claude" and engine.mistake and engine.mistake["source"] == "claude", mis
+
+
+def test_frame_debouncer_order_and_fast_path() -> None:
+    def deb() -> main.FrameDebouncer:
+        return main.FrameDebouncer()
+
+    with env(HANDOVER_DEBOUNCE_N="2", HANDOVER_MIN_CONF="0.8", HANDOVER_FAST_PATH="0"):
+        d = deb()
+        assert not d.feed(2, "yes", 0.9) and d.count == 1
+        assert d.feed(1, "yes", 0.9) and d.count == 0  # two frames, finished out of order
+        d = deb()
+        d.feed(1, "yes", 0.9), d.feed(3, "no", 0.9)
+        assert not d.feed(2, "yes", 0.9) and d.count == 0  # the newest frame said no
+        d = deb()
+        d.feed(2, "no", 0.9), d.feed(3, "yes", 0.9)
+        assert not d.feed(1, "yes", 0.9)  # a late yes for an older frame does not jump the no
+        d = deb()
+        d.feed(5, "yes", 0.9)
+        assert not d.feed(4, "no", 0.9) and d.count == 1  # a late no for an older frame does not reset
+        assert d.feed(6, "yes", 0.9)
+        d = deb()
+        d.feed(1, "yes", 0.79)
+        assert not d.feed(2, "yes", 0.9)  # low confidence yes is not a yes
+        assert not deb().feed(1, "yes", 0.99)  # fast path off
+    with env(HANDOVER_DEBOUNCE_N="2", HANDOVER_MIN_CONF="0.8", HANDOVER_FAST_PATH=None, HANDOVER_FAST_CONF=None):
+        assert deb().feed(1, "yes", 0.92)
+        assert not deb().feed(1, "yes", 0.91)
+        assert not deb().feed(1, "yes", 0.99, "seam still open")  # names a difference: needs a second yes
+        d = deb()
+        d.feed(2, "no", 0.9)
+        assert not d.feed(1, "yes", 0.99)  # only the newest frame answered may take the fast path
+        with env(HANDOVER_FAST_CONF="0.95"):
+            assert not deb().feed(1, "yes", 0.94) and deb().feed(1, "yes", 0.95)
+        with env(HANDOVER_FAST_CONF="7"):  # out of range: the default 0.92
+            assert deb().feed(1, "yes", 0.92)
+        with env(HANDOVER_MIN_CONF="0.97", HANDOVER_FAST_CONF="0.9"):
+            assert not deb().feed(1, "yes", 0.95)  # never below the normal yes bar
+
+
+class SlowCheck:
+    """A check that takes `latency` seconds; records start and end times and the most checks at once."""
+
+    def __init__(self, latency: float, done: str = "yes", confidence: float = 0.9):
+        self.latency, self.done, self.confidence = latency, done, confidence
+        self.starts: list[float] = []
+        self.ends: list[float] = []
+        self.running = 0
+        self.peak = 0
+
+    async def __call__(self, ref: bytes, live: bytes, question: str, *, step_started_at: float | None = None,
+                       prev_ref: bytes | None = None) -> check.CheckResult:
+        self.starts.append(time.monotonic())
+        self.running += 1
+        self.peak = max(self.peak, self.running)
+        try:
+            await anyio.sleep(self.latency)
+        finally:
+            self.running -= 1
+        self.ends.append(time.monotonic())
+        return check.CheckResult(self.done, self.confidence, int(self.latency * 1000))
+
+
+def run_until_verified(cam: Any, timeout: float = 5.0, every: float = 0.15) -> float:
+    """Streams identical frames every `every` s until the engine shows verified; returns when that happened."""
+    deadline = time.monotonic() + timeout
+    next_send = 0.0
+    while time.monotonic() < deadline:
+        now = time.monotonic()
+        if now >= next_send:
+            cam.send_bytes(FRAME)
+            next_send = now + every
+        if main.engine.verified:
+            return time.monotonic()
+        time.sleep(0.01)
+    raise AssertionError("never verified")
+
+
+def test_pipelined_confirm_halves_the_wait() -> None:
+    """Two checks on different settled frames run at once; two yes answers verify after about one check
+    latency. HANDOVER_MAX_INFLIGHT=1 is the old one-at-a-time behavior."""
+    make_lesson()
+    latency = 0.6
+    took = {}
+    for inflight in ("2", "1"):
+        slow = SlowCheck(latency)
+        with env(HANDOVER_GATE="1", HANDOVER_FAST_PATH="0", HANDOVER_DEBOUNCE_N="2", HANDOVER_MAX_INFLIGHT=inflight), \
+                patched(check, check_frame=slow), patched(main, VERIFIED_HOLD=0.3), hub() as c, \
+                c.websocket_connect("/ws/ui") as ui, c.websocket_connect("/ws/camera") as cam:
+            select(ui)
+            verified_at = run_until_verified(cam)
+            took[inflight] = (verified_at - slow.starts[0], slow.peak)
+            assert main.engine.status() == "verified" and main.engine.step == 0
+            wait_for(lambda: main.engine.step == 1)
+    assert took["2"][1] == 2 and took["1"][1] == 1, took
+    assert took["2"][0] < latency + 0.35, took  # second check started on the next frame, not after the first
+    assert took["1"][0] >= 2 * latency, took
+
+
+def test_pipelined_stale_step_results_dropped() -> None:
+    make_lesson()
+    slow = SlowCheck(0.5)
+    with env(HANDOVER_GATE="1", HANDOVER_FAST_PATH="0", HANDOVER_DEBOUNCE_N="2"), patched(check, check_frame=slow), \
+            hub() as c, c.websocket_connect("/ws/ui") as ui, c.websocket_connect("/ws/camera") as cam:
+        select(ui)
+        for _ in range(4):
+            cam.send_bytes(FRAME)
+            time.sleep(0.12)
+        wait_for(lambda: slow.running == 2, timeout=2)
+        ui.send_json({"type": "goto", "step": 2})
+        recv_json(ui, lambda m: is_state(m) and m["step"] == 2)
+        wait_for(lambda: slow.running == 0, timeout=2)
+        time.sleep(0.1)
+        assert main.engine.step == 2 and not main.engine.verified and main.engine.last_check is None
+
+
+def test_fast_path_one_confident_yes_verifies() -> None:
+    make_lesson()
+    latency = 0.4
+    slow = SlowCheck(latency, confidence=0.97)
+    with env(HANDOVER_GATE="1", HANDOVER_DEBOUNCE_N="2", HANDOVER_FAST_PATH=None), patched(check, check_frame=slow), \
+            patched(main, VERIFIED_HOLD=0.3), hub() as c, c.websocket_connect("/ws/ui") as ui, \
+            c.websocket_connect("/ws/camera") as cam:
+        select(ui)
+        verified_at = run_until_verified(cam)
+        assert len(slow.ends) == 1, slow.ends  # verified on the first answer
+        assert verified_at - slow.starts[0] < latency + 0.2
+        wait_for(lambda: main.engine.step == 1)
+    low = SlowCheck(latency, confidence=0.9)  # below HANDOVER_FAST_CONF: still needs two
+    with env(HANDOVER_GATE="1", HANDOVER_DEBOUNCE_N="2", HANDOVER_FAST_PATH=None), patched(check, check_frame=low), \
+            hub() as c, c.websocket_connect("/ws/ui") as ui, c.websocket_connect("/ws/camera") as cam:
+        select(ui)
+        run_until_verified(cam)
+        assert len(low.ends) == 2, low.ends
+
+
+def test_next_clip_after_one_yes_and_verified_is_instant() -> None:
+    make_lesson()
+    answers = iter(["yes", "no", "yes", "yes", "yes"])
+    fake = FakeCheck(lambda ref: check.CheckResult(next(answers, "yes"), 0.9, 1))
+    with env(HANDOVER_DEBOUNCE_N="3", HANDOVER_FAST_PATH="0", HANDOVER_MAX_INFLIGHT="1"), \
+            patched(check, check_frame=fake), patched(main, VERIFIED_HOLD=0.6), hub() as c, \
+            c.websocket_connect("/ws/ui") as ui, c.websocket_connect("/ws/camera") as cam:
+        assert select(ui)["next_clip"] is None
+        cam.send_bytes(jpeg((1, 1, 1)))
+        st = recv_json(ui, lambda m: is_state(m) and m["last_check"] is not None)
+        assert st["last_check"]["done"] == "yes" and st["next_clip"] == "clips/02.mp4", st
+        cam.send_bytes(jpeg((2, 2, 2)))
+        st = recv_json(ui, lambda m: is_state(m) and (m["last_check"] or {}).get("done") == "no")
+        assert st["next_clip"] is None, st
+        seen: list = []
+        i = 3
+        while not main.engine.verified and i < 30:
+            cam.send_bytes(jpeg((i, i, i)))
+            i += 1
+            time.sleep(0.05)
+        st = recv_json(ui, lambda m: is_state(m) and m["status"] == "verified")
+        t_verified = time.monotonic()
+        assert st["next_clip"] == "clips/02.mp4" and st["step"] == 0
+        adv = recv_json(ui, lambda m: m["type"] == "advance")
+        assert adv["reason"] == "camera" and 0.4 <= time.monotonic() - t_verified <= 1.0
+        st = recv_json(ui, is_state)
+        assert st["step"] == 1 and st["next_clip"] is None
+        ui.send_json({"type": "goto", "step": 2})
+        recv_json(ui, lambda m: is_state(m) and m["step"] == 2)
+        cam.send_bytes(jpeg((200, 1, 1)))
+        st = recv_json(ui, lambda m: is_state(m) and m["last_check"] is not None)
+        assert st["last_check"]["done"] == "yes" and st["next_clip"] is None  # last step: nothing to preload
+        del seen
+
+
+def test_latency_env_values_are_bounded() -> None:
+    with env(HANDOVER_MAX_INFLIGHT="9", HANDOVER_FAST_CONF="0.2", HANDOVER_FAST_PATH="maybe", HANDOVER_AHEAD_SKIP="x"):
+        assert (main.max_inflight(), main.fast_conf(), main.fast_path(), main.ahead_skip()) == (2, 0.92, True, False)
+    with env(HANDOVER_MAX_INFLIGHT="4", HANDOVER_FAST_CONF="1", HANDOVER_FAST_PATH="0", HANDOVER_AHEAD_SKIP="1"):
+        assert (main.max_inflight(), main.fast_conf(), main.fast_path(), main.ahead_skip()) == (4, 1.0, False, True)
+
+
+def test_run_start_carries_source_mode_and_learner() -> None:
+    """run_start and databricks.start_run get the active camera's source, the check mode and the learner id
+    (from an optional select_lesson token), so dashboards can leave out mock and replay runs."""
+    import sys
+    from server import accounts
+
+    make_lesson()
+    calls: list[tuple] = []
+
+    class NewDb(FakeDatabricks):
+        def start_run(self, lesson_id: str, learner: str | None = None, source: str | None = None,
+                      **extra: Any) -> str:
+            calls.append(("start_run", lesson_id, learner, source, extra))
+            return "db-run"
+
+    class OldDb(FakeDatabricks):  # today's signature: no source, no extras; the hub must not break it
+        def start_run(self, lesson_id: str, learner: str | None = None) -> str:
+            calls.append(("old_start_run", lesson_id, learner))
+            return "db-run"
+
+    events: list[dict] = []
+    old = sys.modules.get("server.databricks")
+    try:
+        for fake in (NewDb(), OldDb()):
+            sys.modules["server.databricks"] = fake  # type: ignore[assignment]
+            with patched(main, EVENT_SINKS=[main.databricks_sink, events.append]), \
+                    patched(accounts, resolve_token=lambda t: {"id": "u-42", "name": "Ana"} if t == "good" else None), \
+                    hub() as c, c.websocket_connect("/ws/ui") as ui, c.websocket_connect("/ws/camera") as cam:
+                cam.send_json(hello(source="file", platform="replay"))
+                recv_json(ui, lambda m: is_state(m) and m["camera"] and m["camera"]["source"] == "file")
+                ui.send_json({"type": "select_lesson", "id": LESSON, "token": "good"})
+                recv_json(ui, lambda m: is_state(m) and m["lesson_id"] == LESSON)
+                ui.send_json({"type": "select_lesson", "id": LESSON, "token": "bad"})  # anonymous, still allowed
+                ui.send_json({"type": "select_lesson", "id": LESSON})
+                wait_for(lambda: len([e for e in events if e["kind"] == "run_start"]) >= 3)
+    finally:
+        if old is None:
+            sys.modules.pop("server.databricks", None)
+        else:
+            sys.modules["server.databricks"] = old
+    starts = [e for e in events if e["kind"] == "run_start"]
+    assert (starts[0]["learner"], starts[0]["source"], starts[0]["check_mode"]) == ("u-42", "file", "mock"), starts[0]
+    assert starts[1]["learner"] is None and starts[2]["learner"] is None
+    assert calls[0] == ("start_run", LESSON, "u-42", "file", {"check_mode": "mock"}), calls[0]
+    assert ("old_start_run", LESSON, "u-42") in calls, calls
+
+
+def test_recut_drops_voiceover_and_auth_guard() -> None:
+    from server import teach
+
+    d = make_lesson()
+    data = json.loads((d / "lesson.json").read_text("utf-8"))
+    data["voiceover"] = {"voice": "narrator", "clips": "voice/"}
+    (d / "lesson.json").write_text(json.dumps(data), "utf-8")
+    seen: list[dict] = []
+
+    def fake_recut(folder: Path) -> dict:
+        seen.append(json.loads((folder / "lesson.json").read_text("utf-8")))
+        return seen[-1]
+
+    with patched(teach, recut=fake_recut), hub() as c:
+        assert c.post(f"/api/lessons/{LESSON}/recut").status_code == 200
+        assert "voiceover" not in seen[-1] and seen[-1]["steps"]
+        body = {**data, "voiceover": {"voice": "x"}}
+        assert c.post(f"/api/lessons/{LESSON}/recut", json=body).status_code == 200
+        assert "voiceover" not in seen[-1]
+        with env(HANDOVER_AUTH="required"):
+            assert c.post(f"/api/lessons/{LESSON}/recut").status_code == 401
+            assert c.delete(f"/api/lessons/{LESSON}").status_code == 401
+            assert c.post("/api/lesson", files={"file": ("v.mp4", b"0", "video/mp4")}).status_code == 401
+        assert c.post(f"/api/lessons/{LESSON}/recut", headers={"authorization": "Bearer nope"}).status_code == 401
+
+
+# ---------------------------------------------------------------- real-time understanding (HANDOVER_UNDERSTAND)
+
+def write_rubric(d: Path) -> None:
+    """A rubric.json for the test lesson: steps 1 and 2 have entries (keyframes = the reference frames)."""
+    from server import understand
+
+    lesson = json.loads((d / "lesson.json").read_text("utf-8"))
+    steps = [{"n": n, "title": f"Step {n}", "question": f"Is step {n} done?",
+              "keyframes": [f"frames/{n:02d}.jpg"] * 3,
+              "stages": [{"label": "half", "cue": "half"}, {"label": "all", "cue": "all"}],
+              "done_cue": "done", "mistakes": [{"label": "torn", "sign": "rip", "hint": "Careful, it tore.",
+                                                "severity": "high"}], "region": {}} for n in (1, 2)]
+    (d / "rubric.json").write_text(json.dumps({"version": understand.RUBRIC_VERSION,
+                                               "source": understand.lesson_signature(lesson), "steps": steps}))
+
+
+class FakeUnderstand:
+    def __init__(self, latency: float = 0.0):
+        self.latency = latency
+        self.answer: dict = {"done": "no", "confidence": 0.9, "stage": 0, "progress": 0.4, "mistake": None,
+                             "mistake_confidence": 0.0}
+        self.starts: list[float] = []
+
+    async def __call__(self, entry: dict, keys: list[bytes], live: bytes, prev: bytes | None, **kw: Any) -> Any:
+        from server import understand
+
+        self.starts.append(time.monotonic())
+        if self.latency:
+            await anyio.sleep(self.latency)
+        a = self.answer
+        return understand.Understanding(a["done"], a["confidence"], 1, stage=a["stage"], progress=a["progress"],
+                                        mistake=a["mistake"], mistake_confidence=a["mistake_confidence"])
+
+
+def test_understanding_both_must_say_yes_and_fills_progress() -> None:
+    from server import understand
+
+    d = make_lesson()
+    write_rubric(d)
+    und = FakeUnderstand(latency=0.3)
+    slow = SlowCheck(0.3, confidence=0.97)
+    with env(HANDOVER_UNDERSTAND="1", HANDOVER_GATE="0", HANDOVER_DEBOUNCE_N="2"), \
+            patched(check, check_frame=slow), patched(understand, understand_frame=und), \
+            patched(main, VERIFIED_HOLD=0.1), hub() as c, c.websocket_connect("/ws/ui") as ui, \
+            c.websocket_connect("/ws/camera") as cam:
+        select(ui)
+        assert main.engine.rubric is not None
+        for i in range(8):
+            cam.send_bytes(jpeg((i * 10, 5, 5)))
+            time.sleep(0.12)
+        st = recv_json(ui, lambda m: is_state(m) and m.get("progress") is not None)
+        assert st["progress"] == 0.4 and st["stage"] == {"index": 0, "count": 2, "label": "half"}, st
+        assert main.engine.step == 0 and not main.engine.verified  # check says yes, understanding says no
+        assert abs(und.starts[0] - slow.starts[0]) < 0.1  # both calls in flight at once on the same frame
+        und.answer = {**und.answer, "done": "yes", "confidence": 0.95, "stage": 1, "progress": 1.0}
+        i = 20
+        while main.engine.step == 0 and i < 60:
+            cam.send_bytes(jpeg((i * 3, 5, 5)))
+            i += 1
+            time.sleep(0.1)
+        assert main.engine.step == 1
+        st = recv_json(ui, lambda m: is_state(m) and m["step"] == 1)
+        assert st["progress"] is None and st["stage"] is None  # reset on step change
+
+
+def test_understanding_off_or_stale_is_todays_behavior() -> None:
+    from server import understand
+
+    d = make_lesson()
+    write_rubric(d)
+    und = FakeUnderstand()
+    fake = FakeCheck(lambda ref: check.CheckResult("yes", 0.9, 1))
+    with env(HANDOVER_UNDERSTAND=None, HANDOVER_DEBOUNCE_N="2"), patched(check, check_frame=fake), \
+            patched(understand, understand_frame=und), patched(main, VERIFIED_HOLD=0.05), hub() as c, \
+            c.websocket_connect("/ws/ui") as ui, c.websocket_connect("/ws/camera") as cam:
+        assert select(ui)["progress"] is None
+        for i in range(4):
+            cam.send_bytes(jpeg((i * 30, 9, 9)))
+            time.sleep(0.1)
+        wait_for(lambda: main.engine.step >= 1)
+        assert und.starts == [] and main.engine.rubric is None
+    data = json.loads((d / "lesson.json").read_text("utf-8"))
+    data["steps"][0]["end"] = "00:00.5"  # a recut makes the rubric stale
+    (d / "lesson.json").write_text(json.dumps(data), "utf-8")
+    with env(HANDOVER_UNDERSTAND="1"), hub():
+        main.engine.select(LESSON)
+        assert main.engine.rubric is None and main.engine.understand_entry(0) is None
+
+
+def test_live_mistakes_are_advisory_and_switchable() -> None:
+    from server import understand
+
+    d = make_lesson()
+    write_rubric(d)
+    und = FakeUnderstand()
+    und.answer = {**und.answer, "mistake": "torn", "mistake_confidence": 0.9}
+    fake = FakeCheck(lambda ref: check.CheckResult("no", 0.9, 1))
+    for live in (False, True):
+        with env(HANDOVER_UNDERSTAND="1", HANDOVER_LIVE_MISTAKES="1" if live else None, HANDOVER_GATE="0"), \
+                patched(check, check_frame=fake), patched(understand, understand_frame=und), hub() as c, \
+                c.websocket_connect("/ws/ui") as ui, c.websocket_connect("/ws/camera") as cam:
+            select(ui)
+            for i in range(5):
+                cam.send_bytes(jpeg((i * 30, 7, 7)))
+                time.sleep(0.1)
+            if not live:
+                time.sleep(0.2)
+                assert main.engine.mistake is None
+                continue
+            m = recv_json(ui, lambda m: m["type"] == "mistake")
+            assert (m["kind"], m["label"], m["message"], m["source"]) == ("live", "torn", "Careful, it tore.", "mock")
+            st = recv_json(ui, lambda s: is_state(s) and s["mistake"] is not None)
+            assert st["mistake"]["kind"] == "live" and st["step"] == 0
+            ui.send_json({"type": "dismiss_mistake"})
+            recv_json(ui, lambda s: is_state(s) and s["mistake"] is None)
+            assert main.engine.step == 0  # never moves the step
+
+
 # ---------------------------------------------------------------- mistake check (M9)
 
 def test_mistake_behind_gemini_once_then_yes_clears() -> None:
@@ -559,42 +978,89 @@ def test_mistake_behind_gemini_once_then_yes_clears() -> None:
         assert recv_json(ui, lambda s: is_state(s) and s["mistake"] is None)["step"] == 1
 
 
-def test_mistake_ahead_confirmed_skips_two() -> None:
+def test_mistake_ahead_shows_banner_never_skips_by_default() -> None:
+    """HANDOVER_AHEAD_SKIP unset: a confirmed ahead only shows "You're ahead." and the step stays put. The compare
+    gets no step question (a neutral one is used inside check.compare_refs)."""
     make_lesson()
     ref_next = (main.LESSONS / LESSON / "frames" / "02.jpg").read_bytes()
-    fake = FakeCheck(lambda ref: check.CheckResult("yes" if ref == ref_next else "no", 0.9, 1))
+    fake = FakeCheck(lambda ref: check.CheckResult("yes" if ref == ref_next else "no", 0.95, 1))
+    questions: list[Any] = []
 
     async def compare(live: bytes, pairs: list[tuple[int, bytes]], question: str | None = None) -> check.MatchResult:
+        questions.append(question)
         return check.MatchResult(1, 0.9, 3)
 
-    with gemini(), patched(check, check_frame=fake, compare_refs=compare), hub() as c, \
+    with gemini(), env(HANDOVER_AHEAD_SKIP=None), patched(check, check_frame=fake, compare_refs=compare), hub() as c, \
             c.websocket_connect("/ws/ui") as ui, c.websocket_connect("/ws/camera") as cam:
         main.engine.watch = mistake.MistakeWatch(settle_s=0.2, cooldown_s=60)
         select(ui)
         for i in range(8):
             cam.send_bytes(jpeg((i * 20, 50, 50)))
             time.sleep(0.08)
-        assert recv_json(ui, lambda m: m["type"] == "mistake")["kind"] == "ahead"
-        assert recv_json(ui, lambda m: m["type"] == "advance") == {"type": "advance", "from": 0, "to": 2,
-                                                                   "reason": "camera"}
+        m = recv_json(ui, lambda m: m["type"] == "mistake")
+        assert (m["kind"], m["message"], m["source"]) == ("ahead", "You're ahead.", "gemini"), m
+        st = recv_json(ui, lambda s: is_state(s) and s["mistake"] is not None)
+        assert st["step"] == 0 and st["mistake"]["kind"] == "ahead"
+        got = [json.loads(x["text"]) for x in drain(ui, 0.8) if x.get("text")]
+        assert not [x for x in got if x.get("type") == "advance"], got
+        assert main.engine.step == 0
+        assert questions and all(q is None for q in questions), questions
 
 
-def test_mock_ahead_is_confirmed_and_shown() -> None:
+def test_ahead_confirm_verdicts() -> None:
+    """_confirm_ahead: show needs a k+1 yes at 0.8; skip needs HANDOVER_AHEAD_SKIP=1, the k+1 yes at 0.9 and a
+    yes for step k itself on the same frame."""
     make_lesson()
-    with env(HANDOVER_MOCK_MISTAKE="ahead:0", HANDOVER_MOCK_PASS_SECONDS="100"), \
-            patched(mistake, MOCK_AFTER_S=0.3), hub() as c, c.websocket_connect("/ws/ui") as ui, \
-            c.websocket_connect("/ws/camera") as cam:
-        select(ui)
-        for i in range(4):
-            cam.send_bytes(jpeg((i * 30, 40, 40)))
-            time.sleep(0.4)
-        # The ahead state lasts one tick (the skip replaces it before it is sent), so the message is what shows it.
-        shown = recv_json(ui, lambda m: m["type"] == "mistake", timeout=5)
-        assert (shown["step"], shown["kind"], shown["source"]) == (0, "ahead", "mock")
-        assert shown["message"] == "You're ahead."
-        adv = recv_json(ui, lambda m: m["type"] == "advance")
-        assert (adv["from"], adv["to"], adv["reason"]) == (0, 2, "camera")
-        assert recv_json(ui, is_state)["mistake"] is None
+    ref_k, ref_next = ((main.LESSONS / LESSON / "frames" / f"{i:02d}.jpg").read_bytes() for i in (1, 2))
+    cases = [  # (skip on, k+1 answer, k answer, verdict)
+        (False, ("yes", 0.95), ("yes", 0.95), "show"),
+        (False, ("yes", 0.79), ("yes", 0.95), None),
+        (False, ("no", 0.95), ("yes", 0.95), None),
+        (True, ("yes", 0.95), ("yes", 0.85), "skip"),
+        (True, ("yes", 0.95), ("no", 0.95), "show"),
+        (True, ("yes", 0.95), ("unsure", 0.5), "show"),
+        (True, ("yes", 0.89), ("yes", 0.95), "show"),
+        (True, ("no", 0.95), ("yes", 0.95), None),
+    ]
+    for skip, nxt, own, want in cases:
+        answers = {ref_next: nxt, ref_k: own}
+        fake = FakeCheck(lambda ref: check.CheckResult(answers[ref][0], answers[ref][1], 1))
+        with gemini(), env(HANDOVER_AHEAD_SKIP="1" if skip else "0"), patched(check, check_frame=fake):
+            engine = main.Engine()
+            main_engine, main.engine = main.engine, engine
+            try:
+                engine.select(LESSON)
+                job = main.CheckJob(0, "Is step 1 done?", ref_k, FRAME, engine.version)
+                got = anyio.run(engine._confirm_ahead, job)
+            finally:
+                main.engine = main_engine
+        assert got == want, (skip, nxt, own, got)
+        assert len(fake.calls) == (2 if skip else 1), (skip, len(fake.calls))
+
+
+def test_mock_ahead_banner_by_default_skip_when_enabled() -> None:
+    make_lesson()
+    for skip in (False, True):
+        with env(HANDOVER_MOCK_MISTAKE="ahead:0", HANDOVER_MOCK_PASS_SECONDS="100",
+                 HANDOVER_AHEAD_SKIP="1" if skip else None), \
+                patched(mistake, MOCK_AFTER_S=0.3), hub() as c, c.websocket_connect("/ws/ui") as ui, \
+                c.websocket_connect("/ws/camera") as cam:
+            select(ui)
+            for i in range(4):
+                cam.send_bytes(jpeg((i * 30, 40, 40)))
+                time.sleep(0.4)
+            shown = recv_json(ui, lambda m: m["type"] == "mistake", timeout=5)
+            assert (shown["step"], shown["kind"], shown["source"]) == (0, "ahead", "mock")
+            assert shown["message"] == "You're ahead."
+            if skip:
+                adv = recv_json(ui, lambda m: m["type"] == "advance")
+                assert (adv["from"], adv["to"], adv["reason"]) == (0, 2, "camera")
+                assert recv_json(ui, is_state)["mistake"] is None
+            else:
+                st = recv_json(ui, lambda s: is_state(s) and s["mistake"] is not None)
+                assert st["step"] == 0 and st["mistake"]["kind"] == "ahead"
+                got = [json.loads(x["text"]) for x in drain(ui, 0.6) if x.get("text")]
+                assert not [x for x in got if x.get("type") == "advance"], got
 
 
 def test_mock_mistake_hook_and_dismiss() -> None:
@@ -1046,7 +1512,8 @@ def test_mock_mistake_fires_with_gate_on() -> None:
         assert (m["step"], m["kind"], m["source"]) == (1, "behind", "mock")
         checks_in_window = main.metrics["checks"] - checks_before
     assert fired_at < 3.6, fired_at  # 2 s delay plus at most one tick and a frame
-    assert checks_in_window <= 1, checks_in_window  # the gate held checks back, so a result-driven hook never ran
+    # The gate held checks back (one trigger plus its one pipelined partner), so a result-driven hook never ran.
+    assert checks_in_window <= main.max_inflight(), checks_in_window
 
 
 def test_parse_message_limits() -> None:
@@ -1260,7 +1727,14 @@ def test_privacy_learn_frames_never_touch_disk() -> None:
         assert lines and all(len(line) < 4096 and "\\xff\\xd8" not in line for line in lines)
     assert guard.violations == [], guard.violations
     created = files_under(main.REPO, main.LESSONS) - before
-    leaked = [p for p in created if main.LESSONS in p.parents or p.read_bytes()[:2] == b"\xff\xd8"]
+    def starts_jpeg(p: Path) -> bool:
+        try:
+            with p.open("rb") as f:
+                return f.read(2) == b"\xff\xd8"
+        except OSError:  # another tool (an Xcode build under the repo) removed its temp file meanwhile
+            return False
+
+    leaked = [p for p in created if main.LESSONS in p.parents or starts_jpeg(p)]
     assert leaked == [], leaked
 
 

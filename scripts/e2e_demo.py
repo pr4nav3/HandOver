@@ -4,7 +4,8 @@
     .venv/bin/python scripts/e2e_demo.py [--headed] [--keep]
 
 Builds web/ into a temp folder (never touches web/dist), copies lessons/demo-v1 into a temp lessons
-folder with a common_mistake on step 2, starts the hub in mock mode on 8095 with a planted "behind"
+folder with a common_mistake on step 2, starts the hub in mock mode on 8095 (no keys, no Databricks, events
+to a temp file, HANDOVER_NO_NETWORK=1) with a planted "behind"
 mistake on step 2, runs scripts/e2e/learn_flow.mjs in installed Chrome, and starts server.replay once
 the page is up. Screenshots, flow.json, summary.json and the hub and replay logs go to
 scripts/out/e2e-<time>/. Prints a PASS/FAIL table; exit code 0 only when every row passed.
@@ -72,10 +73,23 @@ def port_free(port: int) -> bool:
         return s.connect_ex(("127.0.0.1", port)) != 0
 
 
-def start(cmd: list[str], cwd: Path, log: Path, env: dict | None = None, pipe: bool = False) -> subprocess.Popen:
-    """Starts cmd in its own process group so teardown can kill everything it spawns."""
+SECRET_ENV = ("ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY")
+
+
+def isolated_env() -> dict:
+    """This process's environment without model keys, Databricks credentials or HANDOVER_* settings, so the test
+    hub never calls an outside service and only the settings given here apply."""
+    return {k: v for k, v in os.environ.items()
+            if not k.startswith(("HANDOVER_", "DATABRICKS_")) and k not in SECRET_ENV}
+
+
+def start(cmd: list[str], cwd: Path, log: Path, env: dict | None = None, pipe: bool = False,
+          isolated: bool = False) -> subprocess.Popen:
+    """Starts cmd in its own process group so teardown can kill everything it spawns. isolated: start from
+    isolated_env() instead of the full environment."""
     out = subprocess.PIPE if pipe else open(log, "wb")
-    return subprocess.Popen(cmd, cwd=cwd, env={**os.environ, **(env or {})}, stdout=out, stderr=subprocess.STDOUT,
+    base = isolated_env() if isolated else dict(os.environ)
+    return subprocess.Popen(cmd, cwd=cwd, env={**base, **(env or {})}, stdout=out, stderr=subprocess.STDOUT,
                             stdin=subprocess.DEVNULL, start_new_session=True, text=pipe or None)
 
 
@@ -214,8 +228,11 @@ def main() -> int:
         t = time.monotonic()
         env = {"HANDOVER_PORT": str(PORT), "HANDOVER_HTTPS_PORT": str(HTTPS_PORT), "HANDOVER_CERTS": "/nonexistent",
                "HANDOVER_CHECK": "mock", "HANDOVER_MOCK_PASS_SECONDS": "6", "HANDOVER_MOCK_MISTAKE": "behind:1",
-               "HANDOVER_LESSONS": str(lessons), "HANDOVER_WEB_DIST": str(web / "dist")}
-        procs["hub"] = start([str(PY), "-m", "server.main"], REPO, out / "hub.log", env)
+               "HANDOVER_LESSONS": str(lessons), "HANDOVER_WEB_DIST": str(web / "dist"),
+               # never write into logs/events.jsonl, never build a real model client
+               "HANDOVER_EVENTS_JSONL": str(tmp / "events.jsonl"), "HANDOVER_NO_NETWORK": "1",
+               "HANDOVER_DATA": str(tmp / "data")}
+        procs["hub"] = start([str(PY), "-m", "server.main"], REPO, out / "hub.log", env, isolated=True)
         if not wait_http(f"{base}/api/lessons", 30, procs["hub"]):
             rows.add("FAIL", "hub up", time.monotonic() - t, f"no answer on {base}; see {out / 'hub.log'}")
             return 1

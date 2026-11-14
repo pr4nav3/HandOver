@@ -74,7 +74,7 @@ def test_demo_passes():
 
 def test_demo_color_words_warn_and_strict_fails():
     r = results(DEMO)
-    assert r["step 1 check"][0] == "WARN" and "blue" in r["step 1 check"][1]
+    assert r["step 1 check"][0] == "WARN" and "white" in r["step 1 check"][1]  # "N white bars" in the test pattern
     assert run("lesson_lint.py", str(DEMO), "--strict").returncode == 1
 
 
