@@ -1,6 +1,6 @@
 """HandOver server: lessons REST API, static lesson files, and the learn engine.
 
-Run:  scripts/run_server.sh   (or: .venv/bin/python -m uvicorn server.main:app --host 0.0.0.0 --port 8000)
+Run:  scripts/run_server.sh   (or: .venv/bin/python -m server.main; on Windows .venv\\Scripts\\python -m server.main)
 Shared interface: CONTRACT.md.
 """
 
@@ -50,6 +50,8 @@ ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 UI_FRAME_MAX_SIDE = 960
 UI_FRAME_MIN_INTERVAL = 0.25  # at most 4 frames per second to the UI
 VERIFIED_HOLD = 1.2  # seconds the "verified" status shows before advancing
+MAX_UPLOAD_BYTES = 2 * 1024**3  # 2 GB
+CHECKING_SHOW_AFTER = 1.5  # seconds a check must be in flight before the UI is told "checking"
 
 
 # ---------------------------------------------------------------- lessons on disk
@@ -68,6 +70,16 @@ def read_lesson(lesson_id: str) -> dict:
         return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as e:
         raise HTTPException(500, f"lesson.json unreadable: {e}")
+
+
+def lesson_rev(lesson_id: Optional[str]) -> int:
+    """lesson.json modification time in ms. Clients refetch the lesson and bust media caches when it changes."""
+    if not lesson_id:
+        return 0
+    try:
+        return int((LESSONS / lesson_id / "lesson.json").stat().st_mtime_ns // 1_000_000)
+    except OSError:
+        return 0
 
 
 def slugify(text: str) -> str:
@@ -118,6 +130,7 @@ class Engine:
     def __init__(self) -> None:
         self.lesson_id: Optional[str] = None
         self.lesson: Optional[dict] = None
+        self.rev = 0  # lesson.json mtime in ms, see lesson_rev
         self.step = 0
         self.done = False
         self.checking = False
@@ -167,6 +180,7 @@ class Engine:
             "status": self.status(),
             "last_check": self.last_check,
             "camera_connected": self.cameras > 0,
+            "rev": self.rev,
         }
 
     def broadcast(self, msg: Any, droppable: bool = False) -> None:
@@ -190,6 +204,7 @@ class Engine:
     def select(self, lesson_id: str) -> None:
         lesson = read_lesson(lesson_id)
         self.lesson_id, self.lesson = lesson_id, lesson
+        self.rev = lesson_rev(lesson_id)
         self.step, self.done = 0, False
         self.ref_cache.clear()
         self._enter_step()
@@ -202,6 +217,7 @@ class Engine:
             return
         with contextlib.suppress(HTTPException):
             self.lesson = read_lesson(lesson_id)
+        self.rev = lesson_rev(lesson_id)
         self.ref_cache.clear()
         if self.step >= len(self.steps):
             self.step = max(0, len(self.steps) - 1)
@@ -272,15 +288,20 @@ class Engine:
             frame, seq, version = self.frame, self.frame_seq, self.version
             self.checked_seq = seq
             question = cur.get("check_question") or "Is this step finished?"
-            self.checking = True
-            self.broadcast_state()
+            # Checks run back to back, so status stays "watching" unless one is slow; flipping to "checking"
+            # for every frame made the UI flap twice a second.
+            prev = self._check_signature()
+            show = asyncio.get_running_loop().call_later(CHECKING_SHOW_AFTER, self._show_checking, version)
             try:
                 res = await check.check_frame(ref, frame, question, step_started_at=self.step_started)
             except Exception:  # check_frame should never raise; keep the loop alive regardless
                 log.exception("check crashed")
                 res = check.CheckResult("unsure", 0.0, 0)
+            finally:
+                show.cancel()
             if version != self.version:
                 continue  # step changed while the check was running; the stale result is ignored
+            shown = self.checking
             self.checking = False
             self.last_check = res.as_dict()
             passed = self.debouncer.feed(res.done, res.confidence)
@@ -290,10 +311,19 @@ class Engine:
                 await asyncio.sleep(VERIFIED_HOLD)
                 if version == self.version:
                     self.go(self.position() + 1, "camera")
-            else:
-                self.broadcast_state()
+            elif shown or self._check_signature() != prev:
+                self.broadcast_state()  # only when the answer changed, not on every identical result
             if self.frame_seq != self.checked_seq:
                 self.frame_event.set()  # frames arrived meanwhile; check the newest one next
+
+    def _show_checking(self, version: int) -> None:
+        if version == self.version and not self.verified:
+            self.checking = True
+            self.broadcast_state()
+
+    def _check_signature(self) -> tuple:
+        lc = self.last_check or {}
+        return self.status(), lc.get("done"), lc.get("confidence")
 
     async def ui_frame_loop(self) -> None:
         """Forward the newest camera frame to UI clients, downscaled, at most 4 per second."""
@@ -385,21 +415,35 @@ def _run_job(job: str, src: Path, lesson_id: str, title: str) -> None:
         log.info("job %s done: lesson %s", job, lesson_id)
     except Exception as e:
         log.exception("job %s failed", job)
+        d = LESSONS / lesson_id
+        if d.is_dir() and not (d / "lesson.json").exists():  # half-built lesson folder from this job
+            shutil.rmtree(d, ignore_errors=True)
         msg = f"{type(e).__name__}: {e}".strip()
         if len(msg) > 400:  # ffmpeg errors are long; keep the start and the useful tail
             msg = msg[:160].split("\n")[0] + " ... " + msg[-220:]
         _set_job(job, status="error", message=msg)
+    finally:
+        src.unlink(missing_ok=True)
 
 
 @app.post("/api/lesson")
 async def upload_lesson(file: UploadFile = File(...), title: str = Form(...), id: Optional[str] = Form(None)) -> dict:
+    from server import teach
+
     title = title.strip() or "Untitled lesson"
-    if id:
-        if not ID_RE.match(id):
+    if file.size is not None and file.size > MAX_UPLOAD_BYTES:
+        raise HTTPException(413, "video is larger than 2 GB")
+    if id and id.strip():
+        try:
+            lesson_id = teach.sanitize_id(id)  # the same id the teach pipeline will write to
+        except ValueError:
             raise HTTPException(400, "bad lesson id")
-        if (LESSONS / id).exists():
+        if not ID_RE.match(lesson_id):
+            raise HTTPException(400, "bad lesson id")
+        with jobs_lock:
+            busy = any(j["id"] == lesson_id and j["status"] not in ("done", "error") for j in jobs.values())
+        if busy or (LESSONS / lesson_id).exists():
             raise HTTPException(409, "lesson id already exists")
-        lesson_id = id
     else:
         lesson_id = unique_id(slugify(title))
     job = uuid.uuid4().hex[:12]
@@ -409,11 +453,25 @@ async def upload_lesson(file: UploadFile = File(...), title: str = Form(...), id
         suffix = ".mp4"
     src = UPLOADS / f"{job}{suffix}"
 
-    def save() -> None:
+    def save() -> bool:
+        """Copies the upload to disk. False when it passes the size limit."""
+        written = 0
         with src.open("wb") as f:
-            shutil.copyfileobj(file.file, f, 1024 * 1024)
+            while chunk := file.file.read(1024 * 1024):
+                written += len(chunk)
+                if written > MAX_UPLOAD_BYTES:
+                    return False
+                f.write(chunk)
+        return True
 
-    await asyncio.to_thread(save)
+    try:
+        ok = await asyncio.to_thread(save)
+    except BaseException:
+        src.unlink(missing_ok=True)
+        raise
+    if not ok:
+        src.unlink(missing_ok=True)
+        raise HTTPException(413, "video is larger than 2 GB")
     with jobs_lock:
         jobs[job] = {"status": "queued", "message": "", "id": lesson_id}
     threading.Thread(target=_run_job, args=(job, src, lesson_id, title), daemon=True).start()
@@ -525,6 +583,17 @@ async def ws_ui(ws: WebSocket) -> None:
             await sender
 
 
+def from_matches(frm: Any) -> bool:
+    """next/back carry the step the client was showing. A different step means the server moved on (a camera
+    advance, another tap) and the command is stale. Absent `from` is the legacy form and always applies.
+    On the done screen the state shows step total-1, so both total-1 and total count as current."""
+    if frm is None:
+        return True
+    if not isinstance(frm, int) or isinstance(frm, bool):
+        return False
+    return frm == engine.position() or (engine.done and frm == engine.step)
+
+
 def handle_ui_message(client: UIClient, text: str) -> None:
     try:
         msg = json.loads(text)
@@ -538,6 +607,8 @@ def handle_ui_message(client: UIClient, text: str) -> None:
             client.push({"type": "error", "message": e.detail})
     elif engine.lesson is None:
         client.push({"type": "error", "message": "no lesson selected"})
+    elif kind in ("next", "back") and not from_matches(msg.get("from")):
+        log.info("ignored stale %s (from %r, now at %d)", kind, msg.get("from"), engine.position())
     elif kind == "next":
         reason = msg.get("reason") if msg.get("reason") in ("button", "voice", "timer") else "button"
         engine.go(engine.position() + 1, reason)
@@ -584,7 +655,10 @@ def serve() -> None:
 
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGINT, signal.SIGTERM):
-            loop.add_signal_handler(sig, stop)
+            try:
+                loop.add_signal_handler(sig, stop)
+            except (NotImplementedError, RuntimeError):  # Windows event loops have no add_signal_handler
+                signal.signal(sig, lambda *_: loop.call_soon_threadsafe(stop))
 
         async def run_one(s) -> int:
             try:

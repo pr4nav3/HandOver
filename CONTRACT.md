@@ -38,9 +38,14 @@ Server -> client:
   - `{"type":"state","lesson_id":str|null,"step":int (0-based index),"total":int,"status":"watching|checking|verified|manual|done","last_check":{"done":"yes|no|unsure","confidence":float,"latency_ms":int}|null,"camera_connected":bool}`
     sent on connect and on every change.
   - `{"type":"advance","from":int,"to":int,"reason":"camera|button|voice|timer"}` right after a step change (UI plays chime when reason is camera).
+  - `{"type":"error","message":str}` to one UI client (bad select_lesson, command with no lesson).
+  - End of lesson: `advance` with `to == total` means finished; the following state has `step = total-1`, `status "done"`. Never index `steps[to]` when `to == total`.
+  - `state` also carries `"rev": int` (lesson.json mtime in ms). Clients refetch the lesson and append `?v=<rev>` to clip, caption and frame URLs when it changes (recut).
 Client -> server (text JSON):
 - `{"type":"select_lesson","id":str}` (resets to step 0)
-- `{"type":"next","reason":"button|voice"}`, `{"type":"back"}`, `{"type":"goto","step":int}`
+- `{"type":"next","reason":"button|voice","from":int}`, `{"type":"back","from":int}`, `{"type":"goto","step":int}`
+  - `from` is the step index the client was showing. The server ignores next/back whose `from` differs from the current step (prevents a camera advance plus a tap or voice "next" skipping a step). `from` omitted = legacy, applied unconditionally.
+- Reason `"timer"` is reserved; nothing sends it yet.
 
 ## Check rule
 Reference = `frames/NN.jpg` of the current step (last frame of that step's clip). Live frame + reference + `check_question`

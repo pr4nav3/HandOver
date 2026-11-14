@@ -5,6 +5,7 @@
 # Both ports share one learn session. Create certs with scripts/certs.sh. Ctrl+C stops the server.
 # Env passes through, for example: HANDOVER_CHECK=mock scripts/run_server.sh
 # Ports can be changed with HANDOVER_PORT and HANDOVER_HTTPS_PORT.
+# Windows (no bash): from the repo root run  .venv\Scripts\python -m server.main  (ffmpeg must be on PATH).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

@@ -91,16 +91,20 @@
     clearTimeout(reconnectTimer);
     if (!running) return;
     setConn("wait", "Connecting");
-    ws = new WebSocket(wsUrl);
-    ws.binaryType = "arraybuffer";
-    ws.onopen = () => setConn("on", "Connected");
-    ws.onmessage = () => {};
-    ws.onclose = () => {
+    // Each handler checks it still belongs to the current socket, so a late close from an old socket
+    // cannot clear the new one or start a second reconnect loop.
+    const sock = new WebSocket(wsUrl);
+    ws = sock;
+    sock.binaryType = "arraybuffer";
+    sock.onopen = () => { if (ws !== sock) return; setConn("on", "Connected"); };
+    sock.onmessage = () => {};
+    sock.onclose = () => {
+      if (ws !== sock) return;
       ws = null;
       if (running) { setConn("wait", "Reconnecting"); reconnectTimer = setTimeout(connect, 1500); }
       else setConn("off", "Not connected");
     };
-    ws.onerror = () => { try { ws && ws.close(); } catch (_) {} };
+    sock.onerror = () => { try { sock.close(); } catch (_) {} };
   }
 
   function sendFrame() {
@@ -133,25 +137,45 @@
     } catch (_) { $("wake").textContent = ""; }
   }
 
+  async function openCamera() {
+    try {
+      const next = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } },
+        audio: false,
+      });
+      if (stream) stream.getTracks().forEach((t) => t.stop());
+      stream = next;
+    } catch (e) {
+      showError(e && e.name === "NotAllowedError"
+        ? "Camera access was blocked. Allow it in Settings, Safari, Camera, then try again."
+        : `Could not start the camera (${(e && e.name) || "error"}).`);
+      return false;
+    }
+    video.srcObject = stream;
+    try { await video.play(); } catch (_) {}
+    return true;
+  }
+
+  // iOS can end or mute the camera track while the page is in the background; get a fresh one on return.
+  let reviving = false;
+  async function reviveCamera() {
+    const track = stream && stream.getVideoTracks()[0];
+    if (reviving || (track && track.readyState === "live" && !track.muted)) return;
+    reviving = true;
+    showError("");
+    if (stream) { stream.getTracks().forEach((t) => t.stop()); stream = null; }  // iOS allows one capture at a time
+    const ok = await openCamera();
+    reviving = false;
+    if (ok && !running) { stream.getTracks().forEach((t) => t.stop()); stream = null; video.srcObject = null; }
+  }
+
   async function start() {
     showError("");
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       showError("Camera needs HTTPS. Open this page with https:// and trust the certificate.");
       return;
     }
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } },
-        audio: false,
-      });
-    } catch (e) {
-      showError(e && e.name === "NotAllowedError"
-        ? "Camera access was blocked. Allow it in Settings, Safari, Camera, then try again."
-        : `Could not start the camera (${(e && e.name) || "error"}).`);
-      return;
-    }
-    video.srcObject = stream;
-    try { await video.play(); } catch (_) {}
+    if (!(await openCamera())) return;
     $("placeholder").hidden = true;
     running = true;
     startBtn.textContent = "Stop camera";
@@ -189,6 +213,7 @@
     if (document.visibilityState === "visible" && running) {
       requestWakeLock();
       if (!ws) connect();
+      reviveCamera();
     }
   });
 })();
