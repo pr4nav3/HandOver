@@ -11,7 +11,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-if [ -f certs/cert.pem ] && [ -f certs/key.pem ]; then
+CERTS="${HANDOVER_CERTS:-$ROOT/certs}"
+echo "Hub: http://localhost:${HANDOVER_PORT:-8000}/"
+if [ -f "$CERTS/cert.pem" ] && [ -f "$CERTS/key.pem" ]; then
   IP="$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || true)"
   echo "Phone camera page: https://${IP:-<laptop IP>}:${HANDOVER_HTTPS_PORT:-8443}/capture"
 fi
