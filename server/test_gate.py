@@ -114,9 +114,11 @@ def test_disabled_gate():
 
 
 def test_env_disable():
-    os.environ["HANDOVER_GATE"] = "0"
     try:
-        assert MotionGate().enabled is False
+        for raw, want in [("0", False), ("off", False), ("false", False), ("1", True), ("junk", True)]:
+            os.environ["HANDOVER_GATE"] = raw
+            assert MotionGate().enabled is want, raw
+        assert MotionGate(enabled=True).enabled is True  # argument wins over env
     finally:
         del os.environ["HANDOVER_GATE"]
     assert MotionGate().enabled is True
@@ -136,7 +138,7 @@ def test_env_thresholds():
             os.environ[name] = v
         assert values(MotionGate()) == (0.05, 0.01, 3, 0.025, 4.5)
         assert MotionGate(change_thresh=0.04).change_thresh == 0.04  # argument wins over env
-        for name, v in zip(names, ["abc", "-1", "2.5", "", "0"]):
+        for name, v in zip(names, ["abc", "-1", "2.5", "1.5", "0"]):  # junk, out of range, not whole
             os.environ[name] = v
         assert values(MotionGate()) == defaults  # bad values fall back
     finally:
