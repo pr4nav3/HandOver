@@ -229,8 +229,13 @@ def _soft_fail(where: str, msg: str) -> None:
 
 # ---------------------------------------------------------------- public API
 
-def start_run(lesson_id: Optional[str], learner: Optional[str] = None) -> Optional[str]:
-    """Begin a learner run (ends any active one first). Returns the run id."""
+def start_run(lesson_id: Optional[str], learner: Optional[str] = None, source: Optional[str] = None,
+              **extra: Any) -> Optional[str]:
+    """Begin a learner run (ends any active one first). Returns the run id.
+
+    `source` is the camera source from the hello ("phone", "glasses", "browser", "file"). It lands in the
+    run_start event's extra column so dashboards can leave replays (source "file") out of the live-run charts.
+    Any further keyword goes into extra too."""
     try:
         if _run["run_id"] is not None:
             end_run()
@@ -240,7 +245,12 @@ def start_run(lesson_id: Optional[str], learner: Optional[str] = None) -> Option
             _run.update(run_id=run_id, lesson_id=lesson_id, learner=learner, started_at=started, step=0)
         _enqueue("runs", {"run_id": run_id, "lesson_id": lesson_id, "learner": learner,
                           "started_at": started, "ended_at": None})
-        emit("run_start", step=0, **({"learner": learner} if learner else {}))
+        tags = dict(extra)
+        if learner:
+            tags["learner"] = learner
+        if source:
+            tags["source"] = source
+        emit("run_start", step=0, **tags)
         return run_id
     except Exception as e:  # never raise into the server
         _soft_fail("start_run", f"{type(e).__name__}: {e}")
@@ -699,12 +709,16 @@ def _cli_init() -> int:
     return 1 if bad else 0
 
 
-def _cli_selftest() -> int:
+def _cli_selftest(remote: bool = False) -> int:
+    """Local JSONL round trip. Flushes to the real tables only with --remote, so a casual selftest never
+    leaves a 'selftest' run in the demo data."""
     import tempfile
 
     tmp = Path(tempfile.mkdtemp(prefix="handover-dbx-")) / "events.jsonl"
     _cfg["jsonl"] = str(tmp)
-    run_id = start_run("selftest", learner="selftest")
+    if not remote:
+        _cfg["host"] = ""  # disables the remote flush for this process only
+    run_id = start_run("selftest", learner="selftest", source="selftest")
     emit("step_enter", step=0)
     emit("check", step=0, done="no", confidence=0.82, latency_ms=910, reason="seams still facing up")
     emit("advance", from_step=0, to_step=1, reason="button")
@@ -722,6 +736,8 @@ def _cli_selftest() -> int:
         drained = flush(90.0)
         print("flush", "done" if drained else "not finished")
         ok = ok and drained and status()["last_error"] is None
+    elif not remote:
+        print("local only (pass --remote to flush this selftest run into the real tables)")
     else:
         print("Databricks not configured: local only" + (f" ({_config_error()})" if _config_error() else ""))
     print("status " + json.dumps(status(), indent=2))
@@ -751,6 +767,25 @@ def _cli_warm() -> int:
     return 0 if err is None else 1
 
 
+def _cli_upload(lesson_id: str) -> int:
+    """Upload one lesson folder now (lessons and steps rows plus files to the Volume) and wait for it."""
+    if not _enabled():
+        print("Databricks not configured" + (f" ({_config_error()})" if _config_error() else ""))
+        return 1
+    root = Path(os.environ.get("HANDOVER_LESSONS") or (Path(__file__).resolve().parent.parent / "lessons"))
+    lesson_dir = root / lesson_id
+    if not (lesson_dir / "lesson.json").is_file():
+        print(f"no lesson.json in {lesson_dir}")
+        return 1
+    t0 = time.monotonic()
+    _upload_worker(lesson_dir, lesson_id)  # in the foreground, so the CLI can wait and report
+    drained = flush(120.0)
+    st = status()
+    print(f"upload {lesson_id}: {st['uploaded_files']} files, rows flushed={drained}, "
+          f"last_error={st['last_error']!r} in {time.monotonic() - t0:.1f} s")
+    return 0 if drained and st["last_error"] is None else 1
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     import argparse
 
@@ -763,13 +798,17 @@ def main(argv: Optional[list[str]] = None) -> int:
     g.add_argument("--selftest", action="store_true", help="emit events to a temp JSONL; flush if configured")
     g.add_argument("--tail", action="store_true", help="print the last 20 local events")
     g.add_argument("--warm", action="store_true", help="SELECT 1 to start the warehouse before a demo")
+    g.add_argument("--upload", metavar="LESSON_ID", help="upload one lesson folder to the Volume and its rows to lessons/steps, then wait")
+    p.add_argument("--remote", action="store_true", help="with --selftest: also flush the selftest run to the real tables")
     a = p.parse_args(argv)
     if a.init:
         return _cli_init()
     if a.selftest:
-        return _cli_selftest()
+        return _cli_selftest(remote=a.remote)
     if a.warm:
         return _cli_warm()
+    if a.upload:
+        return _cli_upload(a.upload)
     return _cli_tail()
 
 
