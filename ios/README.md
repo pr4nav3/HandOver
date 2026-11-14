@@ -17,9 +17,9 @@ an iPhone or the glasses yet.
 |---|---|
 | `project.yml` | xcodegen spec: target HandOverCamera, iOS 17.2, Swift 5 mode, `com.handover.camera`, DAT package from 1.0.1, Info.plist keys, portrait only |
 | `Sources/HandOverCameraApp.swift` | `@main`; configures the toolkit and forwards `onOpenURL` callbacks from the Meta AI app |
-| `Sources/FrameSource.swift` | `FrameSource` protocol, JPEG helper (long side 960, quality 0.6), 1 fps throttle, and the glasses stub for builds without the toolkit |
+| `Sources/FrameSource.swift` | `FrameSource` protocol, JPEG helper (long side 960, quality 0.6), 2 fps throttle, and the glasses stub for builds without the toolkit |
 | `Sources/PhoneCameraSource.swift` | AVCaptureSession back camera, 1280x720, portrait, 1 frame/s |
-| `Sources/GlassesCameraSource.swift` | All toolkit calls: 2 fps at `.low`, throttled to 1 fps. Falls back after 15 s without frames, or on any error |
+| `Sources/GlassesCameraSource.swift` | All toolkit calls: 2 fps at `.low`, throttled to 2 fps. Falls back after 15 s without frames, or on any error |
 | `Sources/HubClient.swift` | WebSocket client: hello, binary frames, next/back with `from`, state parsing, reconnect with backoff capped at 5 s, stops on close code 4000 |
 | `Sources/ContentView.swift` | UI and `SessionController` (source switching, idle timer, scene phase) |
 

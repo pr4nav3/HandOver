@@ -98,13 +98,13 @@ final class SessionController: ObservableObject {
 
         switch kind {
         case .phone:
-            let phone = PhoneCameraSource()
+            let phone = PhoneCameraSource(busy: hub.sendBusy)
             phone.onFrame = SessionController.makeFrameHandler(hub: hub)
             phone.onError = SessionController.makeMessageHandler(controller: self, isFallback: false)
             source = phone
             phone.start()
         case .glasses:
-            let glasses = GlassesCameraSource()
+            let glasses = GlassesCameraSource(busy: hub.sendBusy)
             glasses.onFrame = SessionController.makeFrameHandler(hub: hub)
             glasses.onStatus = SessionController.makeMessageHandler(controller: self, isFallback: false)
             glasses.onFallback = SessionController.makeMessageHandler(controller: self, isFallback: true)

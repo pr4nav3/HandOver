@@ -5,7 +5,9 @@ import AVFoundation
 import CoreImage
 import UIKit
 
-/// Back camera at 1280x720, rotated to portrait, throttled to 1 JPEG per second.
+/// Back camera at 1280x720, rotated to portrait, throttled to 2 JPEGs per second.
+/// While `busy` is set (the previous frame is still being sent) frames are skipped
+/// before encoding, so nothing queues.
 final class PhoneCameraSource: NSObject, FrameSource, AVCaptureVideoDataOutputSampleBufferDelegate {
     var onFrame: ((Data) -> Void)?
     /// Called on any queue with a human-readable problem (permission denied, no camera, ...).
@@ -14,8 +16,14 @@ final class PhoneCameraSource: NSObject, FrameSource, AVCaptureVideoDataOutputSa
     private let session = AVCaptureSession()
     private let sessionQueue = DispatchQueue(label: "handover.phone.session")
     private let videoQueue = DispatchQueue(label: "handover.phone.video")
-    private let throttle = FrameThrottle(interval: 1.0)
+    private let throttle = FrameThrottle()
     private let ciContext = CIContext(options: nil)
+    private let busy: LockedFlag?
+
+    init(busy: LockedFlag? = nil) {
+        self.busy = busy
+        super.init()
+    }
 
     // sessionQueue only
     private var configured = false
@@ -99,7 +107,7 @@ final class PhoneCameraSource: NSObject, FrameSource, AVCaptureVideoDataOutputSa
         }
         session.addInput(input)
 
-        // We only keep 1 frame/s, so ask the sensor for 15 fps to save power and heat.
+        // We only keep 2 frames/s, so ask the sensor for 15 fps to save power and heat.
         do {
             try device.lockForConfiguration()
             let supports15 = device.activeFormat.videoSupportedFrameRateRanges.contains { range in
@@ -144,7 +152,7 @@ final class PhoneCameraSource: NSObject, FrameSource, AVCaptureVideoDataOutputSa
     func captureOutput(_ output: AVCaptureOutput,
                        didOutput sampleBuffer: CMSampleBuffer,
                        from connection: AVCaptureConnection) {
-        guard throttle.shouldEmit() else { return }
+        guard busy?.value != true, throttle.shouldEmit() else { return }
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
         let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
         guard let cgImage = ciContext.createCGImage(ciImage, from: ciImage.extent) else { return }

@@ -45,7 +45,12 @@ final class HubClient: ObservableObject {
     private var sendingResetTask: Task<Void, Never>?
     private var titlesTask: Task<Void, Never>?
     private var attempt = 0
-    private var sendInFlight = false
+    private var sendInFlight = false {
+        didSet { sendBusy.set(sendInFlight) }
+    }
+    /// True while a frame is being sent. Camera sources read it on their own
+    /// queues and skip encoding, so frames never queue behind a slow network.
+    nonisolated let sendBusy = LockedFlag(false)
     private var lessonRev: Int?
     private var stepTitles: [String] = []
 
