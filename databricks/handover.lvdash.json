@@ -419,7 +419,22 @@
       "displayName": "ds_mistakes",
       "queryLines": [
         "-- Mistakes the camera caught, per step the learner was on, long format: one row per (step, kind).\n",
-        "--   Behind  the live frame still matches the previous step (a step was skipped or undone)"
+        "--   Behind  the live frame still matches the previous step (a step was skipped or undone);\n",
+        "--           the step does not move.\n",
+        "--   Ahead   the live frame matches the next step; the hub confirms and jumps forward.\n",
+        "SELECT\n",
+        "  e.lesson_id,\n",
+        "  s.n,\n",
+        "  concat(lpad(cast(s.n AS STRING), 2, '0'), ' ', s.title) AS step_label,\n",
+        "  CASE e.mistake_kind WHEN 'behind' THEN 'Behind' WHEN 'ahead' THEN 'Ahead'\n",
+        "       ELSE coalesce(e.mistake_kind, 'Unknown') END       AS mistake_kind,\n",
+        "  count(*)                                                AS mistakes,\n",
+        "  round(avg(e.confidence), 2)                             AS avg_confidence\n",
+        "FROM workspace.handover.events e\n",
+        "JOIN workspace.handover.steps s ON s.lesson_id = e.lesson_id AND s.n = e.step + 1\n",
+        "WHERE e.kind = 'mistake' AND e.run_id IS NOT NULL\n",
+        "GROUP BY e.lesson_id, s.n, s.title, e.mistake_kind\n",
+        "ORDER BY e.lesson_id, s.n, mistake_kind"
       ]
     },
     {
