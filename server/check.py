@@ -9,6 +9,11 @@ timing tool:
 
     python -m server.check --time REF.jpg LIVE.jpg "question" -n 20
     python -m server.check --compare REF_A.jpg REF_B.jpg REF_C.jpg LIVE.jpg -n 5
+    python -m server.check --bench [-n 1] [--max-usd 0.05] [--lesson DIR] [--variants DIR]
+
+--bench runs the live check's request shapes side by side (default, full schema, 512 px LIVE,
+no cache, cold client, streamed, and two calls in flight) on own and prev probes and prints
+p50, p90, output tokens, answers and cost per arm. --max-usd is a hard stop.
 
 Env (all registered in server/config.py):
     ANTHROPIC_API_KEY                Claude key (or repo-root .env). Never printed.
@@ -299,21 +304,24 @@ def _get_claude():
     and hide rate limits from the Breaker. Keep-alive 120 s for the same reason as Gemini;
     the SDK's own default client keeps idle connections only 5 s.
     """
+    return _loop_client("claude", _new_claude, lambda c: c.close)
+
+
+def _new_claude():
+    """A fresh AsyncAnthropic with its own connection pool. The live path shares one per loop
+    (_get_claude); the bench builds one per call to time a cold connection."""
     import anthropic
     import httpx2
 
-    def build():
-        if no_network():
-            raise RuntimeError("HANDOVER_NO_NETWORK=1: not building a real Claude client")
-        key = _anthropic_key()
-        if not key:
-            raise RuntimeError("no Claude key: set ANTHROPIC_API_KEY or add it to .env")
-        http = anthropic.DefaultAsyncHttpxClient(
-            limits=httpx2.Limits(max_connections=20, max_keepalive_connections=4, keepalive_expiry=KEEPALIVE_SECONDS)
-        )
-        return anthropic.AsyncAnthropic(api_key=key, max_retries=0, http_client=http)
-
-    return _loop_client("claude", build, lambda c: c.close)
+    if no_network():
+        raise RuntimeError("HANDOVER_NO_NETWORK=1: not building a real Claude client")
+    key = _anthropic_key()
+    if not key:
+        raise RuntimeError("no Claude key: set ANTHROPIC_API_KEY or add it to .env")
+    http = anthropic.DefaultAsyncHttpxClient(
+        limits=httpx2.Limits(max_connections=20, max_keepalive_connections=4, keepalive_expiry=KEEPALIVE_SECONDS)
+    )
+    return anthropic.AsyncAnthropic(api_key=key, max_retries=0, http_client=http)
 
 
 _KEY_PATTERNS = re.compile(r"sk-ant-[A-Za-z0-9_\-]+|AIza[0-9A-Za-z_\-]{20,}")
@@ -614,17 +622,32 @@ def _check_labels(with_before: bool) -> list[str]:
 
 # ---------------------------------------------------------------- Claude
 
-def _claude_answer_schema() -> dict:
-    """Same evidence-first fields as Gemini, in the shape Claude structured outputs require:
-    every field required, additionalProperties false, no numeric bounds (enforced on our side)."""
+# Claude answer forms. "lean" (default) is differs, done, confidence: measured on the synthetic
+# fortune teller (own vs prev probes, 2026-11-14) it halved output tokens (60 to 28) and cut the
+# median by about 0.1 s with the same answers. "full" adds "seen" first, for the bench and debugging.
+# Evidence still comes before the verdict in both: differs is written before done.
+ClaudeForm = Literal["lean", "full"]
+CLAUDE_FORM: ClaudeForm = "lean"
+LEAN_DIFFERS_WORDS = 4
+_CLAUDE_FIELDS: dict[str, tuple[str, ...]] = {
+    "lean": ("differs", "done", "confidence"),
+    "full": ("seen", "differs", "done", "confidence"),
+}
+_LEAN_DIFFERS = f'At most {LEAN_DIFFERS_WORDS} words on what LIVE lacks compared with DONE, or "nothing"'
+
+
+def _claude_answer_schema(form: ClaudeForm = CLAUDE_FORM) -> dict:
+    """Evidence-first fields in the shape Claude structured outputs require: every field
+    required, additionalProperties false, no numeric bounds (enforced on our side)."""
     props = {}
-    for name, field in _Answer.model_fields.items():
+    for name in _CLAUDE_FIELDS[form]:
+        desc = _Answer.model_fields[name].description
         if name == "done":
-            props[name] = {"type": "string", "enum": ["yes", "no", "unsure"], "description": field.description}
+            props[name] = {"type": "string", "enum": ["yes", "no", "unsure"], "description": desc}
         elif name == "confidence":
-            props[name] = {"type": "number", "description": field.description}
+            props[name] = {"type": "number", "description": desc}
         else:
-            props[name] = {"type": "string", "description": field.description}
+            props[name] = {"type": "string", "description": _LEAN_DIFFERS if form == "lean" else desc}
     return {"type": "object", "properties": props, "required": list(props), "additionalProperties": False}
 
 
@@ -651,16 +674,25 @@ def _step_block(jpeg: bytes) -> dict:
     return block
 
 
-CLAUDE_SYSTEM = (
+_CLAUDE_SYSTEM_HEAD = (
     "You check whether a learner finished one step of a hands-on task, from photos. "
     "IMAGE DONE shows the finished step. IMAGE LIVE is the camera now. "
     "IMAGE BEFORE, when given, shows the object before this step: if LIVE looks like BEFORE, answer no. "
     + RULE + " "
-    'First write "seen": at most 8 words on LIVE (outline shape, orientation, visible parts). '
-    'Then "differs": at most 8 words on what LIVE lacks compared with DONE, or "nothing". '
+)
+_CLAUDE_VERDICT = (
     'Then "done": yes, no, or unsure (unsure if the object is not visible or blurred), '
     'and "confidence" from 0 to 1.'
 )
+CLAUDE_SYSTEMS: dict[str, str] = {
+    "lean": _CLAUDE_SYSTEM_HEAD
+    + f'First write "differs": at most {LEAN_DIFFERS_WORDS} words on what LIVE lacks compared with DONE, '
+    'or "nothing". ' + _CLAUDE_VERDICT,
+    "full": _CLAUDE_SYSTEM_HEAD
+    + 'First write "seen": at most 8 words on LIVE (outline shape, orientation, visible parts). '
+    'Then "differs": at most 8 words on what LIVE lacks compared with DONE, or "nothing". ' + _CLAUDE_VERDICT,
+}
+CLAUDE_SYSTEM = CLAUDE_SYSTEMS[CLAUDE_FORM]
 CLAUDE_FINAL = "Answer for IMAGE LIVE."
 
 
@@ -668,17 +700,20 @@ def _cache_on() -> bool:
     return bool(config.get("HANDOVER_CLAUDE_CACHE"))
 
 
-def _claude_check_content(ref_jpeg: bytes, live_jpeg: bytes, question: str, prev_ref: Optional[bytes]) -> list[dict]:
+def _claude_check_content(ref_jpeg: bytes, live_jpeg: bytes, question: str, prev_ref: Optional[bytes],
+                          live_side: Optional[int] = None, cache: Optional[bool] = None) -> list[dict]:
     """BEFORE, DONE, then the question with the cache breakpoint, then LIVE. Everything up to
-    the question repeats for every frame of a step, so later calls read it from the cache."""
+    the question repeats for every frame of a step, so later calls read it from the cache.
+    live_side and cache default to HANDOVER_CHECK_MAX_SIDE and HANDOVER_CLAUDE_CACHE (the
+    bench passes them per call)."""
     content: list[dict] = []
     if prev_ref is not None:
         content += [{"type": "text", "text": "IMAGE BEFORE: the object before this step"}, _step_block(prev_ref)]
     content += [{"type": "text", "text": "IMAGE DONE: the finished step"}, _step_block(ref_jpeg)]
     q: dict = {"type": "text", "text": f"Question: {question.strip()}"}
-    if _cache_on():
+    if _cache_on() if cache is None else cache:
         q["cache_control"] = {"type": "ephemeral"}
-    live = downscale_jpeg(live_jpeg, _max_side(), CLAUDE_JPEG_QUALITY)
+    live = downscale_jpeg(live_jpeg, live_side or _max_side(), CLAUDE_JPEG_QUALITY)
     content += [q, {"type": "text", "text": "IMAGE LIVE: the camera now"}, _claude_image(live),
                 {"type": "text", "text": CLAUDE_FINAL}]
     return content
@@ -733,17 +768,25 @@ async def _claude_check(
     ref_jpeg: bytes, live_jpeg: bytes, question: str, prev_ref: Optional[bytes], secs: float
 ) -> tuple[Done, float, Optional[str], float, int]:
     content = await asyncio.to_thread(_claude_check_content, ref_jpeg, live_jpeg, question, prev_ref)
+    done, conf, reason, usd, usage = await _claude_answer(_get_claude(), content, secs)
+    return done, conf, reason, usd, int(getattr(usage, "cache_read_input_tokens", 0) or 0)
+
+
+async def _claude_answer(client, content: list[dict], secs: float, form: ClaudeForm = CLAUDE_FORM
+                         ) -> tuple[Done, float, Optional[str], float, object]:
+    """One non-streamed check request; returns the parsed answer, its cost and the usage.
+    Not streamed on purpose: the bench measured that the answer arrives in one burst at the
+    end, so parsing "done" early from a stream saves nothing."""
     model = _claude_model()
-    resp = await _get_claude().messages.create(
-        **_claude_request(model, content, _claude_answer_schema(), secs, system=CLAUDE_SYSTEM)
+    resp = await client.messages.create(
+        **_claude_request(model, content, _claude_answer_schema(form), secs, system=CLAUDE_SYSTEMS[form])
     )
     text, usd = _claude_text(resp, model)
     try:
         done, conf, reason = _parse_answer(text)
     except Exception as e:
         raise _CheckFailure("error", f"unparseable answer: {type(e).__name__}", usd) from e
-    cached = int(getattr(getattr(resp, "usage", None), "cache_read_input_tokens", 0) or 0)
-    return done, conf, reason, usd, cached
+    return done, conf, reason, usd, getattr(resp, "usage", None)
 
 
 async def check_frame(
@@ -803,25 +846,38 @@ def _log_failure(what: str, err: CheckError, e: BaseException, timeout: float) -
 
 LABELS = "ABCDEFGH"
 
+# Question-neutral on purpose: an accuracy run found the answer followed the step question's
+# wording (one wording said "behind" 8 of 11 times, others 0 of 12). The prompt names only the
+# physical state, so no step question ever reaches it.
 COMPARE_PROMPT = (
-    "{context}"
-    "Images {labels} are reference photos of finished steps of one task. The last image is the live camera now. "
-    "Which labeled reference shows the same state as the live image? "
-    "Ignore differences in background, lighting, hands, and camera angle. "
+    "Images {labels} are reference photos of finished steps of one task. The last image, LIVE, is the camera now. "
+    "Which labeled reference ({labels}) shows the same physical state as LIVE: outline, number of layers or "
+    "flaps, which side faces up; or none? "
+    "Ignore background, lighting, hands, and camera angle. "
     'Answer "none" if the object is not visible or matches none of them. '
-    'Reply as JSON: {{"match": {choices}, "confidence": 0 to 1}}.'
+    'First write "seen": at most 8 words on LIVE (outline, layers or flaps, side up). '
+    'Then "match": {choices}, and "confidence" from 0 to 1.'
 )
+COMPARE_SEEN = "At most 8 words on LIVE: outline, layers or flaps, side up"
+COMPARE_LIVE = "LIVE: the camera now"
+
+
+def _compare_prompt(labels: list[str]) -> str:
+    choices = "|".join(f'"{x}"' for x in [*labels, "none"])
+    return COMPARE_PROMPT.format(labels=", ".join(labels), choices=choices)
 
 
 def _compare_schema(labels: list[str]) -> dict:
-    """Flat schema with the allowed labels as an enum, so the answer always maps back to a step."""
+    """Flat schema with the allowed labels as an enum, so the answer always maps back to a step.
+    Evidence first: seen is written before match."""
     return {
         "type": "object",
         "properties": {
+            "seen": {"type": "string", "description": COMPARE_SEEN},
             "match": {"type": "string", "enum": [*labels, "none"], "description": "label of the best match, or none"},
             "confidence": {"type": "number", "minimum": 0, "maximum": 1, "description": "0 to 1"},
         },
-        "required": ["match", "confidence"],
+        "required": ["seen", "match", "confidence"],
     }
 
 
@@ -836,7 +892,7 @@ def parse_match(text: str, refs: list[tuple[int, bytes]]) -> tuple[Optional[int]
     return refs[idx][0], conf
 
 
-async def _gemini_compare(live_jpeg: bytes, refs: list[tuple[int, bytes]], question: Optional[str]) -> tuple[Optional[int], float]:
+async def _gemini_compare(live_jpeg: bytes, refs: list[tuple[int, bytes]]) -> tuple[Optional[int], float]:
     from google.genai import types
 
     labels = list(LABELS[: len(refs)])
@@ -846,12 +902,8 @@ async def _gemini_compare(live_jpeg: bytes, refs: list[tuple[int, bytes]], quest
     parts = []
     for label, img in zip(labels, images[:-1]):
         parts += [types.Part.from_text(text=f"Reference {label}"), types.Part.from_bytes(data=img, mime_type="image/jpeg")]
-    parts += [types.Part.from_text(text="Live camera now"), types.Part.from_bytes(data=images[-1], mime_type="image/jpeg")]
-    context = f"Task step: {question.strip()}\n\n" if question and question.strip() else ""
-    choices = "|".join(f'"{x}"' for x in [*labels, "none"])
-    parts.append(
-        types.Part.from_text(text=COMPARE_PROMPT.format(context=context, labels=", ".join(labels), choices=choices))
-    )
+    parts += [types.Part.from_text(text=COMPARE_LIVE), types.Part.from_bytes(data=images[-1], mime_type="image/jpeg")]
+    parts.append(types.Part.from_text(text=_compare_prompt(labels)))
     model = _model()
     resp = await _get_client().aio.models.generate_content(
         model=model, contents=[types.Content(role="user", parts=parts)], config=_config(_compare_schema(labels), model)
@@ -863,16 +915,17 @@ def _claude_compare_schema(labels: list[str]) -> dict:
     return {
         "type": "object",
         "properties": {
+            "seen": {"type": "string", "description": COMPARE_SEEN},
             "match": {"type": "string", "enum": [*labels, "none"], "description": "label of the best match, or none"},
             "confidence": {"type": "number", "description": "0 to 1"},
         },
-        "required": ["match", "confidence"],
+        "required": ["seen", "match", "confidence"],
         "additionalProperties": False,
     }
 
 
 async def _claude_compare(
-    live_jpeg: bytes, refs: list[tuple[int, bytes]], question: Optional[str], secs: float
+    live_jpeg: bytes, refs: list[tuple[int, bytes]], secs: float
 ) -> tuple[Optional[int], float, float]:
     labels = list(LABELS[: len(refs)])
     images = await asyncio.gather(
@@ -881,10 +934,8 @@ async def _claude_compare(
     content: list[dict] = []
     for label, img in zip(labels, images[:-1]):
         content += [{"type": "text", "text": f"Reference {label}"}, _claude_image(img)]
-    content += [{"type": "text", "text": "Live camera now"}, _claude_image(images[-1])]
-    context = f"Task step: {question.strip()}\n\n" if question and question.strip() else ""
-    choices = "|".join(f'"{x}"' for x in [*labels, "none"])
-    content.append({"type": "text", "text": COMPARE_PROMPT.format(context=context, labels=", ".join(labels), choices=choices)})
+    content += [{"type": "text", "text": COMPARE_LIVE}, _claude_image(images[-1])]
+    content.append({"type": "text", "text": _compare_prompt(labels)})
     model = _claude_model()
     resp = await _get_claude().messages.create(**_claude_request(model, content, _claude_compare_schema(labels), secs))
     text, usd = _claude_text(resp, model)
@@ -904,9 +955,11 @@ async def compare_refs(
 ) -> MatchResult:
     """One multiple-choice call: which of refs (step index, jpeg) does the live frame match? Never raises.
 
-    Mock mode returns no match; the mock mistake path lives in mistake.py. timeout overrides
-    HANDOVER_CHECK_TIMEOUT for this call only.
+    question is accepted for older callers and ignored: the prompt is question-neutral (see
+    COMPARE_PROMPT). Mock mode returns no match; the mock mistake path lives in mistake.py.
+    timeout overrides HANDOVER_CHECK_TIMEOUT for this call only.
     """
+    del question  # never sent: a step question biased the answer toward its own wording
     if is_mock() or not refs:
         return MatchResult(None, 0.0, 0)
     if len(refs) > len(LABELS):
@@ -925,10 +978,10 @@ async def compare_refs(
         secs = _timeout(timeout)
         if prov == "claude":
             step, conf, usd = await asyncio.wait_for(
-                _claude_compare(live_jpeg, refs, question, secs), secs + TIMEOUT_GRACE
+                _claude_compare(live_jpeg, refs, secs), secs + TIMEOUT_GRACE
             )
         else:
-            step, conf = await asyncio.wait_for(_gemini_compare(live_jpeg, refs, question), secs)
+            step, conf = await asyncio.wait_for(_gemini_compare(live_jpeg, refs), secs)
     except Exception as e:
         err = classify_error(e)
         usd = getattr(e, "cost_usd", 0.0)
@@ -1174,12 +1227,226 @@ async def time_compares(refs: list[Path], live: Path, n: int = 5) -> list[MatchR
     return results
 
 
+# ---------------------------------------------------------------- bench (Claude)
+
+@dataclass(frozen=True)
+class BenchArm:
+    """One request shape for the bench. Defaults are the live path's settings."""
+
+    name: str
+    live_side: Optional[int] = None  # None: HANDOVER_CHECK_MAX_SIDE
+    cache: Optional[bool] = None  # None: HANDOVER_CLAUDE_CACHE
+    form: ClaudeForm = CLAUDE_FORM
+    cold: bool = False  # a new client per call: fresh DNS, TCP and TLS
+    stream: bool = False  # streamed; also records when the first text arrives
+
+
+BENCH_ARMS: tuple[BenchArm, ...] = (
+    BenchArm("default"),
+    BenchArm("full schema", form="full"),
+    BenchArm("live 512 px", live_side=512),
+    BenchArm("no cache", cache=False),
+    BenchArm("cold client", cold=True),
+    BenchArm("streamed", stream=True),
+)
+BENCH_LESSON = REPO / "lessons" / "synthetic-fortune-teller-v1"
+BENCH_VARIANTS = REPO / "scripts" / "out" / "accuracy-variants-1001"
+BENCH_FIRST_CALL_USD = 0.002  # budget estimate before any call has been priced
+
+
+@dataclass
+class BenchProbe:
+    id: str
+    expect: Literal["yes", "no"]
+    ref: bytes
+    live: bytes
+    prev: Optional[bytes]
+    question: str
+
+
+def bench_probes(lesson: Path = BENCH_LESSON, variants: Optional[Path] = BENCH_VARIANTS, n: int = 1
+                 ) -> tuple[list[BenchProbe], str]:
+    """own (ref k vs state k, expect yes) and prev (ref k vs state k-1, expect no) probes for each
+    camera step with a step before it. Live images are held-out variants (state<k>_v<ii>.jpg)
+    when the folder has them, else the lesson's own reference frames (an easier test)."""
+    steps = {s["n"]: s for s in json.loads((lesson / "lesson.json").read_text(encoding="utf-8"))["steps"]}
+
+    def ref(k: int) -> bytes:
+        return (lesson / (steps[k].get("ref_frame") or f"frames/{k:02d}.jpg")).read_bytes()
+
+    def var(k: int, i: int) -> Optional[Path]:
+        p = variants / f"state{k}_v{i:02d}.jpg" if variants else None
+        return p if p is not None and p.is_file() else None
+
+    camera = [k for k, s in steps.items() if s.get("check_type") == "camera" and (k - 1) in steps]
+    use_variants = bool(camera) and all(var(k, i) and var(k - 1, i) for k in camera for i in range(n))
+    probes: list[BenchProbe] = []
+    for i in range(n if use_variants else 1):
+        for k in camera:
+            q, prev = steps[k].get("check_question") or "", ref(k - 1)
+            own = var(k, i).read_bytes() if use_variants else ref(k)  # type: ignore[union-attr]
+            back = var(k - 1, i).read_bytes() if use_variants else prev  # type: ignore[union-attr]
+            probes.append(BenchProbe(f"s{k}own{i}", "yes", ref(k), own, prev, q))
+            probes.append(BenchProbe(f"s{k}prev{i}", "no", ref(k), back, prev, q))
+    source = f"held-out variants in {variants}" if use_variants else "the lesson's own reference frames (easy)"
+    return probes, source
+
+
+async def _bench_call(arm: BenchArm, p: BenchProbe, secs: float) -> dict:
+    """One timed check in this arm's shape. The clock covers what check_frame's does: building
+    the request (LIVE downscale) and the call. Never raises."""
+    t0 = time.monotonic()
+    first: Optional[float] = None
+    out: dict = {"arm": arm.name, "id": p.id, "expect": p.expect}
+    client = None
+    try:
+        content = await asyncio.to_thread(_claude_check_content, p.ref, p.live, p.question, p.prev,
+                                          arm.live_side, arm.cache)
+        client = _new_claude() if arm.cold else _get_claude()
+        if arm.stream:
+            model = _claude_model()
+            req = _claude_request(model, content, _claude_answer_schema(arm.form), secs, system=CLAUDE_SYSTEMS[arm.form])
+            async with client.messages.stream(**req) as s:
+                async for ev in s:
+                    if first is None and ev.type == "content_block_delta":
+                        first = time.monotonic()
+                resp = await s.get_final_message()
+            text, usd = _claude_text(resp, model)
+            done, conf, reason = _parse_answer(text)
+            usage = resp.usage
+        else:
+            done, conf, reason, usd, usage = await asyncio.wait_for(
+                _claude_answer(client, content, secs, arm.form), secs + TIMEOUT_GRACE)
+        out.update(done=done, conf=conf, reason=reason, usd=usd,
+                   out_tokens=int(getattr(usage, "output_tokens", 0) or 0),
+                   cache_read=int(getattr(usage, "cache_read_input_tokens", 0) or 0))
+    except Exception as e:
+        out.update(error=classify_error(e), usd=getattr(e, "cost_usd", 0.0))
+        _log_failure("bench", out["error"], e, secs)
+    finally:
+        if arm.cold and client is not None:
+            await client.close()
+    out["ms"] = int((time.monotonic() - t0) * 1000)
+    if first is not None:
+        out["first_ms"] = int((first - t0) * 1000)
+    return out
+
+
+def bench_engine_answer(r: dict, min_conf: Optional[float] = None) -> str:
+    """What the engine would count: yes needs confidence >= HANDOVER_MIN_CONF."""
+    if r.get("error"):
+        return "error"
+    if min_conf is None:
+        min_conf = float(config.get("HANDOVER_MIN_CONF"))  # type: ignore[arg-type]
+    if r["done"] == "yes" and r["conf"] < min_conf:
+        return "yes_low"
+    return r["done"]
+
+
+def bench_table(results: list[dict], arms: tuple[BenchArm, ...]) -> list[str]:
+    """One markdown row per arm: latency of successful calls, output tokens, answers, cost."""
+    rows = ["| Arm | ok | p50 ms | p90 ms | first text p50 | out tokens | own yes | prev false pass | cost |",
+            "|---|---|---|---|---|---|---|---|---|"]
+    for arm in arms:
+        rs = [r for r in results if r["arm"] == arm.name]
+        ok = [r for r in rs if not r.get("error")]
+        lat = sorted(r["ms"] for r in ok)
+        firsts = sorted(r["first_ms"] for r in ok if "first_ms" in r)
+        own = [r for r in rs if r["expect"] == "yes"]
+        prev = [r for r in rs if r["expect"] == "no"]
+        cells = [
+            arm.name, f"{len(ok)}/{len(rs)}",
+            f"{statistics.median(lat):.0f}" if lat else "-", str(_percentile(lat, 0.9)) if lat else "-",
+            f"{statistics.median(firsts):.0f}" if firsts else "-",
+            f"{statistics.median(r['out_tokens'] for r in ok):.0f}" if ok else "-",
+            f"{sum(bench_engine_answer(r) == 'yes' for r in own)}/{len(own)}",
+            f"{sum(bench_engine_answer(r) == 'yes' for r in prev)}/{len(prev)}",
+            f"${sum(r.get('usd', 0.0) for r in rs):.4f}",
+        ]
+        rows.append("| " + " | ".join(cells) + " |")
+    return rows
+
+
+async def run_bench(probes: list[BenchProbe], arms: tuple[BenchArm, ...] = BENCH_ARMS, max_usd: float = 0.05,
+                    pairs: int = 4, timeout: Optional[float] = None) -> dict:
+    """Every arm on every probe, interleaved (the arm order rotates per probe) so network drift
+    lands on all arms alike, after one untimed warm-up call per arm. Then `pairs` rounds of two
+    default calls in flight on the shared client, the most the engine runs at once.
+
+    max_usd is a hard stop: before each call, what this run spent plus its priciest call so far
+    must stay under it, and spend.allow() must be True. Returns results, pair results, spend."""
+    secs = _timeout(timeout)
+    spent, priciest = 0.0, BENCH_FIRST_CALL_USD
+    stopped: Optional[str] = None
+
+    def room() -> bool:
+        nonlocal stopped
+        if not spend.allow():
+            stopped = "the spend ledger says no"
+        elif spent + priciest > max_usd:
+            stopped = f"--max-usd {max_usd} reached (spent ${spent:.4f})"
+        return stopped is None
+
+    def note(r: dict) -> dict:
+        nonlocal spent, priciest
+        spent += r.get("usd", 0.0)
+        priciest = max(priciest, r.get("usd", 0.0))
+        return r
+
+    await warm_up()
+    for arm in arms:  # warm each arm's cache entry and compiled schema; not timed
+        if not room():
+            break
+        note(await _bench_call(arm, probes[0], secs))
+    results: list[dict] = []
+    for j, p in enumerate(probes):
+        k = j % len(arms)
+        for arm in arms[k:] + arms[:k]:
+            if stopped or not room():
+                break
+            results.append(note(await _bench_call(arm, p, secs)))
+    pair_results: list[dict] = []
+    base = BenchArm("2 in flight")
+    for j in range(pairs):
+        if stopped or not room() or spent + 2 * priciest > max_usd:
+            stopped = stopped or f"--max-usd {max_usd} reached (spent ${spent:.4f})"
+            break
+        a, b = probes[(2 * j) % len(probes)], probes[(2 * j + 1) % len(probes)]
+        for r in await asyncio.gather(_bench_call(base, a, secs), _bench_call(base, b, secs)):
+            pair_results.append(note(r))
+    return {"results": results, "pairs": pair_results, "spent": spent, "stopped": stopped}
+
+
+def _bench_main(lesson: Path, variants: Optional[Path], n: int, max_usd: float) -> dict:
+    os.environ.pop("HANDOVER_CHECK", None)  # never bench mock mode by accident
+    if provider() != "claude":
+        raise SystemExit("--bench times the Claude provider: set a Claude key or HANDOVER_CHECK_PROVIDER=claude")
+    probes, source = bench_probes(lesson, variants, n)
+    if not probes:
+        raise SystemExit(f"no camera steps with a step before them in {lesson}")
+    print(f"bench {_claude_model()}  {len(probes)} probes from {source}  {len(BENCH_ARMS)} arms  "
+          f"cap ${max_usd:.2f}", flush=True)
+    out = asyncio.run(run_bench(probes, BENCH_ARMS, max_usd))
+    arms = BENCH_ARMS + ((BenchArm("2 in flight"),) if out["pairs"] else ())
+    print("\n".join(bench_table(out["results"] + out["pairs"], arms)))
+    if out["stopped"]:
+        print(f"stopped early: {out['stopped']}")
+    print(f"spent ${out['spent']:.4f} (warm-ups included)")
+    return out
+
+
 def _main() -> None:
     ap = argparse.ArgumentParser(prog="python -m server.check")
     g = ap.add_mutually_exclusive_group(required=True)
     g.add_argument("--time", nargs=3, metavar=("REF", "LIVE", "QUESTION"), help="time check_frame")
     g.add_argument("--compare", nargs="+", metavar="IMG", help="REF_A [REF_B ...] LIVE: time compare_refs")
-    ap.add_argument("-n", type=int, default=None, help="calls (default 20 for --time, 5 for --compare)")
+    g.add_argument("--bench", action="store_true", help="Claude: interleaved latency and answer bench")
+    ap.add_argument("-n", type=int, default=None,
+                    help="calls (default 20 for --time, 5 for --compare); --bench: variants per state (default 1)")
+    ap.add_argument("--max-usd", type=float, default=0.05, help="--bench: hard spend cap for the run (default 0.05)")
+    ap.add_argument("--lesson", type=Path, default=BENCH_LESSON, help="--bench: lesson folder")
+    ap.add_argument("--variants", type=Path, default=BENCH_VARIANTS,
+                    help="--bench: folder of held-out live images state<k>_v<ii>.jpg")
     cache = ap.add_mutually_exclusive_group()
     cache.add_argument("--no-cache", action="store_true", help="Claude: no prompt-cache breakpoint")
     cache.add_argument("--interleave", action="store_true", help="Claude: alternate cached and uncached calls")
@@ -1193,7 +1460,9 @@ def _main() -> None:
         ap.error(f"--compare takes 1 to {len(LABELS)} references plus the live image")
     if _budget_blocked():
         raise SystemExit(2)
-    if a.time:
+    if a.bench:
+        _bench_main(a.lesson, a.variants, a.n or 1, a.max_usd)
+    elif a.time:
         ref, live, q = a.time
         asyncio.run(time_checks(Path(ref), Path(live), q, a.n or 20, interleave=a.interleave))
     else:
