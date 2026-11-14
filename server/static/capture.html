@@ -81,13 +81,13 @@
     <video id="video" playsinline muted autoplay></video>
     <div id="placeholder" class="placeholder">Point the back camera at your hands and the work.</div>
   </div>
-  <p class="privacy">Frames go to the hub on this network only and are never saved.</p>
+  <p class="privacy">Frames go to the hub on this network, which sends them to the AI model for each check. The hub never saves them.</p>
   <p id="idle" class="idle" hidden>Not sending. Check the hub address and network.</p>
   <div class="row">
     <span class="label">Send a frame every</span>
     <div class="seg" id="seg">
-      <button data-ms="500">0.5 s</button>
-      <button data-ms="1000" class="sel">1 s</button>
+      <button data-ms="500" class="sel">0.5 s</button>
+      <button data-ms="1000">1 s</button>
       <button data-ms="2000">2 s</button>
     </div>
   </div>
@@ -112,7 +112,12 @@
   const rec = $("rec"), idleEl = $("idle"), camEl = $("cam"), stepEl = $("step"), stage = $("stage");
   const nextBtn = $("next"), backBtn = $("back");
   const wsUrl = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws/camera`;
-  const MAX_BUFFERED = 256 * 1024;
+  // Frames are scaled so the long side is at most MAX_SIDE before JPEG encoding:
+  // fewer bytes to upload and less for the hub to decode.
+  const MAX_SIDE = 960, JPEG_QUALITY = 0.7;
+  const bitmapPath = typeof createImageBitmap === "function" && typeof OffscreenCanvas === "function"
+    && typeof OffscreenCanvas.prototype.convertToBlob === "function";
+  let offscreen = null;
   const IDLE_MS = 5000, BACKOFF_MIN = 500, BACKOFF_MAX = 5000;
 
   // Stable device id and label, kept in localStorage (falls back to per-page values if storage is blocked).
@@ -134,7 +139,7 @@
   const deviceName = stored("handover.device_name", () => "iPhone Safari");
 
   let stream = null, ws = null, timer = null, reconnectTimer = null, wakeLock = null, flashTimer = null;
-  let running = false, sent = 0, skipped = 0, intervalMs = 1000, encoding = false;
+  let running = false, sent = 0, skipped = 0, sentBytes = 0, intervalMs = 500, encoding = false;
   let backoff = BACKOFF_MIN, lastSentAt = 0, helloSent = false, hubState = null;
 
   function setConn(state, text) {
@@ -143,7 +148,8 @@
   }
   function showError(text) { err.textContent = text; err.hidden = !text; }
   function updateStats() {
-    stats.textContent = `${sent} frame${sent === 1 ? "" : "s"} sent` + (skipped ? `, ${skipped} skipped` : "");
+    stats.textContent = `${sent} frame${sent === 1 ? "" : "s"} sent` + (skipped ? `, ${skipped} skipped` : "")
+      + (sent ? `, ${Math.round(sentBytes / sent / 1024)} KB each` : "");
   }
   function setCam(active) {
     if (active === null) { camEl.textContent = ""; camEl.className = "cam"; return; }
@@ -238,21 +244,38 @@
     sock.onerror = () => { try { sock.close(); } catch (_) {} };
   }
 
-  function sendFrame() {
-    if (!socketOpen() || !helloSent || encoding) return;
-    if (ws.bufferedAmount > MAX_BUFFERED) { skipped++; updateStats(); return; }
-    const w = video.videoWidth, h = video.videoHeight;
-    if (!w || !h) return;
+  // One JPEG of the current video frame, long side at most MAX_SIDE.
+  async function encodeFrame(w, h) {
+    if (bitmapPath) {
+      try {
+        const bitmap = await createImageBitmap(video);
+        if (!offscreen || offscreen.width !== w || offscreen.height !== h) offscreen = new OffscreenCanvas(w, h);
+        offscreen.getContext("2d").drawImage(bitmap, 0, 0, w, h);
+        bitmap.close();
+        return await offscreen.convertToBlob({ type: "image/jpeg", quality: JPEG_QUALITY });
+      } catch (_) { /* fall back to the page canvas */ }
+    }
     if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
     ctx.drawImage(video, 0, 0, w, h);
+    return new Promise((done) => canvas.toBlob(done, "image/jpeg", JPEG_QUALITY));
+  }
+
+  async function sendFrame() {
+    if (!socketOpen() || !helloSent || encoding) return;
+    // Never queue: if the last frame has not left yet, skip this one.
+    if (ws.bufferedAmount > 0) { skipped++; updateStats(); return; }
+    const vw = video.videoWidth, vh = video.videoHeight;
+    if (!vw || !vh) return;
+    const scale = Math.min(1, MAX_SIDE / Math.max(vw, vh));
+    const w = Math.round(vw * scale), h = Math.round(vh * scale);
     encoding = true;
-    canvas.toBlob((blob) => {
-      encoding = false;
-      if (!blob || !socketOpen() || !helloSent) return;
-      ws.send(blob);
-      sent++; lastSentAt = Date.now();
-      updateStats(); updateSending();
-    }, "image/jpeg", 0.7);
+    let blob = null;
+    try { blob = await encodeFrame(w, h); } catch (_) {}
+    encoding = false;
+    if (!blob || !socketOpen() || !helloSent || ws.bufferedAmount > 0) return;
+    ws.send(blob);
+    sent++; sentBytes += blob.size; lastSentAt = Date.now();
+    updateStats(); updateSending();
   }
 
   function restartTimer() {
