@@ -137,6 +137,8 @@ REGISTRY: tuple[Tunable, ...] = (
     T("HANDOVER_PORT", 8000, "int", "main.py", "http port", 1, 65535),
     T("HANDOVER_HTTPS_PORT", 8443, "int", "main.py", "https port when certs exist", 1, 65535),
     T("HANDOVER_FFMPEG", None, "path", "teach.py, replay.py", "ffmpeg binary (default PATH, then Homebrew)"),
+    T("HANDOVER_NO_NETWORK", False, "bool", "check.py",
+      "tests: never build a real model client or warm up (fakes still work)"),
     T("HANDOVER_LOG_JSON", False, "bool", "main.py", "log one JSON object per line"),
     T("GEMINI_API_KEY", None, "secret", "check.py, teach.py",
       "Gemini key (or GOOGLE_API_KEY), from the environment or <repo>/.env"),
@@ -158,6 +160,7 @@ REGISTRY: tuple[Tunable, ...] = (
     # breaker
     T("HANDOVER_BREAKER_SECONDS", 30.0, "float", "check.py", "seconds checks stay off after failures", 1, 3600),
     # Claude budget
+    T("HANDOVER_CLAUDE_CACHE", True, "bool", "check.py", "prompt-cache the step images and question (0 for timing)"),
     T("HANDOVER_CLAUDE_BUDGET_DAY_USD", 20.0, "float", "spend.py", "Claude spend allowed per local day, USD", 0, 10000),
     T("HANDOVER_CLAUDE_BUDGET_TOTAL_USD", 50.0, "float", "spend.py", "Claude spend allowed in total, USD", 0, 100000),
     T("HANDOVER_CLAUDE_SPEND_FILE", None, "path", "spend.py", "spend ledger (default <repo>/logs/claude_spend.json)"),
@@ -186,6 +189,11 @@ REGISTRY: tuple[Tunable, ...] = (
     T("HANDOVER_VERIFIED_HOLD", 0.8, "float", "main.py", "seconds the verified status shows before advancing",
       0, 10),
     T("HANDOVER_MISTAKE_PARALLEL", True, "bool", "main.py", "run the mistake compare alongside the normal check"),
+    T("HANDOVER_WHISPER_MODEL", "small.en", "str", "teach.py",
+      "local faster-whisper model for narration transcripts (base.en faster, medium.en better)"),
+    T("HANDOVER_TRANSCRIBE", "auto", "choice", "teach.py",
+      "narration source: auto (local for Claude, model for Gemini), local (whisper), model (Gemini hears audio), off",
+      choices=("auto", "local", "model", "off")),
     T("HANDOVER_HELLO_GRACE_MS", 300, "float", "main.py",
       "ms a new camera has to send hello before its first state broadcast", 0, 5000),
     T("HANDOVER_WEB_DIST", None, "str", "main.py", "folder with the built web app; default <repo>/web/dist"),

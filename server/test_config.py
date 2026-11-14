@@ -115,7 +115,7 @@ def test_registry_consistent():
     names = [t.name for t in REGISTRY]
     assert len(names) == len(set(names))
     for t in REGISTRY:
-        assert re.fullmatch(r"(HANDOVER_[A-Z0-9_]+|GEMINI_API_KEY)", t.name), t.name
+        assert re.fullmatch(r"(HANDOVER_[A-Z0-9_]+|GEMINI_API_KEY|ANTHROPIC_API_KEY)", t.name), t.name
         assert t.meaning and t.owner, t.name
         assert "\u2014" not in t.meaning and "\u2013" not in t.meaning, t.name
         if t.kind in ("float", "int") and t.default is not None:
@@ -191,7 +191,7 @@ def test_secret_never_read_or_printed():
         table = config.table()
         assert fake not in table
         row = next(r for r in table.splitlines() if "`GEMINI_API_KEY`" in r)
-        assert "| set |" in row
+        assert "| set (env) |" in row
 
 
 def test_cli_prints_table():
