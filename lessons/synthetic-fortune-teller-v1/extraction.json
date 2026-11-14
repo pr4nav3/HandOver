@@ -1,0 +1,93 @@
+{
+  "transcript": [],
+  "steps": [
+    {
+      "start": "00:00",
+      "end": "00:03",
+      "title": "Lay the square sheet flat",
+      "check_question": "manual",
+      "prerequisites": [],
+      "ref_time": "00:02.0",
+      "common_mistake": "Start with a square sheet, not a rectangle."
+    },
+    {
+      "start": "00:03",
+      "end": "00:06",
+      "title": "Fold corner to corner into triangle",
+      "check_question": "Is the paper folded into a single triangle with three corners?",
+      "prerequisites": [
+        1
+      ],
+      "ref_time": "00:05.0",
+      "common_mistake": "Line the corners up exactly before creasing."
+    },
+    {
+      "start": "00:06",
+      "end": "00:09",
+      "title": "Crease both diagonals, then unfold flat",
+      "check_question": "manual",
+      "prerequisites": [
+        2
+      ],
+      "ref_time": "00:08.0",
+      "common_mistake": "Unfold both diagonals so the sheet lies flat with an X crease."
+    },
+    {
+      "start": "00:09",
+      "end": "00:12",
+      "title": "Fold all four corners to center",
+      "check_question": "Is the paper a smaller square with four triangular flaps whose points meet at the center?",
+      "prerequisites": [
+        3
+      ],
+      "ref_time": "00:11.0",
+      "common_mistake": "Bring every corner to the exact center."
+    },
+    {
+      "start": "00:12",
+      "end": "00:15",
+      "title": "Flip the paper over",
+      "check_question": "Is the side facing up a plain square with no flaps on it, only crease lines?",
+      "prerequisites": [
+        4
+      ],
+      "ref_time": "00:14.0",
+      "common_mistake": "Flip it over first."
+    },
+    {
+      "start": "00:15",
+      "end": "00:18",
+      "title": "Fold four corners to center again",
+      "check_question": "Is the paper a small square with four triangular flaps whose points meet at the center?",
+      "prerequisites": [
+        5
+      ],
+      "ref_time": "00:17.0",
+      "common_mistake": "Fold all four corners to the center again, on this side."
+    },
+    {
+      "start": "00:18",
+      "end": "00:21",
+      "title": "Crease in half both ways, unfold",
+      "check_question": "manual",
+      "prerequisites": [
+        6
+      ],
+      "ref_time": "00:20.0",
+      "common_mistake": "Crease both halves firmly, then open it flat again."
+    },
+    {
+      "start": "00:21",
+      "end": "00:24",
+      "title": "Flip, then push into four pockets",
+      "check_question": "Does the paper stand up in four separate pointed pockets instead of lying flat?",
+      "prerequisites": [
+        7
+      ],
+      "ref_time": "00:23.0",
+      "common_mistake": "Flip it, slide your fingers under the four flaps and push to the center."
+    }
+  ],
+  "safety": [],
+  "tools": []
+}

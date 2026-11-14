@@ -41,7 +41,7 @@
       "end": "00:48",
       "title": "Fold all four corners to center",
       "check_type": "camera",
-      "check_question": "Is the paper a smaller square with four triangular flaps whose points meet at the center?",
+      "check_question": "Is the paper a square made of four triangular flaps, with seams running from the center out to each corner?",
       "prerequisites": [
         3
       ],
@@ -53,7 +53,7 @@
       "end": "01:00",
       "title": "Flip the paper over",
       "check_type": "camera",
-      "check_question": "Is the side facing up a plain square with no flaps on it, only crease lines?",
+      "check_question": "Is the top surface smooth and empty, with no folded flaps lying on it?",
       "prerequisites": [
         4
       ],
