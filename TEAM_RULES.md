@@ -12,15 +12,14 @@ Wire contract: CONTRACT.md. Times, gates and drop order: docs/PLAN.md. This page
 - Lean first. Anything not needed for the judge to fold with the camera advancing clips waits until that runs.
 
 ## Own a folder, not a feature
-Edit only your folders. To touch anyone else's, message the group first and wait for an OK. Fill in names at kickoff.
+Edit only your folders. To touch anyone else's, message the group first and wait for an OK.
 
 ```
 TEAM_RULES.md, docs/PLAN.md, CONTRACT.md   lead; contract changes are announced in the group before editing
-server/teach.py, scripts/make_demo_lesson.sh, lessons/   ______  (teach pipeline, both finished lessons committed)
-server/static/capture.html, scripts/certs.sh, ios/        ______  (phone capture, HTTPS certs, glasses app)
-server/check.py, server/main.py, server/replay.py          ______  (check loop, websockets, state; integrator from 6:30 PM)
-web/                                                       ______  (learn and teach screens)
-server/databricks.py (new)                                 whoever is free after the live loop runs
+server/teach.py, server/check.py, server/main.py, server/replay.py, scripts/, lessons/   Soham    (teach pipeline, check loop, websockets, state; cuts both lessons from Sikandar's takes; integrator from 6:30 PM; does not record)
+server/static/capture.html, scripts/certs.sh, ios/, web/, server/databricks.py (new)      Pranav   (phone capture, HTTPS certs, glasses app, learn and teach screens, Databricks plumbing)
+rehearsal/, lessons/<id>/REVIEW.md, docs/props.md                                          Sikandar (glasses takes, props, novice runs, replays, backup video; no code)
+databricks/, docs/pitch.md, docs/devpost.md, poster                                        Prayush  (Databricks UI: tables, Volume, dashboard, Genie; Devpost, poster, pitch, judges; no code)
 ```
 Shared files nobody owns alone: server/requirements.lock, web/package-lock.json, .gitignore. Change them on the Mac, say so in the group.
 
@@ -31,7 +30,7 @@ Shared files nobody owns alone: server/requirements.lock, web/package-lock.json,
 - No force push. No rebasing a branch someone else pulled. No stash games. Conflict: the two owners fix it together on the branch, then merge.
 - Install Python packages from server/requirements.lock (frozen on the Mac). Need a package? Add it on the Mac, re-freeze, commit. Reason: google-genai shipped a breaking release on Nov 12 and FastAPI released today.
 - Committed: code, lockfiles, finished lesson folders, .env.example. Not committed: raw footage, node_modules, venvs, .env, certs (already in .gitignore).
-- From 6:30 PM one person integrates: merges capture, check and web to main and runs the live loop. Others keep working on branches.
+- From 6:30 PM Soham integrates: merges capture, check and web to main and runs the live loop. Others keep working on branches.
 - After the freeze in docs/PLAN.md, only fixes go to main, each pulled and run on the Mac by the person demoing before it is called done.
 
 ## First hour, before building on assumptions
