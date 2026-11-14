@@ -19,6 +19,7 @@ const browser = await chromium.launch({
 const page = await browser.newPage({ viewport: { width: 390, height: 844 }, userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1' })
 page.on('pageerror', (e) => problems.push(`pageerror: ${e.message}`))
 await page.addInitScript(() => localStorage.clear())
+await hook('/mock/select?id=demo-v1')
 await hook('/mock/goto?step=1')
 await page.goto(`${MOCK}/capture`)
 await page.click('#start')

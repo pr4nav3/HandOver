@@ -27,6 +27,7 @@
 //   /mock/source?s=file           change the camera source
 //   /mock/check_mode?m=mock       set state.check_mode; m= (empty) omits it
 //   /mock/camera_stats            frames and bytes received on /ws/camera; ?reset=1 clears them
+//   /mock/select?id=demo-v1       select a lesson, as a UI select_lesson would
 //   /mock/strip_paths?on=1        serve lesson.json without clip, captions and ref_frame (contract defaults apply)
 //   /mock/upload_fail?m=text      the next POST /api/lesson fails with 413 {"detail": text}
 //
@@ -374,6 +375,10 @@ const server = createServer((req, res) => {
   if (path === '/mock/source') {
     cameraSource = url.searchParams.get('s') || 'phone'
     broadcast(stateMsg())
+    return sendJson(res, 200, stateMsg())
+  }
+  if (path === '/mock/select') {
+    selectLesson(url.searchParams.get('id') || 'demo-v1', null)
     return sendJson(res, 200, stateMsg())
   }
   if (path === '/mock/strip_paths') {
