@@ -10,12 +10,20 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
 TMP = Path(tempfile.mkdtemp(prefix="handover-teach-test-"))
 os.environ["HANDOVER_LESSONS"] = str(TMP / "lessons")
 os.environ.pop("HANDOVER_TEACH_MOCK", None)
+for _name in ("HANDOVER_TRANSCRIBE", "HANDOVER_WHISPER_MODEL"):
+    os.environ.pop(_name, None)
+# No test may download a speech model: the real faster_whisper is blocked (imports fail, so teach falls back to
+# frames only) and tests that need it install a fake. HANDOVER_TEST_REAL_WHISPER=1 runs the one real check.
+_REAL_WHISPER = os.environ.get("HANDOVER_TEST_REAL_WHISPER") == "1"
+if not _REAL_WHISPER:
+    sys.modules["faster_whisper"] = None
 
 from PIL import Image, ImageStat  # noqa: E402
 
@@ -736,6 +744,169 @@ def test_cli_dry_run_and_errors():
     _write(d, lesson)
     code, _, err = _cli("--recut", str(d))
     assert code == 2 and "step 3" in err
+
+
+# ---------------------------------------------------------------- local transcription (fake faster-whisper)
+
+NARRATION = [(0.2, 1.4, " Lay it flat. "), (1.6, 2.8, "Now fold it.")]
+_MISSING = object()
+
+
+@contextlib.contextmanager
+def _fake_whisper(segments=NARRATION, cached=True, fail_init=False):
+    import types as pytypes
+
+    log = {"inits": [], "calls": []}
+
+    class Seg:
+        def __init__(self, start, end, text):
+            self.start, self.end, self.text = start, end, text
+
+    class WhisperModel:
+        def __init__(self, name, device="auto", compute_type="default", **kw):
+            if fail_init:
+                raise RuntimeError("could not download the model: no network")
+            log["inits"].append((name, device, compute_type))
+
+        def transcribe(self, audio, **kw):
+            log["calls"].append((str(audio.dtype), len(audio), kw))
+            return iter([Seg(*x) for x in segments]), None
+
+    def download_model(name, local_files_only=False, **kw):
+        if not cached:
+            raise FileNotFoundError("not in the cache")
+        return "/cache/" + name
+
+    mod = pytypes.ModuleType("faster_whisper")
+    mod.WhisperModel = WhisperModel
+    utils = pytypes.ModuleType("faster_whisper.utils")
+    utils.download_model = download_model
+    mod.utils = utils
+    saved = {k: sys.modules.get(k, _MISSING) for k in ("faster_whisper", "faster_whisper.utils")}
+    sys.modules["faster_whisper"], sys.modules["faster_whisper.utils"] = mod, utils
+    teach._whisper_models.clear()
+    try:
+        yield log
+    finally:
+        for k, v in saved.items():
+            if v is _MISSING:
+                sys.modules.pop(k, None)
+            else:
+                sys.modules[k] = v
+        teach._whisper_models.clear()
+
+
+def _claude_src() -> Path:
+    src = TMP / "claude-src.mp4"
+    if not src.exists():
+        _ffmpeg("-f", "lavfi", "-i", "testsrc2=s=320x240:r=30:d=3", "-c:v", "libx264", "-preset", "ultrafast",
+                "-pix_fmt", "yuv420p", str(src))
+    return src
+
+
+def _audio_src() -> Path:
+    src = TMP / "with-audio.mp4"
+    if not src.exists():
+        _ffmpeg("-f", "lavfi", "-i", "testsrc2=s=320x240:r=30:d=3", "-f", "lavfi", "-i", "sine=frequency=440:duration=3",
+                "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", str(src))
+    return src
+
+
+def test_transcript_reaches_claude_and_captions():
+    lines = []
+    with _no_env_file(), _env(**{**NO_KEYS, "ANTHROPIC_API_KEY": "sk-ant-fake", "HANDOVER_TRANSCRIBE": None}), \
+            _fake_whisper() as wlog, _fake_claude(_FakeSpend()) as clog:
+        lesson = teach.process_upload(_claude_src(), "claude-narrated", "Narrated", lambda st, m: lines.append(m))
+    blocks = clog["requests"][0]["messages"][0]["content"]
+    assert blocks[0]["text"] == "Narration transcript:\n[00:00.2 to 00:01.4] Lay it flat.\n[00:01.6 to 00:02.8] Now fold it."
+    assert "primary boundary signal" in blocks[-1]["text"] and "no audio" not in blocks[-1]["text"].lower()
+    assert any(b["type"] == "image" for b in blocks)
+    d = teach.lessons_root() / "claude-narrated"
+    vtt1 = (d / lesson["steps"][0]["captions"]).read_text(encoding="utf-8")
+    vtt2 = (d / lesson["steps"][1]["captions"]).read_text(encoding="utf-8")
+    assert "00:00:00.200 --> 00:00:01.400\nLay it flat." in vtt1, vtt1
+    assert "Now fold it." in vtt2 and "Now fold it." not in vtt1
+    stored = json.loads((d / "extraction.json").read_text(encoding="utf-8"))
+    assert [seg["text"] for seg in stored["transcript"]] == ["Lay it flat.", "Now fold it."]
+    (dtype, samples, kw), = wlog["calls"]
+    # 16 kHz mono float samples of norm.mp4 (3 s), so faster-whisper never opens a file itself
+    assert dtype == "float32" and abs(samples - 48000) < 1600 and kw == {"vad_filter": True}
+    assert any(m == "Transcribing narration" for m in lines)
+    assert any(m.startswith("Transcribed 2 narration segments in ") for m in lines)
+    assert any("2 narration lines" in m for m in lines)
+
+
+def test_whisper_failure_falls_back_to_frames_only():
+    d = _demo_copy("whisper-fallback")
+    for ctx in (contextlib.nullcontext(), _fake_whisper(fail_init=True)):  # package missing, then download fails
+        lines = []
+        with _env(ANTHROPIC_API_KEY="sk-ant-fake", HANDOVER_TRANSCRIBE=None), ctx, _fake_claude(_FakeSpend()) as log:
+            ex = teach.extract_claude(d / "norm.mp4", lambda st, m: lines.append(m))
+        assert ex.transcript == [] and len(log["requests"]) == 1
+        assert "no audio" in log["requests"][0]["messages"][0]["content"][-1]["text"].lower()
+        assert any(m.startswith("Speech model unavailable") for m in lines), lines
+        assert any("captions will be empty" in m for m in lines)
+
+
+def test_whisper_model_loaded_once_and_download_announced():
+    src = _audio_src()
+    lines = []
+    with _env(HANDOVER_WHISPER_MODEL=None), _fake_whisper(cached=False) as log:
+        first = teach.transcribe(src, lambda st, m: lines.append(m))
+        second = teach.transcribe(src, lambda st, m: lines.append(m))
+    assert log["inits"] == [("small.en", "cpu", "int8")]  # one load per process
+    assert len(log["calls"]) == 2 and first == second
+    assert [(s.start, s.end, s.text) for s in first] == [(0.2, 1.4, "Lay it flat."), (1.6, 2.8, "Now fold it.")]
+    assert sum("Downloading speech model small.en once, about 460 MB" in m for m in lines) == 1
+    lines.clear()
+    with _env(HANDOVER_WHISPER_MODEL="base.en"), _fake_whisper(cached=True) as log:
+        teach.transcribe(src, lambda st, m: lines.append(m))
+    assert log["inits"] == [("base.en", "cpu", "int8")] and not any("Downloading" in m for m in lines)
+
+
+def test_gemini_transcribe_modes():
+    src = _audio_src()
+    gemini = teach.Extraction(transcript=[teach.Segment(start=0, end=1, text="from gemini")], steps=[])
+    say = lambda st, m: None  # noqa: E731
+    with _fake_whisper():
+        with _env(HANDOVER_TRANSCRIBE=None):
+            assert teach.transcribe_mode("gemini") == "model" and teach.transcribe_mode("claude") == "local"
+            assert teach._gemini_transcript_mode(gemini, src, say).transcript[0].text == "from gemini"
+        with _env(HANDOVER_TRANSCRIBE="local"):
+            assert [s.text for s in teach._gemini_transcript_mode(gemini, src, say).transcript] == \
+                ["Lay it flat.", "Now fold it."]
+        with _env(HANDOVER_TRANSCRIBE="off"):
+            assert teach._gemini_transcript_mode(gemini, src, say).transcript == []
+            assert teach.transcribe_mode("claude") == "off"
+    with _env(HANDOVER_TRANSCRIBE="local"):  # whisper unavailable: Gemini's transcript stays
+        assert teach._gemini_transcript_mode(gemini, src, say).transcript[0].text == "from gemini"
+
+
+def test_real_whisper_base_en():
+    """Opt in: HANDOVER_TEST_REAL_WHISPER=1 downloads base.en (about 145 MB, free) and transcribes macOS speech."""
+    if not _REAL_WHISPER:
+        return
+    import time
+
+    aiff, clip = TMP / "say.aiff", TMP / "say.mp4"
+    subprocess.run(["say", "-o", str(aiff), "Fold the paper in half. Now flip it over."], check=True)
+    _ffmpeg("-f", "lavfi", "-i", "color=c=black:s=320x240:r=30:d=10", "-i", str(aiff), "-af", "apad",
+            "-t", "10", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", str(clip))
+    lines = []
+    with _env(HANDOVER_WHISPER_MODEL="base.en"):
+        teach._whisper_models.clear()
+        t0 = time.time()
+        segs = teach.transcribe(clip, lambda st, m: lines.append(m))
+        first = time.time() - t0
+        t0 = time.time()
+        teach.transcribe(clip)
+        again = time.time() - t0
+    words = " ".join(s.text for s in segs).lower()
+    for w in ("fold", "paper", "half", "flip", "over"):
+        assert w in words, words
+    assert all(0 <= s.start < s.end <= 10.5 for s in segs)
+    print(f"real whisper base.en: first call {first:.1f} s (includes any download and load), "
+          f"second call {again:.1f} s; text: {words!r}; lines: {lines}")
 
 
 if __name__ == "__main__":

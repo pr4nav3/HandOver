@@ -542,6 +542,102 @@ How to find step boundaries:
     "the expert names or uses", "the expert uses")
 
 
+CLAUDE_NARRATED_PROMPT = """These are frames from one video of an expert doing a hands-on task, about one per second,
+and a transcript of the expert's narration made by a speech model. The text before each image is its timestamp
+in the video; each transcript line is "[start to end] words", on the same clock.
+Split the video into the ordered steps a beginner would follow to repeat the task.
+
+How to find step boundaries:
+- The narration is the primary boundary signal; the frames confirm it. A new step starts when the expert starts
+  describing a new action ("now fold...", "next...", "then take..."). Use the frames to confirm the action
+  really changes there and to place the boundary at the moment the hands start the new action.
+- Steps are in order, contiguous and cover the whole task: each step's end equals the next step's start.
+  The first step starts at the beginning of the task and the last step ends when the task is finished.
+- Prefer 3 to 12 steps. One step is one physical action with a clear result. Do not merge unrelated actions
+  and do not split one action into tiny pieces.
+- Only use timestamps from the frame labels or the transcript, or times between them.
+
+""" + PROMPT[PROMPT.index("For each step give:"):PROMPT.index("First give the transcript")]
+
+
+# ---------------------------------------------------------------- 2b. local transcription (faster-whisper)
+
+WHISPER_SIZES = {"tiny.en": "75 MB", "base.en": "145 MB", "small.en": "460 MB", "medium.en": "1.5 GB"}
+_whisper_models: dict[str, object] = {}  # one loaded model per name, per process
+
+
+def _whisper_model_name() -> str:
+    return str(config.env_str("HANDOVER_WHISPER_MODEL", "small.en"))
+
+
+def transcribe_mode(provider: str) -> str:
+    """HANDOVER_TRANSCRIBE: local (faster-whisper on this Mac), model (the extraction model's own transcript;
+    Claude has none), off (no captions). auto is local for Claude and model for Gemini."""
+    mode = config.env_choice("HANDOVER_TRANSCRIBE", "auto", ("auto", "local", "model", "off"))
+    if mode == "auto":
+        return "local" if provider == "claude" else "model"
+    return mode
+
+
+def _load_whisper(name: str, progress: Progress = noop):
+    """The faster-whisper model, loaded once per process on CPU with int8. The first use downloads it from
+    Hugging Face into the default cache."""
+    if name in _whisper_models:
+        return _whisper_models[name]
+    from faster_whisper import WhisperModel
+
+    try:
+        from faster_whisper.utils import download_model
+
+        download_model(name, local_files_only=True)
+    except Exception:  # not in the cache yet
+        size = WHISPER_SIZES.get(name)
+        progress("extracting", f"Downloading speech model {name} once{f', about {size}' if size else ''}")
+    model = WhisperModel(name, device="cpu", compute_type="int8")
+    _whisper_models[name] = model
+    return model
+
+
+def _audio_16k(media: Path):
+    """The audio track as 16 kHz mono float32 samples, decoded by ffmpeg. Passing samples (not a file) keeps
+    faster-whisper away from its own av-based decoder, which fails with the av version in our lock file."""
+    import numpy as np
+
+    p = subprocess.run([_bin("ffmpeg"), "-v", "error", "-i", str(media), "-vn", "-ac", "1", "-ar", "16000",
+                        "-f", "f32le", "-acodec", "pcm_f32le", "pipe:1"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if p.returncode != 0:
+        tail = p.stderr.decode("utf-8", "replace").strip().splitlines()[-2:]
+        raise RuntimeError(f"could not read the audio of {Path(media).name}: {' '.join(tail)}")
+    return np.frombuffer(p.stdout, dtype=np.float32)
+
+
+def transcribe(media: Path, progress: Progress = noop) -> list[Segment]:
+    """Narration of a video or audio file as segments in seconds, with faster-whisper (HANDOVER_WHISPER_MODEL,
+    default small.en; base.en is faster, medium.en is better) and its voice activity filter. Raises on failure."""
+    t0 = time.time()
+    model = _load_whisper(_whisper_model_name(), progress)
+    progress("extracting", "Transcribing narration")
+    segments, _info = model.transcribe(_audio_16k(media), vad_filter=True)
+    out = [Segment(start=float(seg.start), end=float(seg.end), text=" ".join(seg.text.split()))
+           for seg in segments if seg.text.strip()]
+    progress("extracting", f"Transcribed {len(out)} narration segments in {time.time() - t0:.1f} s")
+    return out
+
+
+def _transcribe_safely(media: Path, progress: Progress = noop) -> list[Segment] | None:
+    """transcribe(), but a missing package, failed download or bad audio gives None and a progress line."""
+    try:
+        return transcribe(media, progress)
+    except Exception as e:
+        reason = f"{type(e).__name__}: {e}".splitlines()[0][:160]
+        progress("extracting", f"Speech model unavailable ({scrub(reason)}); continuing without a transcript")
+        return None
+
+
+def _transcript_lines(transcript: list[Segment]) -> str:
+    return "\n".join(f"[{fmt_mmss(seg.start)} to {fmt_mmss(seg.end)}] {seg.text}" for seg in transcript)
+
+
 class _ClaudeExtraction(BaseModel):
     steps: list[Step]
     safety: list[str]
@@ -587,8 +683,9 @@ def _spend():
 
 
 def extract_claude(norm: Path, progress: Progress = noop) -> Extraction:
-    """One Claude call on about 1 fps frames of a small proxy. Claude cannot hear the narration, so the
-    transcript is empty and the captions will be empty files."""
+    """One Claude call on about 1 fps frames of a small proxy. Claude cannot hear, so with HANDOVER_TRANSCRIBE
+    local (the default for Claude) the narration is transcribed on this Mac first and sent as timestamped text;
+    it also becomes the captions. Without a transcript, Claude sees frames only and the captions are empty."""
     import base64
 
     import anthropic
@@ -608,8 +705,16 @@ def extract_claude(norm: Path, progress: Progress = noop) -> Extraction:
             content.append({"type": "text", "text": fmt_mmss(t)})
             content.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
                                                         "data": base64.standard_b64encode(f.read_bytes()).decode()}})
-    content.append({"type": "text", "text": CLAUDE_PROMPT})
-    progress("extracting", f"Sending {len(frames)} frames to {model} (no audio: captions will be empty)")
+    transcript: list[Segment] = []
+    if transcribe_mode("claude") == "local":
+        transcript = _transcribe_safely(norm, progress) or []
+    if transcript:
+        content.insert(0, {"type": "text", "text": "Narration transcript:\n" + _transcript_lines(transcript)})
+        content.append({"type": "text", "text": CLAUDE_NARRATED_PROMPT})
+        progress("extracting", f"Sending {len(frames)} frames and {len(transcript)} narration lines to {model}")
+    else:
+        content.append({"type": "text", "text": CLAUDE_PROMPT})
+        progress("extracting", f"Sending {len(frames)} frames to {model} (no audio: captions will be empty)")
     if not spend.allow():
         raise RuntimeError("the Claude spending limit is reached; no call was made")
     client = anthropic.Anthropic(api_key=key)
@@ -634,7 +739,7 @@ def extract_claude(norm: Path, progress: Progress = noop) -> Extraction:
         got = _ClaudeExtraction.model_validate_json(text)
     except ValidationError as e:
         raise RuntimeError(f"Claude answer did not match the lesson schema: {e}") from None
-    return Extraction(transcript=[], steps=got.steps, safety=got.safety, tools=got.tools)
+    return Extraction(transcript=transcript, steps=got.steps, safety=got.safety, tools=got.tools)
 
 
 # ---------------------------------------------------------------- 3. cut
@@ -1064,6 +1169,21 @@ def _plan_extraction(duration: float, steps_json: Path | None) -> Extraction:
     return ex if steps_json else _first_step_manual(ex)
 
 
+def _gemini_transcript_mode(ex: Extraction, norm: Path, progress: Progress) -> Extraction:
+    """HANDOVER_TRANSCRIBE for Gemini: model keeps its transcript, local replaces it with faster-whisper's
+    (Gemini's stays if whisper fails), off drops it so the captions are empty."""
+    mode = transcribe_mode("gemini")
+    if mode == "off":
+        progress("extracting", "HANDOVER_TRANSCRIBE=off: captions will be empty")
+        return ex.model_copy(update={"transcript": []})
+    if mode == "local":
+        local = _transcribe_safely(norm, progress)
+        if local is not None:
+            return ex.model_copy(update={"transcript": local})
+        progress("extracting", "Keeping Gemini's transcript for the captions")
+    return ex
+
+
 def build(srcs: list[Path], lesson_id: str, title: str, progress: Progress = noop,
           steps_json: Path | None = None) -> dict:
     lesson_id = sanitize_id(lesson_id)
@@ -1095,11 +1215,11 @@ def build(srcs: list[Path], lesson_id: str, title: str, progress: Progress = noo
             progress("extracting", f"Using three placeholder steps ({why})")
             extraction = mock_extraction(duration, None)
         elif provider == "claude":
-            progress("extracting", f"Finding steps with {_claude_model()} from frames (no audio)")
+            progress("extracting", f"Finding steps with {_claude_model()} from frames")
             extraction = extract_claude(norm, progress)
         else:
             progress("extracting", f"Finding steps with {_model()}")
-            extraction = extract(norm, progress)
+            extraction = _gemini_transcript_mode(extract(norm, progress), norm, progress)
         extraction = _first_step_manual(_clean_extraction(extraction, duration))
 
     progress("cutting", f"Cutting {len(extraction.steps)} step clips")
