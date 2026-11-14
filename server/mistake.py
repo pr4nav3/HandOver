@@ -13,8 +13,10 @@ message (CONTRACT.md 7.2) or None.
             check of step k+1 at >= AHEAD_CONFIRM_CONF before go(k + 2, "camera");
             message is "You're ahead."
 
-Env:
-    HANDOVER_MISTAKE_MIN_CONF   minimum compare confidence for behind or ahead (default 0.7)
+Env (registered in server/config.py; bad values fall back to the default):
+    HANDOVER_MISTAKE_MIN_CONF   minimum compare confidence for behind or ahead (default 0.7, range 0 to 1)
+    HANDOVER_MISTAKE_SETTLE_S   seconds of settled consecutive no before the compare (default 5, range 0.5 to 60)
+    HANDOVER_MISTAKE_COOLDOWN_S minimum seconds between compares on one step (default 10, range 1 to 120)
     HANDOVER_CHECK=mock         mock mode; the only time HANDOVER_MOCK_MISTAKE is read
     HANDOVER_MOCK_MISTAKE       test only: "behind:<step>" or "ahead:<step>" (0-based);
                                 after MOCK_AFTER_S on that step, mock() returns the
@@ -23,11 +25,11 @@ Env:
 
 from __future__ import annotations
 
-import os
 from typing import Optional
 
-# Minimum confidence of the k-1 / k / k+1 compare before we call it a mistake.
-DEFAULT_MIN_CONF = 0.7
+from server import config
+from server.check import is_mock
+
 # An "ahead" match is acted on only after one normal check of step k+1 at this confidence.
 AHEAD_CONFIRM_CONF = 0.8
 # Seconds on the step before the HANDOVER_MOCK_MISTAKE hook fires.
@@ -39,14 +41,8 @@ AHEAD_MESSAGE = "You're ahead."
 
 
 def _min_conf() -> float:
-    try:
-        return float(os.environ.get("HANDOVER_MISTAKE_MIN_CONF", DEFAULT_MIN_CONF))
-    except ValueError:
-        return DEFAULT_MIN_CONF
-
-
-def _is_mock() -> bool:
-    return os.environ.get("HANDOVER_CHECK", "").strip().lower() == "mock"
+    """Minimum k-1 / k / k+1 compare confidence for a mistake. Registry value; a bad or out-of-range env value falls back to the default."""
+    return config.env_float("HANDOVER_MISTAKE_MIN_CONF", 0.7, 0, 1)
 
 
 def behind_message(step: int, steps: Optional[list[dict]]) -> str:
@@ -70,7 +66,12 @@ def needs_confirmation(mistake: dict) -> bool:
 
 
 class MistakeWatch:
-    def __init__(self, settle_s: float = 5.0, cooldown_s: float = 10.0):
+    def __init__(self, settle_s: Optional[float] = None, cooldown_s: Optional[float] = None):
+        """None reads the registry value; an explicit argument wins."""
+        if settle_s is None:
+            settle_s = config.env_float("HANDOVER_MISTAKE_SETTLE_S", 5.0, 0.5, 60)
+        if cooldown_s is None:
+            cooldown_s = config.env_float("HANDOVER_MISTAKE_COOLDOWN_S", 10.0, 1, 120)
         self.settle_s = settle_s
         self.cooldown_s = cooldown_s
         self.min_conf = _min_conf()
@@ -116,9 +117,9 @@ class MistakeWatch:
 
     def mock(self, step: int, elapsed: float, steps: Optional[list[dict]] = None) -> Optional[dict]:
         """HANDOVER_MOCK_MISTAKE hook, mock mode only. Fires once per visit, after MOCK_AFTER_S."""
-        if self._mock_fired == step or not _is_mock():
+        if self._mock_fired == step or not is_mock():
             return None
-        raw = os.environ.get("HANDOVER_MOCK_MISTAKE", "").strip().lower()
+        raw = (config.env_str("HANDOVER_MOCK_MISTAKE", None) or "").lower()
         kind, _, num = raw.partition(":")
         if kind not in ("behind", "ahead"):
             return None

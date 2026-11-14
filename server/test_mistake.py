@@ -119,8 +119,24 @@ def test_min_conf_env():
         w = MistakeWatch()
     assert w.min_conf == 0.9
     assert w.decide(4, 6, 3, 0.86, STEPS) is None
-    with _env(HANDOVER_MISTAKE_MIN_CONF="junk"):
-        assert MistakeWatch().min_conf == 0.7
+    for bad in ("junk", "1.5", "-0.1", "nan"):
+        with _env(HANDOVER_MISTAKE_MIN_CONF=bad):
+            assert MistakeWatch().min_conf == 0.7, bad
+
+
+def test_settle_and_cooldown_env():
+    w = MistakeWatch()
+    assert (w.settle_s, w.cooldown_s) == (5.0, 10.0)
+    with _env(HANDOVER_MISTAKE_SETTLE_S="2", HANDOVER_MISTAKE_COOLDOWN_S="3"):
+        w = MistakeWatch()
+        assert (w.settle_s, w.cooldown_s) == (2.0, 3.0)
+        assert _feed(w, 1, [(0, "no"), (1.9, "no"), (2, "no"), (4.9, "no"), (5, "no")]) == \
+            [False, False, True, False, True]
+        assert (MistakeWatch(settle_s=7, cooldown_s=20).settle_s, MistakeWatch(cooldown_s=20).cooldown_s) == (7, 20)
+    for settle, cooldown in [("0.4", "0.5"), ("61", "121"), ("x", "nan")]:
+        with _env(HANDOVER_MISTAKE_SETTLE_S=settle, HANDOVER_MISTAKE_COOLDOWN_S=cooldown):
+            w = MistakeWatch()
+            assert (w.settle_s, w.cooldown_s) == (5.0, 10.0), (settle, cooldown)
 
 
 def test_mock_behind_once():
@@ -154,9 +170,13 @@ def test_mock_malformed_ignored():
 def test_mock_ignored_outside_mock_mode():
     with _env(HANDOVER_CHECK="gemini", HANDOVER_MOCK_MISTAKE="behind:4"):
         assert MistakeWatch().mock(4, 100) is None
-    os.environ.pop("HANDOVER_CHECK", None)
-    with _env(HANDOVER_MOCK_MISTAKE="behind:4"):
-        assert MistakeWatch().mock(4, 100) is None
+    saved = os.environ.pop("HANDOVER_CHECK", None)
+    try:
+        with _env(HANDOVER_MOCK_MISTAKE="behind:4"):
+            assert MistakeWatch().mock(4, 100) is None
+    finally:
+        if saved is not None:
+            os.environ["HANDOVER_CHECK"] = saved
 
 
 if __name__ == "__main__":
