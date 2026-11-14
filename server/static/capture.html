@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#000000">
+<title>HandOver Camera</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; background: #000; color: #f5f5f7;
+    font: 17px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif; }
+  body { display: flex; flex-direction: column;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+  header { padding: 16px 20px 8px; display: flex; align-items: center; justify-content: space-between; }
+  h1 { margin: 0; font-size: 20px; font-weight: 600; letter-spacing: -0.01em; }
+  .pill { display: inline-flex; align-items: center; gap: 8px; font-size: 15px; color: #a1a1a6; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: #636366; }
+  .dot.on { background: #30d158; }
+  .dot.wait { background: #ff9f0a; }
+  main { flex: 1; display: flex; flex-direction: column; padding: 8px 16px 16px; gap: 14px; min-height: 0; }
+  .stage { position: relative; flex: 1; min-height: 200px; border-radius: 18px; overflow: hidden; background: #1c1c1e; }
+  video { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .placeholder { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    color: #8e8e93; font-size: 15px; text-align: center; padding: 24px; }
+  button.primary { appearance: none; border: 0; border-radius: 14px; padding: 16px; width: 100%;
+    font: inherit; font-weight: 600; font-size: 18px; color: #fff; background: #0a84ff; }
+  button.primary:active { opacity: 0.8; }
+  button.primary.stop { background: #2c2c2e; color: #ff453a; }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .seg { display: inline-flex; background: #1c1c1e; border-radius: 10px; padding: 2px; }
+  .seg button { appearance: none; border: 0; background: transparent; color: #f5f5f7; font: inherit;
+    font-size: 15px; padding: 7px 14px; border-radius: 8px; }
+  .seg button.sel { background: #3a3a3c; font-weight: 600; }
+  .label { color: #a1a1a6; font-size: 15px; }
+  .stats { color: #a1a1a6; font-size: 15px; font-variant-numeric: tabular-nums; }
+  .note { color: #8e8e93; font-size: 13px; margin: 0; }
+  .err { color: #ff453a; font-size: 15px; margin: 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>HandOver Camera</h1>
+  <span class="pill"><span id="dot" class="dot"></span><span id="conn">Not connected</span></span>
+</header>
+<main>
+  <div class="stage">
+    <video id="video" playsinline muted autoplay></video>
+    <div id="placeholder" class="placeholder">Point the back camera at your hands and the work.</div>
+  </div>
+  <div class="row">
+    <span class="label">Send a frame every</span>
+    <div class="seg" id="seg">
+      <button data-ms="500">0.5 s</button>
+      <button data-ms="1000" class="sel">1 s</button>
+      <button data-ms="2000">2 s</button>
+    </div>
+  </div>
+  <div class="row">
+    <span class="stats" id="stats">0 frames sent</span>
+    <span class="stats" id="wake"></span>
+  </div>
+  <button id="start" class="primary">Start camera</button>
+  <p id="err" class="err" hidden></p>
+  <p class="note">Keep this page open and on screen. If the screen still dims, turn off Auto-Lock in Settings, Display and Brightness.</p>
+</main>
+<canvas id="canvas" hidden></canvas>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const video = $("video"), canvas = $("canvas"), ctx = canvas.getContext("2d");
+  const startBtn = $("start"), dot = $("dot"), conn = $("conn"), stats = $("stats"), err = $("err");
+  const wsUrl = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws/camera`;
+  const MAX_BUFFERED = 256 * 1024;
+
+  let stream = null, ws = null, timer = null, reconnectTimer = null, wakeLock = null;
+  let running = false, sent = 0, skipped = 0, intervalMs = 1000, encoding = false;
+
+  function setConn(state, text) {
+    dot.className = "dot" + (state === "on" ? " on" : state === "wait" ? " wait" : "");
+    conn.textContent = text;
+  }
+  function showError(text) { err.textContent = text; err.hidden = !text; }
+  function updateStats() {
+    stats.textContent = `${sent} frame${sent === 1 ? "" : "s"} sent` + (skipped ? `, ${skipped} skipped` : "");
+  }
+
+  function connect() {
+    clearTimeout(reconnectTimer);
+    if (!running) return;
+    setConn("wait", "Connecting");
+    ws = new WebSocket(wsUrl);
+    ws.binaryType = "arraybuffer";
+    ws.onopen = () => setConn("on", "Connected");
+    ws.onmessage = () => {};
+    ws.onclose = () => {
+      ws = null;
+      if (running) { setConn("wait", "Reconnecting"); reconnectTimer = setTimeout(connect, 1500); }
+      else setConn("off", "Not connected");
+    };
+    ws.onerror = () => { try { ws && ws.close(); } catch (_) {} };
+  }
+
+  function sendFrame() {
+    if (!ws || ws.readyState !== WebSocket.OPEN || encoding) return;
+    if (ws.bufferedAmount > MAX_BUFFERED) { skipped++; updateStats(); return; }
+    const w = video.videoWidth, h = video.videoHeight;
+    if (!w || !h) return;
+    if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+    ctx.drawImage(video, 0, 0, w, h);
+    encoding = true;
+    canvas.toBlob((blob) => {
+      encoding = false;
+      if (!blob || !ws || ws.readyState !== WebSocket.OPEN) return;
+      ws.send(blob);
+      sent++; updateStats();
+    }, "image/jpeg", 0.7);
+  }
+
+  function restartTimer() {
+    clearInterval(timer);
+    if (running) timer = setInterval(sendFrame, intervalMs);
+  }
+
+  async function requestWakeLock() {
+    if (!("wakeLock" in navigator)) { $("wake").textContent = ""; return; }
+    try {
+      wakeLock = await navigator.wakeLock.request("screen");
+      $("wake").textContent = "Screen stays on";
+      wakeLock.addEventListener("release", () => { $("wake").textContent = ""; });
+    } catch (_) { $("wake").textContent = ""; }
+  }
+
+  async function start() {
+    showError("");
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      showError("Camera needs HTTPS. Open this page with https:// and trust the certificate.");
+      return;
+    }
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } },
+        audio: false,
+      });
+    } catch (e) {
+      showError(e && e.name === "NotAllowedError"
+        ? "Camera access was blocked. Allow it in Settings, Safari, Camera, then try again."
+        : `Could not start the camera (${(e && e.name) || "error"}).`);
+      return;
+    }
+    video.srcObject = stream;
+    try { await video.play(); } catch (_) {}
+    $("placeholder").hidden = true;
+    running = true;
+    startBtn.textContent = "Stop camera";
+    startBtn.classList.add("stop");
+    connect();
+    restartTimer();
+    requestWakeLock();
+  }
+
+  function stop() {
+    running = false;
+    clearInterval(timer); clearTimeout(reconnectTimer);
+    if (ws) { try { ws.close(); } catch (_) {} ws = null; }
+    if (stream) { stream.getTracks().forEach((t) => t.stop()); stream = null; }
+    video.srcObject = null;
+    $("placeholder").hidden = false;
+    if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
+    startBtn.textContent = "Start camera";
+    startBtn.classList.remove("stop");
+    setConn("off", "Not connected");
+  }
+
+  startBtn.addEventListener("click", () => (running ? stop() : start()));
+
+  $("seg").addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-ms]");
+    if (!b) return;
+    intervalMs = Number(b.dataset.ms);
+    for (const x of $("seg").querySelectorAll("button")) x.classList.toggle("sel", x === b);
+    restartTimer();
+  });
+
+  // Wake locks drop when the page is hidden; take it again on return.
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && running) {
+      requestWakeLock();
+      if (!ws) connect();
+    }
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,75 @@
+{
+  "id": "demo-v1",
+  "title": "Demo lesson",
+  "video": "norm.mp4",
+  "steps": [
+    {
+      "n": 1,
+      "title": "Lay the blue sheet flat",
+      "start": "00:00",
+      "end": "00:08",
+      "clip": "clips/01.mp4",
+      "captions": "captions/01.vtt",
+      "ref_frame": "frames/01.jpg",
+      "check_type": "camera",
+      "check_question": "Is there one white bar on a blue background?",
+      "prerequisites": []
+    },
+    {
+      "n": 2,
+      "title": "Fold the sheet in half",
+      "start": "00:08",
+      "end": "00:16",
+      "clip": "clips/02.mp4",
+      "captions": "captions/02.vtt",
+      "ref_frame": "frames/02.jpg",
+      "check_type": "camera",
+      "check_question": "Are there two white bars on a green background?",
+      "prerequisites": [
+        1
+      ]
+    },
+    {
+      "n": 3,
+      "title": "Crease the fold and unfold it",
+      "start": "00:16",
+      "end": "00:24",
+      "clip": "clips/03.mp4",
+      "captions": "captions/03.vtt",
+      "ref_frame": "frames/03.jpg",
+      "check_type": "manual",
+      "check_question": "",
+      "prerequisites": [
+        2
+      ]
+    },
+    {
+      "n": 4,
+      "title": "Fold all four corners inward",
+      "start": "00:24",
+      "end": "00:32",
+      "clip": "clips/04.mp4",
+      "captions": "captions/04.vtt",
+      "ref_frame": "frames/04.jpg",
+      "check_type": "camera",
+      "check_question": "Are there four white bars on a red background?",
+      "prerequisites": [
+        3
+      ]
+    },
+    {
+      "n": 5,
+      "title": "Open the finished shape",
+      "start": "00:32",
+      "end": "00:40",
+      "clip": "clips/05.mp4",
+      "captions": "captions/05.vtt",
+      "ref_frame": "frames/05.jpg",
+      "check_type": "camera",
+      "check_question": "Are there five white bars on a purple background?",
+      "prerequisites": [
+        4
+      ]
+    }
+  ]
+}
