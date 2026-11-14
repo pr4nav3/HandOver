@@ -859,7 +859,7 @@ def test_transcript_reaches_claude_and_captions():
     assert [seg["text"] for seg in stored["transcript"]] == ["Lay it flat.", "Now fold it."]
     (dtype, samples, kw), = wlog["calls"]
     # 16 kHz mono float samples of norm.mp4 (3 s), so faster-whisper never opens a file itself
-    assert dtype == "float32" and abs(samples - 48000) < 1600 and kw == {"vad_filter": True}
+    assert dtype == "float32" and abs(samples - 48000) < 1600 and kw == {"vad_filter": True, "word_timestamps": True}
     assert any(m == "Transcribing narration" for m in lines)
     assert any(m.startswith("Transcribed 2 narration segments in ") for m in lines)
     assert any("2 narration lines" in m for m in lines)

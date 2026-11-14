@@ -621,9 +621,17 @@ def transcribe(media: Path, progress: Progress = noop) -> list[Segment]:
     t0 = time.time()
     model = _load_whisper(_whisper_model_name(), progress)
     progress("extracting", "Transcribing narration")
-    segments, _info = model.transcribe(_audio_16k(media), vad_filter=True)
-    out = [Segment(start=float(seg.start), end=float(seg.end), text=" ".join(seg.text.split()))
-           for seg in segments if seg.text.strip()]
+    # Word timestamps trim each segment to the speech itself; plain segments absorb the
+    # silence between lines, which shifted captions and step boundaries by up to 5 s.
+    segments, _info = model.transcribe(_audio_16k(media), vad_filter=True, word_timestamps=True)
+    out = []
+    for seg in segments:
+        if not seg.text.strip():
+            continue
+        words = getattr(seg, "words", None) or []
+        start = float(words[0].start) if words else float(seg.start)
+        end = float(words[-1].end) if words else float(seg.end)
+        out.append(Segment(start=start, end=max(end, start), text=" ".join(seg.text.split())))
     progress("extracting", f"Transcribed {len(out)} narration segments in {time.time() - t0:.1f} s")
     return out
 
