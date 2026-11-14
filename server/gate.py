@@ -25,6 +25,7 @@ from __future__ import annotations
 import io
 import logging
 import os
+import threading
 from typing import Optional
 
 from PIL import Image, ImageChops, ImageFilter
@@ -74,6 +75,10 @@ class MotionGate:
     Motion history (previous frame, still counter) survives reset() because it
     describes the camera stream, not the step; so right after an advance a still
     scene can be checked at once instead of waiting to settle again.
+
+    Thread-safe: observe() may run in a worker thread while reset() runs on the
+    event loop. A lock covers every state change (decoding stays outside it), so
+    reset() always lands between two observe() calls and never leaves stale history.
     """
 
     def __init__(
@@ -105,19 +110,28 @@ class MotionGate:
         self._checks_allowed = 0
         self._last_motion: Optional[float] = None
         self._last_change: Optional[float] = None
+        self._lock = threading.Lock()
 
     def observe(self, jpeg: bytes, now: float) -> bool:
         """Feed one frame; True means run a check on it. Never raises."""
-        self._frames_seen += 1
         if not self.enabled:
-            self._checks_allowed += 1
+            with self._lock:
+                self._frames_seen += 1
+                self._checks_allowed += 1
             return True
         try:
-            cur = _small(jpeg)
+            cur = _small(jpeg)  # the slow part, done without holding the lock
         except Exception as e:  # corrupt or non-JPEG bytes must not break the loop
             log.debug("gate: unreadable frame (%s)", e)
+            with self._lock:
+                self._frames_seen += 1
             return False
+        with self._lock:
+            self._frames_seen += 1
+            return self._judge(cur, now)
 
+    def _judge(self, cur: Image.Image, now: float) -> bool:
+        """Decide on a decoded frame; caller holds the lock."""
         if self._since is None:
             self._since = now
         prev, self._prev = self._prev, cur
@@ -149,26 +163,30 @@ class MotionGate:
 
     def mark_checked(self, now: float) -> None:
         """Record that a check was issued on the most recent frame."""
-        self._checked = self._prev
-        self._since = now
+        with self._lock:
+            self._checked = self._prev
+            self._since = now
 
     def reset(self) -> None:
         """Forget the last check (call on step change) so the next settled frame is allowed."""
-        self._checked = None
-        self._since = None
-        self._last_change = None
+        with self._lock:
+            self._checked = None
+            self._since = None
+            self._last_change = None
 
     @property
     def settled(self) -> bool:
         """True when the newest frame is still, so a fast confirm can trust it; always True when disabled."""
-        return not self.enabled or self._still_count >= self.still_frames
+        with self._lock:
+            return not self.enabled or self._still_count >= self.still_frames
 
     @property
     def stats(self) -> dict:
         """Counters and the latest measurements, for logs."""
-        return {
-            "frames_seen": self._frames_seen,
-            "checks_allowed": self._checks_allowed,
-            "last_motion": self._last_motion,
-            "last_change": self._last_change,
-        }
+        with self._lock:
+            return {
+                "frames_seen": self._frames_seen,
+                "checks_allowed": self._checks_allowed,
+                "last_motion": self._last_motion,
+                "last_change": self._last_change,
+            }

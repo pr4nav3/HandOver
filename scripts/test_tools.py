@@ -228,6 +228,56 @@ def test_eval_key_detection_never_needs_a_real_key():
         assert eval_checks.has_key({"GEMINI_API_KEY": "x"}, Path(t) / "none")
 
 
+def test_eval_errored_probes_are_not_wrong_answers():
+    import asyncio
+
+    async def rate_limited(ref, live, q):
+        return eval_checks.Probe("", "unsure", 0.0, 3000, "rate_limited")
+
+    _, steps = eval_checks.load_steps(DEMO)
+    scores = asyncio.run(eval_checks.evaluate(steps, rate_limited, 1, False, 0, 0.8))
+    assert all(not s.scored and not s.passed and s.verdict == "not scored (errors)" for s in scores)
+    md = eval_checks.render_markdown("demo-v1", "test", 1, False, scores, [], "now")
+    assert "make manual" not in md and "rate_limited 7" in md
+    assert "| yes (own) | 0 | 0 | 0 |" in md
+
+    calls = []
+
+    async def flaky(ref, live, q):  # every other call times out; answers are otherwise right
+        calls.append(1)
+        if len(calls) % 2 == 0:
+            return eval_checks.Probe("", "unsure", 0.0, 3000, "timeout")
+        return await eval_checks.mock_check(ref, live, q)
+
+    scores = asyncio.run(eval_checks.evaluate(steps, flaky, 2, False, 0, 0.8))
+    assert all(s.passed and s.errors > 0 for s in scores), [(s.n, s.verdict) for s in scores]
+
+
+def test_eval_exits_nonzero_when_every_call_errors():
+    async def timeout(ref, live, q):
+        return eval_checks.Probe("", "unsure", 0.0, 3000, "timeout")
+
+    async def first_errors(ref, live, q):  # one errored probe, the rest answered
+        first_errors.n = getattr(first_errors, "n", 0) + 1
+        if first_errors.n == 1:
+            return eval_checks.Probe("", "unsure", 0.0, 3000, "error")
+        return await eval_checks.mock_check(ref, live, q)
+
+    with tempfile.TemporaryDirectory() as t:
+        assert eval_checks.main([str(DEMO), "--out", t], checker=timeout) == 1
+        assert eval_checks.main([str(DEMO), "--out", t, "--n", "2"], checker=first_errors) == 0
+
+
+def test_eval_null_ref_frame_uses_default():
+    with tempfile.TemporaryDirectory() as t:
+        folder = copy_demo(Path(t))
+        edit(folder, lambda d: d["steps"][1].update(ref_frame=None))
+        _, steps = eval_checks.load_steps(folder)
+        assert steps[1]["frame"] == folder / "frames" / "02.jpg"
+        p = run("eval_checks.py", str(folder), "--mock", "--out", t)
+        assert p.returncode == 0 and "4 of 4 steps pass" in p.stdout, p.stdout + p.stderr
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

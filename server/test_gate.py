@@ -7,11 +7,13 @@ import os
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 from pathlib import Path
 
 from PIL import Image, ImageDraw
 
+from server import gate as gate_mod
 from server.gate import MotionGate
 
 REPO = Path(__file__).resolve().parent.parent
@@ -161,6 +163,69 @@ def test_reset_allows_next_settled_frame():
     g.mark_checked(5.0)
     assert g.observe(still, 6.0) is False
     assert g.stats["last_change"] is not None
+
+
+def test_reset_during_observe_is_not_stale():
+    """reset() from another thread while observe() is mid-decision must wait, then fully apply."""
+    g = MotionGate(enabled=True)
+    still = frame()
+    feed(g, [still] * 3)  # checked at t=2 on this scene
+    inside, release = threading.Event(), threading.Event()
+    real_diff = gate_mod.diff_fraction
+
+    def slow_diff(a, b):
+        inside.set()
+        release.wait(2)
+        return real_diff(a, b)
+
+    gate_mod.diff_fraction = slow_diff
+    try:
+        worker = threading.Thread(target=g.observe, args=(still, 3.0))
+        worker.start()
+        assert inside.wait(2)
+        resetter = threading.Thread(target=g.reset)
+        resetter.start()
+        resetter.join(0.2)
+        assert resetter.is_alive()  # blocked until the in-flight observe finishes
+        release.set()
+        worker.join(2)
+        resetter.join(2)
+        assert not worker.is_alive() and not resetter.is_alive()
+    finally:
+        gate_mod.diff_fraction = real_diff
+    # Same unchanged scene: without the reset this would be held as "not changed".
+    assert g.observe(still, 4.0) is True
+
+
+def test_concurrent_observe_and_reset():
+    g = MotionGate(enabled=True)
+    frames = [frame(), frame(rect_x=300), frame(extra=True)]
+    errors: list[BaseException] = []
+    stop = threading.Event()
+
+    def worker() -> None:
+        i = 0
+        try:
+            while not stop.is_set():
+                if g.observe(frames[i % 3], i * 0.1):
+                    g.mark_checked(i * 0.1)
+                i += 1
+        except BaseException as e:  # surface any thread failure to the test
+            errors.append(e)
+
+    threads = [threading.Thread(target=worker) for _ in range(3)]
+    for t in threads:
+        t.start()
+    for _ in range(200):
+        g.reset()
+        _ = g.settled, g.stats
+    stop.set()
+    for t in threads:
+        t.join(2)
+    assert not errors, errors
+    g.reset()
+    still = frame()
+    assert feed(g, [still] * 3, t0=1000.0, engine=False)[-1] is True
 
 
 def test_speed():
