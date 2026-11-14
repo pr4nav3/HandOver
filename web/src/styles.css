@@ -5,8 +5,9 @@
   --border: rgba(255, 255, 255, 0.08);
   --border-strong: rgba(255, 255, 255, 0.14);
   --text: #f5f5f7;
-  --muted: rgba(235, 235, 245, 0.56);
-  --faint: rgba(235, 235, 245, 0.32);
+  /* Both pass 4.5:1 on --bg, --panel and --panel-2 (faint is 4.8:1 at worst). */
+  --muted: rgba(235, 235, 245, 0.66);
+  --faint: rgba(235, 235, 245, 0.52);
   --green: #30d158;
   --grey: #8e8e93;
   --red: #ff6961;
@@ -474,12 +475,11 @@ video::-webkit-media-text-track-container {
   transform: translateY(-10px);
 }
 
-/* ::cue ignores padding, so a same-color outline adds side room. Chrome draws
-   the cue background at about 50% black whatever alpha is set here, so both
-   use 0.5 and the outline blends in seamlessly, including on wrapped lines. */
+/* ::cue ignores padding, so a same-color outline adds side room. 72% black is
+   DESIGN.md captionFill: white text keeps 9:1 even over a white frame. */
 video::cue {
-  background-color: rgba(0, 0, 0, 0.5);
-  outline: 0.3em solid rgba(0, 0, 0, 0.5);
+  background-color: rgba(0, 0, 0, 0.72);
+  outline: 0.3em solid rgba(0, 0, 0, 0.72);
   color: #fff;
   font-family: var(--font);
   font-size: clamp(18px, 1.4vw, 30px);
@@ -545,6 +545,13 @@ video::cue {
   font-size: clamp(16px, 1.3vw, 22px);
   font-weight: 600;
   min-width: 0;
+}
+
+.mistake-label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--amber);
 }
 
 .mistake-actions {
@@ -641,22 +648,10 @@ video::cue {
   background: var(--grey);
 }
 
-/* One steady pulse while the camera is watching. Checking and watching share
-   this class, so the server toggling between them never restarts it. */
+/* A steady, brighter dot while a camera is watching (DESIGN.md principle 8:
+   status dots never pulse). Checking and watching share this class. */
 .badge.watching.live .badge-dot {
-  animation: pulse 1.6s ease-in-out infinite;
-}
-
-@keyframes pulse {
-  0%,
-  100% {
-    opacity: 1;
-    transform: scale(1);
-  }
-  50% {
-    opacity: 0.35;
-    transform: scale(0.8);
-  }
+  background: var(--text);
 }
 
 /* A filled check, a stronger fill and weight: distinct from Watching at a glance. */

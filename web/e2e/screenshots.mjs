@@ -42,6 +42,15 @@ async function learnRun(width, height, suffix) {
   const page = await browser.newPage({ viewport: { width, height } })
   page.on('pageerror', (e) => problems.push(`pageerror: ${e.message}`))
   page.on('console', (m) => m.type() === 'error' && problems.push(`console: ${m.text()}`))
+  // Record what the page sends to the hub.
+  await page.addInitScript(() => {
+    window.__sent = []
+    const send = WebSocket.prototype.send
+    WebSocket.prototype.send = function (data) {
+      if (typeof data === 'string') window.__sent.push(JSON.parse(data))
+      return send.call(this, data)
+    }
+  })
   await hook('/mock/camera?on=1')
   await page.goto(`${APP}/#/learn`)
   await page.waitForSelector(`.start-card select option[value="${LESSON}"]`, { state: 'attached' })
@@ -69,6 +78,44 @@ async function learnRun(width, height, suffix) {
     check((await page.getAttribute('.mic', 'aria-pressed')) === 'true', 'mic button turns voice on')
     await page.click('.mic')
     check((await page.getAttribute('.mic', 'aria-pressed')) === 'false', 'mic button turns voice off again')
+
+    // Space on a focused button presses that button, never Next.
+    const stepBeforeSpace = await stepCount(page)
+    await page.focus('.mic')
+    await page.keyboard.press(' ')
+    await wait(400)
+    check((await stepCount(page)) === stepBeforeSpace && (await page.getAttribute('.mic', 'aria-pressed')) === 'true', 'Space on the focused mic toggles it and does not press Next')
+    await page.keyboard.press(' ')
+    await wait(200)
+    await page.evaluate(() => document.activeElement?.blur())
+
+    // A status dot never pulses (DESIGN.md principle 8).
+    check(await page.evaluate(() => getComputedStyle(document.querySelector('.badge-dot')).animationName === 'none'), 'badge dot has no animation')
+    check(
+      // getComputedStyle cannot read ::cue, so read the rule itself.
+      await page.evaluate(() =>
+        [...document.styleSheets]
+          .flatMap((sh) => [...sh.cssRules])
+          .some((r) => r.selectorText === 'video::cue' && r.style.backgroundColor === 'rgba(0, 0, 0, 0.72)'),
+      ),
+      'caption background is 72% black',
+    )
+
+    // A lesson.json without clip, captions and ref_frame gets the contract defaults.
+    await hook('/mock/strip_paths?on=1')
+    const stripped = await hook('/mock/recut')
+    const defaulted = await page
+      .waitForFunction(
+        (rev) => {
+          const v = document.querySelector('.clip video:not(.standby)')
+          return v && v.src.includes(`clips/02.mp4?v=${rev}`) && v.querySelector('track')?.src.includes('captions/02.vtt') && v.readyState >= 2
+        },
+        stripped.rev,
+        { timeout: 6000 },
+      )
+      .then(() => true, () => false)
+    check(defaulted, 'missing clip and captions paths fall back to clips/NN.mp4 and captions/NN.vtt')
+    await hook('/mock/strip_paths?on=0')
 
     // Badge: checking and watching are one visual state, so the pulse never restarts.
     const badgeBefore = await page.getAttribute('.badge', 'class')
@@ -159,6 +206,14 @@ async function learnRun(width, height, suffix) {
     check((await page.locator('.check-meta').innerText()).includes('No API key'), 'no_key reads "No API key"')
     await hook('/mock/offline?r=')
 
+    // A live mistake: its label, an OK button, no Show step. Sent twice, counted once.
+    await hook('/mock/mistake?kind=live&label=Wrong%20fold')
+    await hook('/mock/mistake?kind=live&label=Wrong%20fold')
+    await page.waitForSelector('.mistake-banner', { timeout: 3000 }).catch(() => {})
+    const banner = await page.locator('.mistake-banner').innerText().catch(() => '')
+    check(banner.includes('Wrong fold') && banner.includes('OK') && !banner.includes('Show step'), `live mistake shows its label and OK only (${banner.replace(/\n/g, ' | ')})`)
+    await page.click('.mistake-banner button:has-text("OK")')
+
     // Advancing past the last step: advance to == total, then status done.
     await hook('/mock/goto?step=4')
     await wait(800)
@@ -172,6 +227,8 @@ async function learnRun(width, height, suffix) {
     check((await page.locator('.step-title').innerText()) !== (await page.locator('.topbar-title').innerText()), 'done screen does not repeat the lesson title')
     check(await page.evaluate(() => [...document.querySelectorAll('.clip video')].every((v) => v.paused)), 'clips stop at done')
     check(!(await page.locator('.mode-pill').count()), 'no Mock checks pill when the hub does not say mock')
+    const mistakesShown = await page.locator('.finish-stats div:has(dt:text("Mistakes caught")) dd').innerText()
+    check(mistakesShown === '1', `a repeated mistake counts once (Mistakes caught ${mistakesShown})`)
 
     // Mock checks: a persistent pill, and the summary never claims the camera.
     await hook('/mock/check_mode?m=mock')
@@ -183,16 +240,27 @@ async function learnRun(width, height, suffix) {
     await shoot(page, '06b-done-mock-checks')
     await hook('/mock/check_mode?m=')
 
+    await page.evaluate(() => (window.__sent = []))
     await page.click('text=Start over')
     await page.waitForFunction(() => document.querySelector('.step-count')?.textContent?.trim() === 'Step 1 of 5', null, { timeout: 3000 }).catch(() => {})
     check((await stepCount(page)) === 'Step 1 of 5', 'Start over returns to step 1')
+    const restartSent = await page.evaluate(() => window.__sent.map((m) => m.type))
+    check(restartSent.includes('select_lesson') && !restartSent.includes('goto'), `Start over sends select_lesson, not goto (${restartSent.join(', ')})`)
 
-    // Server restart: it comes back with no lesson and the page picks it again.
+    // Server restart: it comes back with no lesson; the page picks it again and returns to the step.
     await hook('/mock/goto?step=2')
-    await hook('/mock/restart')
-    await page.waitForFunction(() => document.querySelector('.step-count')?.textContent?.trim() === 'Step 1 of 5', null, { timeout: 8000 }).catch(() => {})
     await wait(400)
-    check((await stepCount(page)) === 'Step 1 of 5' && !(await page.locator('.overlay').count()), 'lesson resumes after a server restart, no picker')
+    await page.evaluate(() => (window.__sent = []))
+    await hook('/mock/restart')
+    await page
+      .waitForFunction(
+        () => window.__sent.some((m) => m.type === 'goto' && m.step === 2) && document.querySelector('.step-count')?.textContent?.trim() === 'Step 3 of 5',
+        null,
+        { timeout: 8000 },
+      )
+      .catch(() => {})
+    await wait(400)
+    check((await stepCount(page)) === 'Step 3 of 5' && !(await page.locator('.overlay').count()), `lesson resumes at the same step after a server restart, no picker (${await stepCount(page)})`)
     await shoot(page, '14-resumed-after-restart')
   }
   await page.close()
@@ -229,6 +297,13 @@ async function uploadRun() {
   await page.goto(`${APP}/#/teach`)
   await page.setInputFiles('input[type=file]', join(OUT, '..', 'mock', 'fixtures', 'mock-demo', 'clips', '01.mp4'))
   await page.fill('.field input', 'Fold a fortune teller')
+
+  // An upload the hub refuses shows the hub's own words.
+  await hook('/mock/upload_fail?m=video%20is%20larger%20than%202%20GB')
+  await page.click('text=Make lesson')
+  const uploadErr = await page.locator('.job.error').innerText({ timeout: 4000 }).catch(() => '')
+  check(uploadErr.includes('video is larger than 2 GB'), `upload error shows the hub detail (${uploadErr})`)
+
   await page.click('text=Make lesson')
   await page.waitForSelector('.job .spinner')
   await wait(2600)

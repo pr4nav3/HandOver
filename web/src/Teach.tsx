@@ -43,7 +43,7 @@ export function Teach() {
     setError('')
     getLesson(id)
       .then(setLesson)
-      .catch(() => setError('Could not open that lesson.'))
+      .catch((err) => setError(err instanceof HttpError && err.detail ? `Could not open that lesson: ${err.detail}` : 'Could not open that lesson.'))
   }
 
   return (

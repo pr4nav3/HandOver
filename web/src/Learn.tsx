@@ -114,12 +114,15 @@ export function Learn() {
   // For the done screen: when this run began, and how each step was finished.
   const runStart = useRef(0)
   const advancedBy = useRef(new Map<number, AdvanceMsg['reason']>())
-  // Time spent on each step (summed if revisited), counted from state changes
-  // so next, back, goto and camera advances are all covered.
+  // Time spent on each step (summed if revisited), counted from position
+  // changes so next, back, goto and camera advances are all covered. Advance
+  // messages count too: the hub may skip states for a slow client, but never
+  // an advance (it always comes before its state).
   const spentMs = useRef(new Map<number, number>())
   const lastPos = useRef(0)
   const lastPosAt = useRef(0)
-  const mistakeCount = useRef(0)
+  // Each mistake once, however often the hub repeats it (message and state).
+  const mistakeKeys = useRef(new Set<string>())
   const resetRun = () => {
     const now = performance.now()
     runStart.current = now
@@ -127,7 +130,7 @@ export function Learn() {
     spentMs.current = new Map()
     lastPos.current = 0
     lastPosAt.current = now
-    mistakeCount.current = 0
+    mistakeKeys.current = new Set()
     setMistake(null)
     // A Verified flash from the previous run should not carry into the new one.
     window.clearTimeout(flashTimer.current)
@@ -141,8 +144,23 @@ export function Learn() {
   const lessonRef = useRef<Lesson | null>(null)
   const revRef = useRef(0)
 
+  // Charge the time since the last change to the step we left. `pos` is the
+  // step, or `total` when done.
+  const moveTo = (pos: number, total: number) => {
+    if (!runStart.current || pos === lastPos.current) return
+    const now = performance.now()
+    if (lastPos.current < total) {
+      const spent = spentMs.current
+      spent.set(lastPos.current, (spent.get(lastPos.current) ?? 0) + now - lastPosAt.current)
+    }
+    lastPos.current = pos
+    lastPosAt.current = now
+  }
+
   const onAdvance = useCallback((msg: AdvanceMsg) => {
     if (msg.to > msg.from) advancedBy.current.set(msg.from, msg.reason)
+    const total = lessonRef.current?.steps.length
+    if (total) moveTo(Math.min(msg.to, total), total)
     // Show the next clip now rather than after the state message and a render.
     const l = lessonRef.current
     const s = l?.steps[msg.to]
@@ -159,6 +177,8 @@ export function Learn() {
   // If the server restarts mid lesson it comes back with no lesson; pick ours
   // again, once per connection. `resumeId` is the lesson the learner started.
   const resumeId = useRef<string | null>(null)
+  // The position to return to after the hub comes back (it restarts at step 0).
+  const resumeStep = useRef(0)
   const resentThisConnection = useRef(false)
   const sendRef = useRef<(m: object) => void>(() => {})
 
@@ -176,35 +196,52 @@ export function Learn() {
 
   const onState = useCallback((msg: StateMsg) => {
     setState(msg)
-    // Per-step time: charge the time since the last change to the step we left.
-    const pos = msg.status === 'done' ? msg.total : msg.step
-    if (runStart.current && pos !== lastPos.current) {
-      const now = performance.now()
-      if (lastPos.current < msg.total) {
-        const spent = spentMs.current
-        spent.set(lastPos.current, (spent.get(lastPos.current) ?? 0) + now - lastPosAt.current)
-      }
-      lastPos.current = pos
-      lastPosAt.current = now
+    if (msg.lesson_id === null) {
+      // The hub restarted (or lost the lesson): pick ours again and remember
+      // where the learner was. The run and its times carry on.
+      if (resumeId.current && !resentThisConnection.current) {
+        resentThisConnection.current = true
+        resumingRef.current = true
+        setResuming(true)
+        resumeStep.current = lastPos.current
+        setMistake(null)
+        sendRef.current({ type: 'select_lesson', id: resumeId.current })
+      } else if (!resumingRef.current) setResuming(false)
+      return
     }
+    if (resumingRef.current) {
+      resumingRef.current = false
+      setResuming(false)
+      const to = resumeStep.current
+      // select_lesson starts at step 0; go back to the learner's step.
+      if (to > 0 && to < msg.total && msg.step !== to) {
+        sendRef.current({ type: 'goto', step: to })
+        return
+      }
+    }
+    moveTo(msg.status === 'done' ? msg.total : msg.step, msg.total)
     // Older servers omit `mistake`; only an explicit value replaces ours.
-    if (msg.mistake !== undefined) setMistake(msg.mistake)
-    if (msg.lesson_id !== null) setResuming(false)
-    else if (resumeId.current && !resentThisConnection.current) {
-      resentThisConnection.current = true
-      resumingRef.current = true
-      setResuming(true)
-      resetRun()
-      sendRef.current({ type: 'select_lesson', id: resumeId.current })
-    } else setResuming(false)
+    if (msg.mistake !== undefined) {
+      setMistake(msg.mistake)
+      if (msg.mistake) countMistake(msg.mistake)
+    }
   }, [])
+
+  // True the first time this mistake is seen in the run.
+  const countMistake = (m: Mistake) => {
+    if (!startedRef.current) return false
+    const key = `${m.step}:${m.kind}:${m.looks_like ?? ''}`
+    if (mistakeKeys.current.has(key)) return false
+    mistakeKeys.current.add(key)
+    return true
+  }
 
   // The catch: show the banner and say the message once.
   const onMistake = useCallback((msg: MistakeMsg) => {
     const { type: _type, ...m } = msg
     setMistake(m)
     if (!startedRef.current) return
-    mistakeCount.current += 1
+    if (!countMistake(m)) return // already shown and spoken
     if ('speechSynthesis' in window) {
       window.speechSynthesis.cancel()
       window.speechSynthesis.speak(new SpeechSynthesisUtterance(m.message))
@@ -334,7 +371,10 @@ export function Learn() {
   useEffect(() => {
     if (!started) return
     const onKey = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return
+      const t = e.target instanceof Element ? e.target : null
+      if (t?.closest('input, select, textarea, [contenteditable="true"]')) return
+      // Space belongs to the focused control (the mic, Show step, OK), not to Next.
+      if (e.key === ' ' && t?.closest('button, a, summary, [role="button"]')) return
       if (e.key === 'ArrowRight' || e.key === ' ') {
         e.preventDefault()
         next('button')
@@ -358,9 +398,13 @@ export function Learn() {
     setStarted(true)
   }
 
+  // A fresh select_lesson, not goto 0, so the hub starts a new run (with its
+  // own run id in Databricks) for the second attempt.
   const restart = () => {
+    const id = lessonId ?? resumeId.current
+    if (!id) return
     resetRun()
-    send({ type: 'goto', step: 0 })
+    send({ type: 'select_lesson', id })
   }
 
   // A mistake belongs to one step; it never outlives that step or the lesson.
@@ -399,7 +443,7 @@ export function Learn() {
       expertS: rows.reduce((a, r) => a + r.expertS, 0),
       camera,
       byHand: reasons.length - camera,
-      mistakes: mistakeCount.current,
+      mistakes: mistakeKeys.current.size,
       rows,
     })
   }, [isDone])
@@ -442,7 +486,7 @@ export function Learn() {
       <div className="progress" role="progressbar" aria-valuemin={0} aria-valuemax={total} aria-valuenow={isDone ? total : idx}>
         {Array.from({ length: Math.max(total, 1) }, (_, i) => {
           let cls = !total ? 'upcoming' : isDone || i < idx ? 'done' : i === idx ? 'current' : 'upcoming'
-          if (i === idx && activeMistake?.kind === 'behind') cls = 'mistake'
+          if (i === idx && activeMistake && activeMistake.kind !== 'ahead') cls = 'mistake'
           return <span key={i} className={`seg ${cls}`} />
         })}
       </div>
@@ -507,11 +551,14 @@ export function Learn() {
               {activeMistake && (
                 <div className="mistake-banner" role="alert">
                   <WarningIcon />
-                  <p className="mistake-text">{activeMistake.message}</p>
+                  <p className="mistake-text">
+                    {activeMistake.label && <span className="mistake-label">{activeMistake.label}</span>}
+                    {activeMistake.message}
+                  </p>
                   <div className="mistake-actions">
-                    {activeMistake.kind === 'behind' ? (
+                    {activeMistake.kind === 'behind' && typeof activeMistake.looks_like === 'number' ? (
                       <>
-                        <button type="button" className="ghost small" onClick={() => showStep(activeMistake.looks_like)}>
+                        <button type="button" className="ghost small" onClick={() => showStep(activeMistake.looks_like as number)}>
                           Show step {activeMistake.looks_like + 1}
                         </button>
                         <button type="button" className="ghost small" onClick={dismissMistake}>
