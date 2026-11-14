@@ -9,7 +9,7 @@ Owner: lead. Sources: research/features-learner.md (L), research/features-expert
 | `reason` on each check, shown at confidence 0.7 or more | L1, R-S6 | MUST [M6, W5] | Turns a bare "no" into visible intelligence; answers "just a video player" |
 | Mistake catch: live frame still matches the previous step ("flip it over") | L2, R-S6, A | MUST [M9, W6] | The demo's memorable moment, at the spec's known failure point |
 | Jump ahead when the learner is a step ahead, confirmed by one check | R-S7, A | MUST [M9] | Fast judges otherwise feel the clips lag |
-| Spoken mistake and "ahead" messages via `speechSynthesis` | L10 | MUST [W6] | Hands are full; the judge hears the catch |
+| Spoken mistake and "ahead" messages via `speechSynthesis`, on the learn screen only (never the spectator view) | L10 | MUST [W6] | Hands are full; the judge hears the catch |
 | Motion gate before each Gemini call, 6 s heartbeat | R-S4, A | MUST [M5] | Cuts calls under unpublished free-tier limits |
 | Circuit breaker plus local OpenCV check, "Offline check" badge | R-S4, A, L21 | MUST [M6, M7] | Survives outage or 429 without faking anything |
 | Local check vetoes Gemini when it strongly names another step | A | MUST [M7] | Cheap second opinion against false passes |
@@ -44,7 +44,8 @@ Owner: lead. Sources: research/features-learner.md (L), research/features-expert
 | "Recording" banner whenever replay feeds frames | SCOPE, R-S2 | MUST [W5] | Never pass a recording off as live |
 | Recording dot on every camera client and a privacy line | R-S10 | MUST [W4, W5, W8, W11] | Honest about capture; backed by code |
 | Learn frames never written to disk, with a test | R-S10 | MUST [M15] | The privacy line must be true |
-| Mistake banner buttons "Show step n" and "I'm fine" | D | MUST [W6] | Lets the learner recover or dismiss |
+| Mistake banner buttons "Show step n" and "I'm fine" (behind); "OK" only (ahead) | D | MUST [W6] | Lets the learner recover or dismiss |
+| "Up next" preview in the empty learn-screen band; thumbnails refresh after a recut | D | MUST [W12] | Fills dead space with the next step; stale thumbnails look broken |
 | Camera device name in the top bar | D | MUST [W2] | Shows which device is streaming in the every-OS beat |
 | Keyboard map, `aria-live`, reduced motion, caption size | L15, D | SHOULD [S-A] | Cheap, real polish |
 | Contrast check on design tokens | D | SHOULD [S-A] | Tokens are estimated, not measured |
@@ -71,7 +72,7 @@ Owner: lead. Sources: research/features-learner.md (L), research/features-expert
 | mDNS discovery | A, D | STRETCH | Both scope docs cut it; hotspots drop multicast |
 | 4-digit pairing code | D | CUT | Unenforced, it protects nothing and adds a step |
 | Certificate help copy for browser capture | D | SHOULD | Native apps are the main path; copy goes on join.html if time |
-| cloudflared quick tunnel as browser capture backup | R-S2, E | SHOULD | Last resort for Android Chrome; test once |
+| Chrome insecure-origin flag, then cloudflared quick tunnel, for Android Chrome capture | R-S2, E | SHOULD | Flag first; the tunnel needs the humans' OK because frames pass through Cloudflare |
 | Desktop app: frozen hub, Tk window, system browser | A | MUST [M11, M12] | A windowless app cannot be quit; webviews break voice |
 | Native shell look (macOS sidebar, Windows Mica) | D | CUT | No webview shell this weekend |
 | Tauri or Electron | A | CUT | Rust and sidecar setup; voice fails in webviews |
@@ -118,11 +119,12 @@ Owner: lead. Sources: research/features-learner.md (L), research/features-expert
 | Pre-trust certs on every demo device | R-S2 | MUST (humans) | Browser capture needs HTTPS |
 | Replay command plus clean and skipped-flip recordings | R-S2, SCOPE | MUST [M14] | Fallback when cameras or network fail |
 | Separate rehearsal and demo Gemini projects | R-S4, A | MUST (humans) | Limits are per project |
-| Rehearse the planted flip 20 times, need 18 | R-S5 | MUST (Sync 8) | Measured, not hoped |
+| Rehearse the planted flip 20 times, need 18 | R-S5 | MUST (Sync 8) | Measured, not hoped; each try marked in the log |
+| Mock mistake hook (`HANDOVER_MOCK_MISTAKE`) for banner tests | review | MUST [M9] | Lets the web banner be tested without Gemini; never used for screenshots |
 | Desk lamp, black board, matte duo-color paper, earbuds | R-S8, R-S9 | MUST (humans) | Lighting and noise are the likely live failures |
 | Pitch "works with any phone, glasses optional" | R-S3 | MUST | A glasses failure is then not a demo failure |
 | Never claim multi-learner | R-S11 | MUST | One global engine |
-| Name only competitors with fetched sources | R-S11, market | MUST | Retrocausal and Dozuki; not DeepSight |
+| Name only competitors with fetched sources | R-S11, market | MUST | Retrocausal and Dozuki; not DeepSight or VSight |
 | Show a teach upload live in the pitch | R-S6 | CUT | Venue upload risk; show the pre-cut lesson and its lesson.json instead |
 | Slide with the tested device matrix | SCOPE | MUST [W10] | Claims match what was run |
 | Backup demo video, introduced as a recording | judging | MUST (humans) | Last resort |

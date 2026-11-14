@@ -1,4 +1,4 @@
-.venv/
+.venv*/
 __pycache__/
 node_modules/
 web/dist/
@@ -7,3 +7,14 @@ certs/
 *.pyc
 .DS_Store
 server/uploads/
+/hub.json
+/uploads/
+/logs/
+recordings/
+build/
+dist/
+.recut_tmp/
+.recut_old/
+rehearsal.log
+*.log
+*.spec.bak

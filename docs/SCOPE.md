@@ -63,7 +63,7 @@ Red-team attack ids S1 to S11 refer to docs/research/red-team.md. Hours are AI-a
 - Sat 6:00 PM: real Gemini check benchmarked (latency, project limits). Median > 2.5 s: check every 2 s and require 1 confident yes plus local agreement.
 - Sat 8:00 PM: glasses stream via iPhone app, else glasses out of the demo and never claimed.
 - Sat 10:00 PM: real Android phone streaming, else Android labeled emulator only. Mac .app launches cleanly.
-- Sun 12:30 AM: full fold end to end on real Gemini with iPhone app, local check works with Wi-Fi off. Else stop SHOULD work; both devs fix the loop.
+- Sun 12:30 AM: full fold end to end on real Gemini with iPhone app, local check works with the internet down but the local network up (see PLAN.md). Else stop SHOULD work; both devs fix the loop.
 - Sun 1:30 AM: feature freeze.
 - Sun 8:00 AM: venue-light rehearsal; planted flip catch 20 tries, need 18+. Else step 5 manual.
 - Sun 9:30 AM: CI green on web, Mac, Windows, iOS, Android; slide and Devpost labels final.
