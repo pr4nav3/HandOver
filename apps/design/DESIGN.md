@@ -21,6 +21,7 @@ Scope note. `docs/PLAN.md` lists Android, Windows and QR pairing as cut for the 
 6. **Native first.** System font, system controls, system sheets, system navigation. A HandOver screen should look like it came with the platform.
 7. **Plain words.** Buttons are one to three words in Title Case. Messages are one sentence, two at most: what happened, then what to do. US spelling. No em dashes or en dashes anywhere. No time estimates. From `glasspad/docs/brand/voice.md`.
 8. **Still things stay still.** Status dots do not pulse or breathe. The words say what is happening. From `DeckStatusDot` ("Nothing breathes or glows"), `DeckComponents.swift`.
+9. **Show only what this person can do.** Actions the person's role does not allow are left out, not shown disabled. No grayed-out Teach, Invite, Publish or Remove buttons, and no lock icons on them. Disabled is only for actions the person can take once something is ready, like Next before a lesson loads or Send before a star is picked. Rules in SCREENS.md section 24.
 
 ---
 
@@ -412,6 +413,27 @@ Per step on the Done screen. Two thin bars (6 pt, `small` radius) stacked 2 pt a
 
 Five `star` and `star.fill` symbols, 32 pt each in a 44 pt hit area, `accent` when filled, `ink3` empty (Mono themes: `ink`). Tap sets, drag across scrubs with a `tap` haptic per star. VoiceOver: one adjustable element "Rating, 4 of 5 stars", swipe up or down to change. Read only variant in Insights at 14 pt with the average to one decimal.
 
+### 3.24 Org tile and avatar
+
+- Org avatar: rounded square (radius 28% of side, like `DeckSymbolTile`), sizes 28, 44, 72. Fill `accentSoft`, the first one or two letters of the org name in `accentInk`, SF Rounded semibold at 42% of the side. An uploaded org image replaces the letters (aspect fill, hairline edge). Mono themes: `well` fill, `ink` letters.
+- Person avatar: circle, same sizes and letters rule, colored as in section 7.4. No photos are shown on public profiles unless the person uploaded one.
+- Org row: avatar 44, name (`bodyMedium`), meta (`callout`, `ink2`): "<n> lessons, <m> members", trailing role badge ("Admin", "Teacher") only for roles above Member.
+- Org card (Home, Explore): avatar 44, name, meta, 160 wide on iPhone in a horizontal row.
+
+### 3.25 Invite code card
+
+Shows an org invite code to admins.
+
+- `raised` card. Code in `code` type at `.title2` size, letters spaced, grouped in fours ("K7QM 2XPA"), selectable. QR code (black on white, quiet zone 4 modules, 160 pt) beside it on iPad and Mac, below on iPhone. The QR stays black on white in every theme so every scanner reads it.
+- Meta lines (`callout`, `ink2`): "Joins as Member", "Expires <date and time>" or "Never expires", "Used <n> times" and "<n> uses left" when capped.
+- Actions: "Share" (system share sheet with the text and link), "Copy" (toast "Copied invite code"), overflow "Revoke" (destructive, with a confirmation).
+- States: active, expired (code drawn in `ink3` and struck through, meta "Expired <date>", only Delete offered), revoked (removed from the list immediately, toast "Code revoked" with Undo for 4 s).
+- VoiceOver reads the code one character at a time: "Invite code K 7 Q M 2 X P A".
+
+### 3.26 Member row
+
+Avatar 36, name (`bodyMedium`), username (`callout`, `ink2`, "@sam"), trailing role. Admins see the role as a menu (Admin, Teacher, Member) and a swipe action "Remove" (destructive). Other people see the role as plain text. The current person's row reads "You" after the name and cannot remove itself here; leaving the org is a separate "Leave Organization" action.
+
 ---
 
 ## 4. Haptics
@@ -438,6 +460,9 @@ enum Haptics {
 | Lesson done | `success` | `CONFIRM` | |
 | Step result moment | none of its own; it rides on the step change haptic above | | |
 | Rating star set | `tap` per star | `CLOCK_TICK` | |
+| Invite code scanned or accepted, joined an org | `success` | `CONFIRM` | `PairingView.swift` done |
+| Invite code invalid or expired | `error` plus shake | `REJECT` | `PairingView.swift` |
+| Code revoked, member removed | `warning` | `REJECT` | `SettingsView.swift` remove |
 | QR code found | `soft` | `CLOCK_TICK` | `PairingView.swift` `handle` |
 | QR code or passcode wrong | `error` plus shake | `REJECT` | `PairingView.swift` |
 | Paired or connected | `success` | `CONFIRM` | `PairingView.swift` |
@@ -482,7 +507,7 @@ One product, native on each. Same tokens, same strings, same states. Only naviga
 
 ### 6.1 iPhone
 
-- Navigation: `TabView` with three tabs: Library (`books.vertical`), Teach (`video.badge.plus`), Profile (`person.crop.circle`). Settings sits behind the gear at the top left of every tab (Vibeflux `SettingsButton`, `RootView.swift`), the hub pill at the top right only when something is off (Vibeflux `ConnectionPill`: "Connected is silent, like Mail").
+- Navigation: `TabView` with up to four tabs: Home (`house`), Organizations (`person.3`), Teach (`video.badge.plus`, only for people who can teach somewhere), Profile (`person.crop.circle`). Library is the Browse All screen inside Home (SCREENS.md section 21). On a hub without accounts: Home, Teach, Profile. Settings sits behind the gear at the top left of every tab (Vibeflux `SettingsButton`, `RootView.swift`), the hub pill at the top right only when something is off (Vibeflux `ConnectionPill`: "Connected is silent, like Mail").
 - Learn and Record and Camera mode are full screen covers (no tab bar).
 - Portrait Learn: clip large, live preview as PiP (3.6). Landscape: side by side.
 - One hand: the controls tray (badge, mistake card, Back, Next) lives in the bottom third, above the home indicator.
@@ -490,7 +515,7 @@ One product, native on each. Same tokens, same strings, same states. Only naviga
 
 ### 6.2 iPad
 
-- `NavigationSplitView`: sidebar (Library, Teach, Insights, Profile, Settings; then a "Lessons" section listing recent lessons), content, detail.
+- `NavigationSplitView`: sidebar (Home, Browse All, Teach, Insights, Profile, Settings; then an "Organizations" section listing each org with its avatar, and "New Organization" for people who may create one), content, detail.
 - Learn: side by side at any width over 700 pt; in Split View or Slide Over under 700 pt it uses the iPhone portrait layout with PiP.
 - Editor: three columns: step list, timeline and preview, inspector.
 - Pointer: hover highlights (`.hoverEffect(.highlight)`, Glasspad `KeyCapStyle`), boundary grips appear on hover.
@@ -549,7 +574,7 @@ Mapping copied from Vibeflux `DeckColors.material()` in `DeckTheme.kt`:
 | Corner radius ControlCornerRadius, OverlayCornerRadius | 4 is Fluent default; HandOver uses 8 for controls and 12 for cards, a deliberate match to the other apps |
 | Typography | Segoe UI Variable: Title 28, Subtitle 20, Body Strong 14, Body 14, Caption 12 (scaled from the iOS sizes by 14/17 so density feels native) |
 
-- Navigation: `NavigationView` left pane (Library, Teach, Insights, Profile), Settings at the pane foot (Fluent convention).
+- Navigation: `NavigationView` left pane (Home, Browse All, Organizations, Teach, Insights, Profile), Settings at the pane foot (Fluent convention).
 - Title bar: custom, with the hub pill on the right.
 - Learn: same as Mac (side by side, step list in the pane). Keyboard as section 5.
 - Theme data: generated from the shared catalog as Vibeflux does for `windows/ui/src/themes.ts` (`DeckThemeExport`). Never hand edit colors on Windows.
@@ -557,3 +582,92 @@ Mapping copied from Vibeflux `DeckColors.material()` in `DeckTheme.kt`:
 ### 6.6 What stays the same everywhere
 
 Strings, state names, status precedence, haptic events (where hardware allows), the two-pane Learn idea, the controls order (badge, mistake card, Back, Next), the theme catalog and its ids, and the rule that every number shown came from a real event.
+
+---
+
+## 7. Onboarding
+
+Screens and copy are in SCREENS.md section 25. This section sets how onboarding looks and moves. The aim is restraint: one idea per page, one moving thing at a time, nothing that loops for attention.
+
+### 7.1 Page anatomy
+
+| Part | Spec |
+|---|---|
+| Illustration area | Top 55% of the safe height on iPhone (max 360 pt), 1.3x on iPad, 300 pt tall on Mac. Centered, no frame, no background shape behind it |
+| Title | `display`, centered, `ink`, up to 2 lines, `xl` below the illustration |
+| Line | `body`, `ink2`, centered, max width 340, `s` below the title |
+| Primary | `controlLarge`, full width with `l` margins, `l` above the bottom safe area |
+| Page dots | system page indicator, `ink3` and `ink` |
+| Step label | "Step 2 of 5" in `footnote`, `ink2`, `m` above the title |
+| Background | flat `paper`, no grain, no gradient, until the Theme step applies the chosen theme |
+
+### 7.2 Illustration style
+
+- Built from SF Symbols at `.light` or `.regular` weight and simple rounded rectangles with continuous corners, drawn in theme roles only: `stage` panes, `raised` cards with hairlines, `accent` for the one highlighted thing, `good` for success. Two colors plus neutrals per illustration at most.
+- Real content where content appears: frames and one clip from `lessons/synthetic-fortune-teller-v1`, labeled "Sample lesson, rendered". Real HandOver components (timeline, badge, score ring) rather than drawings of them.
+- No people, no hands, no stock photos, no emoji, no confetti, no sparkles, no gradients, no glow.
+- No numbers unless they come from the sample lesson (its 8 steps and 3 s spans). The score page shows an empty ring and bars without figures.
+- Ships as SwiftUI views (vector, so they scale with Dynamic Type and themes). Android draws the same views in Compose; Windows uses the same layouts in XAML. No Lottie and no video except the one sample clip.
+
+### 7.3 Motion
+
+All values are exact. Every animation plays once per appearance of the page and never loops, except the sample clip and the waveform symbol on page 1 while it is visible.
+
+| Moment | Animation | Curve and duration |
+|---|---|---|
+| Page content on first appear | Illustration fades in, text fades in 0.08 s later | ease out 0.30 s each |
+| Swipe between welcome pages | System paging. Illustration offset at 0.6x of the page offset (parallax), text at 1.0x | follows the finger; release uses the system page spring |
+| Page 1 waveform | `.symbolEffect(.variableColor.iterative)` on `waveform` | system symbol effect timing, stops when the page is off screen |
+| Page 1 panel to page 2 tile | `matchedGeometryEffect` from the clip panel to step tile 1 | spring response 0.50, damping 0.86 |
+| Page 2 timeline fill | Each segment grows from width 0 to its span, left to right | ease out 0.35 s per segment, starts staggered 0.12 s |
+| Page 2 tile to page 3 pane | `matchedGeometryEffect` from tile 3 to the right pane | spring response 0.50, damping 0.86 |
+| Page 3 badge | Watching to Verified after a 1.2 s delay, label `.contentTransition(.opacity)`, symbol `.bounce` once | `snappy` 0.25 s |
+| Page 4 score ring | Trim from 0 to 0.70 | ease out 0.60 s, after 0.20 s delay |
+| Page 4 bars | Each grows from 0 | ease out 0.25 s, staggered 0.08 s |
+| Scanner code found | Corner brackets inset to 86%, color to `good` | spring response 0.34, damping 0.86 |
+| Scanner to connecting | Cross-fade | ease in out 0.25 s |
+| Connected check | `.symbolEffect(.drawOn)` on iOS 26 and macOS 26, `.bounce` before | system timing; `success` haptic on the first frame |
+| Connected hold | Then advances by itself | 1.2 s hold, then 0.30 s cross-fade |
+| Step to step (after the welcome pages) | Push: new page slides in 24 pt from trailing with fade; old fades | spring response 0.38, damping 0.82 (`panel`) |
+| Invite code field to org welcome card | `matchedGeometryEffect` | spring response 0.40, damping 0.86 |
+| Role card select | Fill and edge change | `snappy` 0.25 s |
+| Avatar color change | Fill cross-fade | `snappy` 0.25 s |
+| Passcode strength bar | Segments fill or empty | ease out 0.20 s |
+| Theme preview change | Cross-fade of the preview and the screen | ease in out 0.20 s |
+| Finish into Home | Cross-fade, Home content rises 12 pt | ease in out 0.35 s plus `panel` spring for the rise |
+
+Reduce Motion: no parallax, no matched geometry moves, no growing segments or ring draw, no bounce or draw-on. Every change becomes a 0.15 s cross-fade (`reduced`), and content appears in its final state. The sample clip shows its first frame as a still image with a Play button (`play.circle`, VoiceOver "Play sample clip"). Haptics still play.
+
+Low Power Mode: the sample clip shows as a still frame, as with Reduce Motion. Everything else plays.
+
+### 7.4 Avatar
+
+- Initials: first letter of the first two words of the name (one letter for one word), SF Rounded semibold at 40% of the diameter.
+- Color: the person picks one of 8 hues. The default is picked from a hash of the username so it stays the same across devices. Fill is the hue's wash (12% light, 16% dark, over `raised`), letters are the hue.
+
+| Name | Light | Dark |
+|---|---|---|
+| Blue | `#3249B8` | `#8AA8FF` |
+| Teal | `#0A6570` | `#5CCFD9` |
+| Violet | `#6E3FB0` | `#C4A1FF` |
+| Berry | `#A02C6A` | `#FF8CC6` |
+| Olive | `#56620C` | `#C8D46A` |
+| Slate | `#4D5868` | `#AEB8C6` |
+| Rust | `#963C22` | `#F0A07E` |
+| Green | `#345C3D` | `#9CCB9F` |
+
+The first six are Vibeflux's role hues (`lightRoles`, `darkRoles` in `DeckThemeCatalog.swift`), which its contrast test checks as text on their own wash at 4.5:1. Rust and Green are Clay's and Sage's accent text colors; add them to the ported contrast test before shipping. Mono themes ignore the hue: `well` fill, `ink` letters.
+- Photo: circle crop, hairline edge in `line`, shown wherever the avatar appears. Stored on the hub (**Needs hub**), never uploaded anywhere else.
+- Sizes: 28 (rows), 36 (member rows), 56 (Profile header), 72 (public profile), 96 (onboarding preview).
+
+### 7.5 Passcode strength meter
+
+Three segments, each 4 pt tall, 4 pt apart, `small` radius, track `well`. Fill tone by level: 1 `caution`, 2 `accent`, 3 `good`. The line under it uses `footnote` in `ink2` (never color alone). VoiceOver reads it as part of the field's value: "Passcode, hard to guess". Rules and copy are in SCREENS.md 25.4. The meter describes how easy the passcode is to guess. It does not promise security.
+
+### 7.6 Platform notes
+
+- iPhone: portrait only during onboarding. System page style with dots.
+- iPad: same content in a 600 x 720 card on `paper`, larger illustrations, keyboard arrows move pages.
+- Mac: a fixed 720 x 560 window, Back and Continue buttons instead of swiping, Return triggers the primary, Escape goes Back.
+- Android: Compose `HorizontalPager`, shared element transitions for the matched geometry moves, `AnimatedVectorDrawable` versions of the symbol effects, durations and curves as above (`FastOutSlowInEasing` stands in for ease out, spring stiffness about 400 and damping ratio 0.86 for the springs).
+- Windows: a 760 x 600 window, Back and Continue, connected animations for matched geometry, durations as above, no haptics.
