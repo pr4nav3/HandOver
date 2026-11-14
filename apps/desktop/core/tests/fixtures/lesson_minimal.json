@@ -1,0 +1,1 @@
+{"steps":[{"start":"00:00","end":"00:08","title":"Fold in half"},{"n":2,"title":"Flip","start":"00:08","end":"00:16.5","check_type":"manual","check_question":"","prerequisites":[1],"common_mistake":"Flip it over first.","ref_time":"00:15.0","self_test":{"own":"yes","prev":"no","ok":true}}],"safety":["Mind the blade"],"tools":["Scissors"]}

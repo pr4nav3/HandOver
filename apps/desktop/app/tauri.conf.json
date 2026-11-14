@@ -1,0 +1,73 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "HandOver",
+  "mainBinaryName": "handover",
+  "version": "0.1.0",
+  "identifier": "com.soham109.handover",
+  "build": {
+    "frontendDist": "../ui/dist",
+    "devUrl": "http://localhost:5175",
+    "beforeBuildCommand": {
+      "script": "npm run build",
+      "cwd": "../ui"
+    },
+    "beforeDevCommand": {
+      "script": "npm run dev",
+      "cwd": "../ui",
+      "wait": false
+    }
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "HandOver",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 900,
+        "minHeight": 560,
+        "center": true,
+        "backgroundColor": "#0b0b0c",
+        "dragDropEnabled": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: hub: http://hub.localhost; media-src 'self' hub: http://hub.localhost; connect-src ipc: http://ipc.localhost; font-src 'self'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "publisher": "Soham Aggarwal",
+    "copyright": "Copyright 2026 Soham Aggarwal. MIT License.",
+    "category": "Education",
+    "shortDescription": "Learn a hands-on task, one checked step at a time",
+    "longDescription": "Pairs with a HandOver hub on your network: pick a lesson, watch each step's clip with captions, and let the camera confirm each step before the next one plays.",
+    "license": "MIT",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico",
+      "icons/icon.png"
+    ],
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper",
+        "silent": true
+      },
+      "nsis": {
+        "installMode": "currentUser",
+        "displayLanguageSelector": false
+      },
+      "allowDowngrades": false
+    },
+    "linux": {
+      "deb": {
+        "depends": ["libwebkit2gtk-4.1-0", "libgtk-3-0"]
+      }
+    }
+  }
+}
