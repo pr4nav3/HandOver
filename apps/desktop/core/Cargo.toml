@@ -1,0 +1,26 @@
+[package]
+name = "handover-core"
+description = "The HandOver desktop core: hub address, pairing, the /ws/ui protocol, reconnects, lesson files, recent hubs, settings and themes. No UI."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+publish = false
+
+[features]
+# The development bridge: serves the same commands as the Tauri app over HTTP on 127.0.0.1, so
+# the UI can be developed and screenshotted in a browser against a real hub.
+devserver = []
+
+[[bin]]
+name = "devserver"
+path = "src/bin/devserver.rs"
+required-features = ["devserver"]
+
+[dependencies]
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+# The hub speaks plain http and ws on the local network (CONTRACT.md 1), so no TLS is built in.
+tungstenite = { version = "0.24.0", default-features = false, features = ["handshake"] }
+ureq = { version = "2.12.1", default-features = false, features = ["json"] }
+url = "2.5.8"

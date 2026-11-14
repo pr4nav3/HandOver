@@ -1,0 +1,8 @@
+# Build output
+target/
+ui/node_modules/
+ui/dist/
+app/gen/
+
+# The repo may ignore images elsewhere; the app's icons are generated and kept.
+!app/icons/*.png

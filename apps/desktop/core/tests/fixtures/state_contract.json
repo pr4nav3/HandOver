@@ -1,0 +1,6 @@
+{"type":"state","lesson_id":"fortune-teller-v1","rev":1763154180123,"step":4,"total":8,"status":"watching",
+ "last_check":{"done":"no","confidence":0.82,"latency_ms":910,"reason":"seams still facing up"},
+ "camera_connected":true,
+ "camera":{"name":"Ray-Ban Meta via iPhone","platform":"ios","source":"glasses"},
+ "check_offline":false,"check_offline_reason":null,
+ "mistake":null}

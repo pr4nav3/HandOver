@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "The window may call the app's own commands and listen to its events. Nothing else: no file system, shell or HTTP plugins. Notifications are sent from Rust.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}
