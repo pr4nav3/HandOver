@@ -1,8 +1,8 @@
 // Takes UI screenshots against the dev server plus the mock server.
 //
-//   PORT=8011 MOCK_AUTO=0 node mock/mock-server.mjs
-//   VITE_API_TARGET=http://localhost:8011 npx vite --port 5175
-//   APP=http://localhost:5175 MOCK=http://localhost:8011 node e2e/screenshots.mjs
+//   PORT=8013 MOCK_AUTO=0 node mock/mock-server.mjs
+//   VITE_API_TARGET=http://localhost:8013 npx vite --port 5193
+//   APP=http://localhost:5193 MOCK=http://localhost:8013 node e2e/screenshots.mjs
 //
 // Uses installed Google Chrome by default because Playwright's bundled
 // Chromium cannot decode H.264 clips. Set SHOTS_CHANNEL=chromium to override.
@@ -24,11 +24,12 @@ const hook = (p) => fetch(MOCK + p).then((r) => r.json())
 const wait = (ms) => new Promise((r) => setTimeout(r, ms))
 const problems = []
 const check = (ok, msg) => (ok ? console.log('ok  ', msg) : problems.push(msg))
+// The clip on screen is `.clip video:not(.standby)`; its twin buffers the next clip.
 const stepCount = (page) => page.locator('.step-count').innerText().then((t) => t.trim())
 // Text of every caption cue currently showing on the learn clip.
 const shownCues = (page) =>
   page.evaluate(() => {
-    const v = document.querySelector('.clip video')
+    const v = document.querySelector('.clip video:not(.standby)')
     return [...(v?.textTracks ?? [])].filter((t) => t.mode === 'showing').flatMap((t) => [...(t.activeCues ?? [])].map((c) => c.text))
   })
 
@@ -53,7 +54,7 @@ async function learnRun(width, height, suffix) {
   await hook('/mock/goto?step=1')
   // Wait for the clip to play into its first caption cue.
   await page.waitForFunction(() => {
-    const v = document.querySelector('.clip video')
+    const v = document.querySelector('.clip video:not(.standby)')
     const t = v?.textTracks[0]
     return v && !v.paused && v.currentTime > 1 && t && t.activeCues && t.activeCues.length > 0
   }, null, { timeout: 15000 }).catch(() => problems.push(`${suffix || '1440'}: clip did not play with an active caption`))
@@ -76,17 +77,17 @@ async function learnRun(width, height, suffix) {
     check(badgeBefore === (await page.getAttribute('.badge', 'class')), `badge class unchanged across checking/watching (${badgeBefore})`)
 
     // Recut: a new rev reloads the clip with ?v=<rev>.
-    const srcBefore = await page.evaluate(() => document.querySelector('.clip video').src)
+    const srcBefore = await page.evaluate(() => document.querySelector('.clip video:not(.standby)').src)
     const recut = await hook('/mock/recut')
-    await page.waitForFunction((rev) => document.querySelector('.clip video').src.endsWith(`?v=${rev}`), recut.rev, { timeout: 5000 }).then(
+    await page.waitForFunction((rev) => document.querySelector('.clip video:not(.standby)').src.endsWith(`?v=${rev}`), recut.rev, { timeout: 5000 }).then(
       () => check(true, `recut reloads the clip (${srcBefore.split('/').pop()} -> ?v=${recut.rev})`),
       () => check(false, 'recut did not reload the clip with the new rev'),
     )
-    const trackSrc = await page.evaluate(() => document.querySelector('.clip video track')?.src ?? '')
+    const trackSrc = await page.evaluate(() => document.querySelector('.clip video:not(.standby) track')?.src ?? '')
     check(trackSrc.endsWith(`?v=${recut.rev}`), 'captions URL carries the new rev')
 
     // Two quick Next presses carry the same `from`, so only one step advances.
-    await page.waitForFunction(() => document.querySelector('.clip video').textTracks[0]?.activeCues?.length > 0, null, { timeout: 8000 }).catch(() => {})
+    await page.waitForFunction(() => document.querySelector('.clip video:not(.standby)').textTracks[0]?.activeCues?.length > 0, null, { timeout: 8000 }).catch(() => {})
     const oldCues = await shownCues(page)
     const before = await stepCount(page)
     await page.keyboard.press('ArrowRight')
@@ -100,8 +101,26 @@ async function learnRun(width, height, suffix) {
     await hook('/mock/goto?step=1')
     await wait(600)
 
+    // Preload: the standby element already holds step 3's clip, buffered, and
+    // the advance swaps it on screen instead of loading.
+    const ready = await page
+      .waitForFunction(() => {
+        const s = document.querySelector('.clip video.standby')
+        return s && s.src.includes('clips/03.mp4') && s.readyState >= 3
+      }, null, { timeout: 8000 })
+      .then(() => true, () => false)
+    check(ready, 'standby video holds the next clip, buffered, before the advance')
+    const standbySlot = await page.evaluate(() => document.querySelector('.clip video.standby')?.dataset.slot)
     await hook('/mock/advance?reason=camera')
     await page.waitForSelector('.badge.verified', { timeout: 3000 }).catch(() => problems.push('verified badge did not show'))
+    const swapped = await page.evaluate(() => {
+      const v = document.querySelector('.clip video:not(.standby)')
+      return { slot: v?.dataset.slot, src: v?.src ?? '', captions: v?.querySelector('track')?.src ?? '', mode: v?.textTracks[0]?.mode }
+    })
+    check(
+      swapped.slot === standbySlot && swapped.src.includes('clips/03.mp4') && swapped.captions.includes('captions/03.vtt') && swapped.mode === 'showing',
+      `advance swaps in the preloaded clip and captions (slot ${standbySlot} -> ${swapped.slot}, ${swapped.src.split('/').pop()})`,
+    )
     await wait(300)
     await shoot(page, '03-verified')
 
@@ -117,6 +136,28 @@ async function learnRun(width, height, suffix) {
     await hook('/mock/error?m=Unknown lesson: nope')
     await wait(400)
     await shoot(page, '05b-server-error')
+    // The error pill clears on its own; later shots must not carry it.
+    await page.waitForSelector('.note.error', { state: 'detached', timeout: 6000 }).catch(() => problems.push('error pill did not clear'))
+
+    // Any camera source that is not a known live camera shows Recording.
+    await hook('/mock/source?s=unknown')
+    await page.waitForSelector('.rec', { timeout: 3000 }).then(
+      () => check(true, 'unknown camera source shows the Recording banner'),
+      () => check(false, 'unknown camera source did not show the Recording banner'),
+    )
+    await hook('/mock/source?s=phone')
+    await wait(300)
+    check(!(await page.locator('.rec').count()), 'phone camera shows no Recording banner')
+
+    // Checks-off reasons show beside the badge on a camera step.
+    await hook('/mock/goto?step=3')
+    await hook('/mock/offline?r=budget')
+    await wait(300)
+    check((await page.locator('.check-meta').innerText()).includes('AI budget reached'), 'budget reason reads "AI budget reached"')
+    await hook('/mock/offline?r=no_key')
+    await wait(300)
+    check((await page.locator('.check-meta').innerText()).includes('No API key'), 'no_key reads "No API key"')
+    await hook('/mock/offline?r=')
 
     // Advancing past the last step: advance to == total, then status done.
     await hook('/mock/goto?step=4')
@@ -129,7 +170,18 @@ async function learnRun(width, height, suffix) {
     check(!(await page.locator('.next-hint').count()), 'no key hint at done')
     check(!(await page.locator('button.next:disabled').count()) && (await page.locator('button.next').innerText()) === 'Start over', 'done shows Start over, no disabled Next')
     check((await page.locator('.step-title').innerText()) !== (await page.locator('.topbar-title').innerText()), 'done screen does not repeat the lesson title')
-    check(await page.evaluate(() => document.querySelector('.clip video').paused), 'last clip stops at done')
+    check(await page.evaluate(() => [...document.querySelectorAll('.clip video')].every((v) => v.paused)), 'clips stop at done')
+    check(!(await page.locator('.mode-pill').count()), 'no Mock checks pill when the hub does not say mock')
+
+    // Mock checks: a persistent pill, and the summary never claims the camera.
+    await hook('/mock/check_mode?m=mock')
+    await page.waitForSelector('.mode-pill', { timeout: 3000 }).catch(() => {})
+    check((await page.locator('.mode-pill').innerText().catch(() => '')) === 'Mock checks', 'Mock checks pill shows in mock mode')
+    const stats = await page.locator('.finish-stats').innerText()
+    check(stats.includes('By timer (mock)') && !stats.includes('By camera'), 'done stat says By timer (mock), not By camera')
+    check(!(await page.locator('.finish-steps .how', { hasText: 'Camera' }).count()), 'step table claims no camera checks in mock mode')
+    await shoot(page, '06b-done-mock-checks')
+    await hook('/mock/check_mode?m=')
 
     await page.click('text=Start over')
     await page.waitForFunction(() => document.querySelector('.step-count')?.textContent?.trim() === 'Step 1 of 5', null, { timeout: 3000 }).catch(() => {})

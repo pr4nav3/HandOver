@@ -38,7 +38,13 @@ export interface LessonSummary {
 
 export type Status = 'watching' | 'checking' | 'verified' | 'manual' | 'done'
 
-export type CheckOfflineReason = 'no_key' | 'rate_limited' | 'errors'
+export type CheckOfflineReason = 'no_key' | 'rate_limited' | 'errors' | 'budget'
+
+/** How the hub checks steps. `mock` passes on a timer and never looks at the camera. */
+export type CheckMode = 'mock' | 'claude' | 'gemini'
+
+/** The clip the hub expects to show next: a path inside the lesson folder, or one with its captions. */
+export type NextClip = string | { clip: string; captions?: string | null }
 
 export interface LastCheck {
   done: 'yes' | 'no' | 'unsure'
@@ -85,6 +91,10 @@ export interface StateMsg {
   mistake?: Mistake | null
   /** lesson.json mtime in ms; changes after a recut. Older servers omit it. */
   rev?: number
+  /** Check backend. Older hubs omit it. */
+  check_mode?: CheckMode
+  /** The next clip to preload, or null when there is none. Older hubs omit it. */
+  next_clip?: NextClip | null
 }
 
 export interface AdvanceMsg {

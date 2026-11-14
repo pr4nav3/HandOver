@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { RefObject } from 'react'
+import type { RefObject, SyntheticEvent } from 'react'
 import { getLesson, lessonUrl, listLessons, toSeconds } from './api'
-import type { AdvanceMsg, CheckOfflineReason, Lesson, LessonSummary, Mistake, MistakeMsg, StateMsg } from './api'
+import type { AdvanceMsg, CheckOfflineReason, Lesson, LessonSummary, Mistake, MistakeMsg, NextClip, StateMsg, Step } from './api'
 import { playChime, unlockAudio } from './chime'
 import { TopBar } from './TopBar'
+import { useClipPair } from './useClipPair'
 import { useFitBox } from './useFitBox'
 import { useUiSocket } from './useUiSocket'
 import { useVoice, voiceSupported } from './useVoice'
@@ -21,10 +22,15 @@ const BADGE_LABEL: Record<Badge, string> = {
 }
 
 const OFFLINE_REASON: Record<CheckOfflineReason, string> = {
-  no_key: 'No Gemini key',
+  no_key: 'No API key',
   rate_limited: 'Rate limited',
   errors: 'Check errors',
+  budget: 'AI budget reached',
 }
+
+// Sources that are a live camera. Anything else (a replay file, an unknown
+// sender) gets the Recording banner so it never passes for a live view.
+const LIVE_SOURCES = ['phone', 'glasses', 'browser']
 
 // A check reason is shown only when the model was at least this sure (CONTRACT.md 7).
 const REASON_MIN_CONF = 0.7
@@ -74,7 +80,6 @@ export function Learn() {
   const liveCellRef = useRef<HTMLElement>(null)
   const [liveAspect, setLiveAspect] = useState<number | null>(null)
   const liveBox = useFitBox(liveCellRef, liveAspect ?? 1)
-  const videoRef = useRef<HTMLVideoElement>(null)
   const clipAreaRef = useRef<HTMLDivElement>(null)
   const [aspect, setAspect] = useState(16 / 9)
   const infoRef = useRef<HTMLDivElement>(null)
@@ -129,8 +134,21 @@ export function Learn() {
     setFlashVerified(false)
   }
 
+  // The clip pair: a step change to the buffered next clip is a swap, not a load.
+  const clips = useClipPair((v) => {
+    if (v.videoWidth && v.videoHeight) setAspect(v.videoWidth / v.videoHeight)
+  })
+  const lessonRef = useRef<Lesson | null>(null)
+  const revRef = useRef(0)
+
   const onAdvance = useCallback((msg: AdvanceMsg) => {
     if (msg.to > msg.from) advancedBy.current.set(msg.from, msg.reason)
+    // Show the next clip now rather than after the state message and a render.
+    const l = lessonRef.current
+    const s = l?.steps[msg.to]
+    if (l && s && startedRef.current) {
+      clips.show(lessonUrl(l.id, s.clip, revRef.current), lessonUrl(l.id, s.captions, revRef.current), true)
+    }
     if (msg.reason !== 'camera') return
     playChime()
     setFlashVerified(true)
@@ -226,6 +244,8 @@ export function Learn() {
   // Fetch the full lesson whenever the server switches lessons or recuts it.
   const lessonId = state?.lesson_id ?? null
   const rev = state?.rev ?? 0
+  lessonRef.current = lesson
+  revRef.current = rev
   useEffect(() => {
     if (!lessonId) {
       setLesson(null)
@@ -250,38 +270,34 @@ export function Learn() {
   const idx = Math.max(0, Math.min(state?.step ?? 0, steps.length - 1))
   const step = steps.length ? steps[idx] : null
 
-  // Load the clip and its captions on every step change. Done imperatively
-  // so the <video> element stays put (no layout jump) and the caption track
-  // is guaranteed to reload.
-  // Reloads only when the clip URL (path or rev) changes, never on other
-  // re-renders, so playback position is not reset under the learner.
+  // Show the clip and its captions on every step change. Done imperatively
+  // so the <video> elements stay put (no layout jump) and the caption track
+  // is guaranteed to reload. Acts only when the clip URL (path or rev)
+  // changes, never on other re-renders, so playback is not reset under the
+  // learner. An advance usually swapped the clip in already (onAdvance).
   const clipKey = lesson && step ? lessonUrl(lesson.id, step.clip, rev) : ''
-  const loadedClip = useRef('')
+  const captionsKey = lesson && step ? lessonUrl(lesson.id, step.captions, rev) : ''
   useEffect(() => {
-    const video = videoRef.current
-    if (!video || !lesson || !step || loadedClip.current === clipKey) return
-    loadedClip.current = clipKey
-    // Disable the old track first so its last cue does not linger over the new clip.
-    video.querySelectorAll('track').forEach((t) => {
-      t.track.mode = 'disabled'
-      t.remove()
-    })
-    const track = document.createElement('track')
-    track.kind = 'captions'
-    track.srclang = 'en'
-    track.label = 'English'
-    track.default = true
-    track.src = lessonUrl(lesson.id, step.captions, rev)
-    video.appendChild(track)
-    track.track.mode = 'showing'
-    video.src = clipKey
-    video.load()
-    if (started && !isDone) video.play().catch(() => {})
+    if (clipKey) clips.show(clipKey, captionsKey, started && !isDone)
   }, [clipKey, started, isDone])
+
+  // Buffer the next clip in the standby element once the current one can play,
+  // so the two downloads never compete.
+  const upcoming = isDone ? null : nextClipFor(lesson, steps, idx, rev, state?.next_clip)
+  const upClip = upcoming?.clip ?? ''
+  const upCaptions = upcoming?.captions ?? ''
+  useEffect(() => {
+    const video = clips.active()
+    if (!upClip || !video) return
+    const go = () => clips.preload(upClip, upCaptions)
+    if (video.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) return go()
+    video.addEventListener('canplay', go, { once: true })
+    return () => video.removeEventListener('canplay', go)
+  }, [upClip, upCaptions, clipKey])
 
   // Play once started, and stop the last clip looping on the done screen.
   useEffect(() => {
-    const video = videoRef.current
+    const video = clips.active()
     if (!video || !started || !video.src) return
     if (isDone) video.pause()
     else video.play().catch(() => {})
@@ -301,8 +317,14 @@ export function Learn() {
   }, [send, lessonId, shownStep])
 
   // The expert's narration through the speakers can sound like a command.
+  // Only the clip on screen sets the shape; the standby reports on swap.
+  const onClipMetadata = (e: SyntheticEvent<HTMLVideoElement>) => {
+    const v = e.currentTarget
+    if (v === clips.active() && v.videoWidth && v.videoHeight) setAspect(v.videoWidth / v.videoHeight)
+  }
+
   const clipAudible = useCallback(() => {
-    const v = videoRef.current
+    const v = clips.active()
     return !!v && !v.paused && !v.muted && v.volume > 0
   }, [])
   const { listening } = useVoice(started && voiceOn, (cmd) => (cmd === 'next' ? next('voice') : back()), clipAudible)
@@ -382,6 +404,8 @@ export function Learn() {
     })
   }, [isDone])
 
+  // Mock checks pass on a timer and never look at the camera; say so.
+  const mockChecks = state?.check_mode === 'mock'
   const offline = !!state?.check_offline
   const offlineReason = state?.check_offline_reason ? OFFLINE_REASON[state.check_offline_reason] : ''
   let badge: Badge = 'watching'
@@ -405,7 +429,8 @@ export function Learn() {
   // A camera that drops after sending frames leaves its last frame, dimmed.
   const showLive = !down && hasFrame && (!!state?.camera_connected || stale)
   const cameraLost = showLive && (stale || !state?.camera_connected)
-  const recording = showLive && !cameraLost && state?.camera?.source === 'file'
+  const source = state?.camera?.source
+  const recording = showLive && !cameraLost && !!source && !LIVE_SOURCES.includes(source)
   const cameraName = !down && state?.camera_connected ? state?.camera?.name : undefined
 
   // Before start, or when the server has no lesson (restart, lesson gone) and
@@ -453,7 +478,10 @@ export function Learn() {
               </p>
             )}
             {recording && (
-              <span className="rec" title="Frames come from a recorded video, not a live camera">
+              <span
+                className="rec"
+                title={source === 'file' ? 'Frames come from a recorded video, not a live camera' : `Camera source "${source}" is not a known live camera`}
+              >
                 <span className="rec-dot" />
                 Recording
               </span>
@@ -498,17 +526,10 @@ export function Learn() {
                   </div>
                 </div>
               )}
-              <video
-                ref={videoRef}
-                loop
-                playsInline
-                preload="auto"
-                className={step && !isDone ? '' : 'hidden'}
-                onLoadedMetadata={(e) => {
-                  const v = e.currentTarget
-                  if (v.videoWidth && v.videoHeight) setAspect(v.videoWidth / v.videoHeight)
-                }}
-              />
+              <div className={`clip-media ${step && !isDone ? '' : 'hidden'}`}>
+                <video ref={clips.refA} data-slot="a" loop playsInline preload="auto" onLoadedMetadata={onClipMetadata} />
+                <video ref={clips.refB} data-slot="b" loop playsInline preload="auto" muted className="standby" onLoadedMetadata={onClipMetadata} />
+              </div>
               {isDone && summary && (
                 <div className="finish">
                   <dl className="finish-stats">
@@ -525,7 +546,7 @@ export function Learn() {
                       </div>
                     )}
                     <div>
-                      <dt>By camera</dt>
+                      <dt>{mockChecks ? 'By timer (mock)' : 'By camera'}</dt>
                       <dd>{summary.camera}</dd>
                     </div>
                     <div>
@@ -555,7 +576,9 @@ export function Learn() {
                               {r.title}
                             </td>
                             <td className="how">
-                              {r.how === 'camera' ? (
+                              {r.how === 'camera' && mockChecks ? (
+                                <span title="Mock checks pass on a timer and do not look at the camera">Timer (mock)</span>
+                              ) : r.how === 'camera' ? (
                                 <>
                                   <SmallCameraIcon />
                                   Camera
@@ -604,6 +627,11 @@ export function Learn() {
                 {badge === 'verified' ? <BadgeCheckIcon /> : <span className="badge-dot" />}
                 {BADGE_LABEL[badge]}
               </span>
+              {mockChecks && (
+                <span className="mode-pill" title="Steps pass on a timer. The camera is not checked.">
+                  Mock checks
+                </span>
+              )}
               <span className="check-meta">
                 <span>{metaTop}</span>
                 <span className="check-reason">{metaBottom}</span>
@@ -707,6 +735,29 @@ function useSideWidth(
     return () => ro.disconnect()
   }, [gridRef, aspect, infoRef, controlsRef, liveAspect])
   return width
+}
+
+/**
+ * The clip to buffer next, as URLs: the hub's `next_clip` when it sends one
+ * (null = nothing next), else the following step's clip.
+ */
+function nextClipFor(lesson: Lesson | null, steps: Step[], idx: number, rev: number, hint: NextClip | null | undefined) {
+  if (!lesson) return null
+  const clean = (p: string) => p.replace(/[?#].*$/, '').replace(`/lessons/${encodeURIComponent(lesson.id)}/`, '').replace(/^\/+/, '')
+  let clip: string
+  let captions: string | null | undefined
+  if (hint === undefined) {
+    const s = steps[idx + 1]
+    if (!s) return null
+    clip = s.clip
+    captions = s.captions
+  } else {
+    if (!hint) return null
+    clip = clean(typeof hint === 'string' ? hint : hint.clip)
+    captions = typeof hint === 'string' ? undefined : hint.captions
+    captions ??= steps.find((s) => clean(s.clip) === clip)?.captions
+  }
+  return { clip: lessonUrl(lesson.id, clip, rev), captions: captions ? lessonUrl(lesson.id, clean(captions), rev) : '' }
 }
 
 /** 75000 ms to "1:15", 3725000 ms to "1:02:05". */

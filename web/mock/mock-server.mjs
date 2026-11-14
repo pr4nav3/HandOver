@@ -9,7 +9,9 @@
 //   MOCK_AUTO   1 (default) auto-advances steps; 0 waits for next/back or /mock calls
 //   MOCK_CAMERA 1 (default) sends fake frames; 0 starts with no camera
 //   MOCK_SOURCE camera source in state.camera: phone (default), glasses, browser, file (shows "Recording")
-//   MOCK_OFFLINE no_key | rate_limited | errors: start with checks off
+//   MOCK_OFFLINE no_key | rate_limited | errors | budget: start with checks off
+//   MOCK_CHECK_MODE mock | claude | gemini: sent as state.check_mode (unset = omitted, like an older hub)
+//   MOCK_NEXT_CLIP 1 (default) sends state.next_clip (the next step's clip path); 0 omits it
 //   MOCK_MISTAKE behind:<0-based step> or ahead:<0-based step>: after 4 s on that step send `mistake`
 //
 // Test hooks (plain GET so curl and Playwright can drive it):
@@ -23,6 +25,11 @@
 //   /mock/mistake?kind=behind     send a mistake for the current step now (kind behind or ahead)
 //   /mock/offline?r=rate_limited  checks off with a reason; r= (empty) turns checks back on
 //   /mock/source?s=file           change the camera source
+//   /mock/check_mode?m=mock       set state.check_mode; m= (empty) omits it
+//   /mock/camera_stats            frames and bytes received on /ws/camera; ?reset=1 clears them
+//
+// /capture serves the real server/static/capture.html, so its sending can be
+// measured here; /ws/camera counts the frames and otherwise ignores them.
 
 import { createServer } from 'node:http'
 import { createReadStream, existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
@@ -33,6 +40,19 @@ import { FIXTURE_DIR, fixtureExists, makeFixture } from './make-fixture.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const REPO_LESSONS = resolve(here, '..', '..', 'lessons')
+const CAPTURE_HTML = resolve(here, '..', '..', 'server', 'static', 'capture.html')
+const cameraStats = { frames: 0, bytes: 0, sizes: [], last: null }
+
+// Width and height from a JPEG's start-of-frame marker, or null.
+function jpegSize(buf) {
+  for (let i = 2; i + 9 < buf.length; ) {
+    if (buf[i] !== 0xff) return null
+    const marker = buf[i + 1]
+    if (marker >= 0xc0 && marker <= 0xc3) return `${buf.readUInt16BE(i + 7)}x${buf.readUInt16BE(i + 5)}`
+    i += 2 + buf.readUInt16BE(i + 2)
+  }
+  return null
+}
 const PORT = Number(process.env.PORT || 8000)
 const AUTO = process.env.MOCK_AUTO !== '0'
 
@@ -106,6 +126,8 @@ const state = {
   mistake: null,
 }
 let cameraSource = process.env.MOCK_SOURCE || 'phone'
+let checkMode = process.env.MOCK_CHECK_MODE || ''
+const NEXT_CLIP = process.env.MOCK_NEXT_CLIP !== '0'
 const cameraInfo = () =>
   state.camera_connected
     ? { name: cameraSource === 'file' ? 'Replay: skipped-flip.mp4' : 'Mock iPhone', platform: cameraSource === 'file' ? 'replay' : 'ios', source: cameraSource }
@@ -116,7 +138,15 @@ let stepSince = Date.now()
 const clients = new Set()
 
 const steps = () => readLesson(state.lesson_id)?.steps ?? []
-const stateMsg = () => ({ type: 'state', ...state, camera: cameraInfo(), total: steps().length, rev: lessonRev(state.lesson_id) })
+const stateMsg = () => ({
+  type: 'state',
+  ...state,
+  camera: cameraInfo(),
+  total: steps().length,
+  rev: lessonRev(state.lesson_id),
+  ...(checkMode ? { check_mode: checkMode } : {}),
+  ...(NEXT_CLIP ? { next_clip: state.status === 'done' ? null : (steps()[state.step + 1]?.clip ?? null) } : {}),
+})
 
 function broadcast(msg) {
   const text = JSON.stringify(msg)
@@ -271,8 +301,12 @@ const server = createServer((req, res) => {
     return serveFile(req, res, file)
   }
   if (path === '/capture') {
-    res.writeHead(200, { 'Content-Type': 'text/plain' })
-    return res.end('Mock server: the real capture page lives in the FastAPI server.')
+    res.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-cache' })
+    return res.end(readFileSync(CAPTURE_HTML))
+  }
+  if (path === '/mock/camera_stats') {
+    if (url.searchParams.get('reset')) Object.assign(cameraStats, { frames: 0, bytes: 0, sizes: [] })
+    return sendJson(res, 200, cameraStats)
   }
 
   // Test hooks.
@@ -324,6 +358,11 @@ const server = createServer((req, res) => {
     broadcast(stateMsg())
     return sendJson(res, 200, stateMsg())
   }
+  if (path === '/mock/check_mode') {
+    checkMode = url.searchParams.get('m') || ''
+    broadcast(stateMsg())
+    return sendJson(res, 200, stateMsg())
+  }
   if (path === '/mock/goto') {
     goTo(Number(url.searchParams.get('step') || 0), null)
     return sendJson(res, 200, stateMsg())
@@ -339,7 +378,15 @@ server.on('upgrade', (req, socket, head) => {
   if (path === '/ws/ui') {
     wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws))
   } else if (path === '/ws/camera') {
-    wss.handleUpgrade(req, socket, head, (ws) => ws.on('message', () => {}))
+    wss.handleUpgrade(req, socket, head, (ws) =>
+      ws.on('message', (data, isBinary) => {
+        if (!isBinary) return
+        cameraStats.frames += 1
+        cameraStats.bytes += data.length
+        cameraStats.sizes.push(data.length)
+        cameraStats.last = jpegSize(data)
+      }),
+    )
   } else {
     socket.destroy()
   }
