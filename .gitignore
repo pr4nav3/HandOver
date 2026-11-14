@@ -18,3 +18,4 @@ dist/
 rehearsal.log
 *.log
 *.spec.bak
+/data/
