@@ -14,21 +14,43 @@
     font: 17px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif; }
   body { display: flex; flex-direction: column;
     padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
-  header { padding: 16px 20px 8px; display: flex; align-items: center; justify-content: space-between; }
+  header { padding: 16px 20px 8px; display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
   h1 { margin: 0; font-size: 20px; font-weight: 600; letter-spacing: -0.01em; }
+  .sub { margin: 2px 0 0; font-size: 15px; color: #a1a1a6; font-variant-numeric: tabular-nums; }
+  .right { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+  .pills { display: inline-flex; align-items: center; gap: 14px; }
   .pill { display: inline-flex; align-items: center; gap: 8px; font-size: 15px; color: #a1a1a6; }
   .dot { width: 9px; height: 9px; border-radius: 50%; background: #636366; }
   .dot.on { background: #30d158; }
   .dot.wait { background: #ff9f0a; }
-  main { flex: 1; display: flex; flex-direction: column; padding: 8px 16px 16px; gap: 14px; min-height: 0; }
-  .stage { position: relative; flex: 1; min-height: 200px; border-radius: 18px; overflow: hidden; background: #1c1c1e; }
+  .rec { font-size: 13px; font-weight: 700; letter-spacing: 0.04em; color: #636366; gap: 6px; }
+  .rec .dot { width: 10px; height: 10px; }
+  .rec.live { color: #ff453a; }
+  .rec.live .dot { background: #ff453a; animation: pulse 1.2s ease-in-out infinite; }
+  @keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.35; transform: scale(0.8); } }
+  .cam { font-size: 13px; color: #8e8e93; }
+  .cam.active { color: #30d158; }
+  .cam.idle { color: #ff9f0a; }
+  main { flex: 1; display: flex; flex-direction: column; padding: 8px 16px 16px; gap: 12px; min-height: 0; }
+  .stage { position: relative; flex: 1; min-height: 200px; border-radius: 18px; overflow: hidden; background: #1c1c1e;
+    box-shadow: 0 0 0 0 rgba(48, 209, 88, 0); transition: box-shadow 0.4s ease-out; }
+  .stage.flash { box-shadow: inset 0 0 0 6px #30d158; transition: none; }
   video { width: 100%; height: 100%; object-fit: cover; display: block; }
   .placeholder { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
     color: #8e8e93; font-size: 15px; text-align: center; padding: 24px; }
+  .privacy { color: #8e8e93; font-size: 13px; margin: -4px 0 0; text-align: center; }
+  .idle { margin: 0; padding: 10px 12px; border-radius: 10px; font-size: 15px;
+    background: rgba(255, 159, 10, 0.15); color: #ff9f0a; }
   button.primary { appearance: none; border: 0; border-radius: 14px; padding: 16px; width: 100%;
     font: inherit; font-weight: 600; font-size: 18px; color: #fff; background: #0a84ff; }
   button.primary:active { opacity: 0.8; }
   button.primary.stop { background: #2c2c2e; color: #ff453a; }
+  .nav { display: flex; gap: 12px; }
+  .nav button { appearance: none; border: 0; border-radius: 14px; flex: 1; min-height: 64px;
+    font: inherit; font-weight: 600; font-size: 20px; color: #fff; background: #3a3a3c; }
+  .nav button.fwd { flex: 2; background: #30d158; color: #000; }
+  .nav button:active { opacity: 0.8; }
+  .nav button:disabled { opacity: 0.35; }
   .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
   .seg { display: inline-flex; background: #1c1c1e; border-radius: 10px; padding: 2px; }
   .seg button { appearance: none; border: 0; background: transparent; color: #f5f5f7; font: inherit;
@@ -42,14 +64,25 @@
 </head>
 <body>
 <header>
-  <h1>HandOver Camera</h1>
-  <span class="pill"><span id="dot" class="dot"></span><span id="conn">Not connected</span></span>
+  <div>
+    <h1>HandOver Camera</h1>
+    <p class="sub" id="step">No step yet</p>
+  </div>
+  <div class="right">
+    <div class="pills">
+      <span class="pill rec" id="rec"><span class="dot"></span>REC</span>
+      <span class="pill"><span id="dot" class="dot"></span><span id="conn">Not connected</span></span>
+    </div>
+    <span class="cam" id="cam"></span>
+  </div>
 </header>
 <main>
-  <div class="stage">
+  <div class="stage" id="stage">
     <video id="video" playsinline muted autoplay></video>
     <div id="placeholder" class="placeholder">Point the back camera at your hands and the work.</div>
   </div>
+  <p class="privacy">Frames go to the hub on this network only and are never saved.</p>
+  <p id="idle" class="idle" hidden>Not sending. Check the hub address and network.</p>
   <div class="row">
     <span class="label">Send a frame every</span>
     <div class="seg" id="seg">
@@ -65,6 +98,10 @@
   <button id="start" class="primary">Start camera</button>
   <p id="err" class="err" hidden></p>
   <p class="note">Keep this page open and on screen. If the screen still dims, turn off Auto-Lock in Settings, Display and Brightness.</p>
+  <div class="nav">
+    <button id="back" disabled>Back</button>
+    <button id="next" class="fwd" disabled>Next</button>
+  </div>
 </main>
 <canvas id="canvas" hidden></canvas>
 <script>
@@ -72,11 +109,33 @@
   const $ = (id) => document.getElementById(id);
   const video = $("video"), canvas = $("canvas"), ctx = canvas.getContext("2d");
   const startBtn = $("start"), dot = $("dot"), conn = $("conn"), stats = $("stats"), err = $("err");
+  const rec = $("rec"), idleEl = $("idle"), camEl = $("cam"), stepEl = $("step"), stage = $("stage");
+  const nextBtn = $("next"), backBtn = $("back");
   const wsUrl = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws/camera`;
   const MAX_BUFFERED = 256 * 1024;
+  const IDLE_MS = 5000, BACKOFF_MIN = 500, BACKOFF_MAX = 5000;
 
-  let stream = null, ws = null, timer = null, reconnectTimer = null, wakeLock = null;
+  // Stable device id and label, kept in localStorage (falls back to per-page values if storage is blocked).
+  function stored(key, make) {
+    try {
+      let v = localStorage.getItem(key);
+      if (!v) { v = make(); localStorage.setItem(key, v); }
+      return v;
+    } catch (_) { return make(); }
+  }
+  function randomId() {
+    if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+    const b = new Uint8Array(16);
+    if (window.crypto && crypto.getRandomValues) crypto.getRandomValues(b);
+    else for (let i = 0; i < 16; i++) b[i] = Math.floor(Math.random() * 256);
+    return Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+  }
+  const deviceId = stored("handover.device_id", () => "web-" + randomId());
+  const deviceName = stored("handover.device_name", () => "iPhone Safari");
+
+  let stream = null, ws = null, timer = null, reconnectTimer = null, wakeLock = null, flashTimer = null;
   let running = false, sent = 0, skipped = 0, intervalMs = 1000, encoding = false;
+  let backoff = BACKOFF_MIN, lastSentAt = 0, helloSent = false, hubState = null;
 
   function setConn(state, text) {
     dot.className = "dot" + (state === "on" ? " on" : state === "wait" ? " wait" : "");
@@ -85,6 +144,59 @@
   function showError(text) { err.textContent = text; err.hidden = !text; }
   function updateStats() {
     stats.textContent = `${sent} frame${sent === 1 ? "" : "s"} sent` + (skipped ? `, ${skipped} skipped` : "");
+  }
+  function setCam(active) {
+    if (active === null) { camEl.textContent = ""; camEl.className = "cam"; return; }
+    camEl.textContent = active ? "Active" : "Idle: another camera is active";
+    camEl.className = "cam " + (active ? "active" : "idle");
+  }
+  function socketOpen() { return !!ws && ws.readyState === WebSocket.OPEN; }
+
+  // REC dot and idle notice, re-evaluated on every send and once a second.
+  function updateSending() {
+    const fresh = running && lastSentAt && Date.now() - lastSentAt < IDLE_MS;
+    rec.classList.toggle("live", !!(fresh && socketOpen()));
+    idleEl.hidden = !(running && Date.now() - lastSentAt >= IDLE_MS);
+  }
+  setInterval(updateSending, 1000);
+
+  function updateNav() {
+    const ok = running && helloSent && socketOpen() && !!hubState && hubState.total > 0;
+    nextBtn.disabled = !ok;
+    backBtn.disabled = !ok;
+  }
+  function showState() {
+    if (!hubState) { stepEl.textContent = "No step yet"; return; }
+    const { step, total, status } = hubState;
+    stepEl.textContent = total > 0 ? `Step ${step + 1} of ${total}` + (status ? ` · ${status}` : "") : "No lesson selected";
+  }
+  function flashStage() {
+    clearTimeout(flashTimer);
+    stage.classList.add("flash");
+    flashTimer = setTimeout(() => stage.classList.remove("flash"), 700);
+  }
+
+  function onHubMessage(e) {
+    if (typeof e.data !== "string") return;
+    let m;
+    try { m = JSON.parse(e.data); } catch (_) { return; }
+    if (!m || typeof m !== "object") return;
+    if (m.type === "state") {
+      if (!Number.isInteger(m.step) || !Number.isInteger(m.total)) return;
+      hubState = { step: m.step, total: m.total, status: typeof m.status === "string" ? m.status : "" };
+      showState(); updateNav();
+    } else if (m.type === "advance") {
+      if (m.reason === "camera") flashStage();
+    } else if (m.type === "camera_status") {
+      if (typeof m.active === "boolean") setCam(m.active);
+    } else if (m.type === "error") {
+      if (typeof m.message === "string" && m.message === "no lesson selected") stepEl.textContent = "No lesson selected";
+    }
+  }
+
+  function sendJson(obj) {
+    if (!socketOpen()) return false;
+    try { ws.send(JSON.stringify(obj)); return true; } catch (_) { return false; }
   }
 
   function connect() {
@@ -96,19 +208,38 @@
     const sock = new WebSocket(wsUrl);
     ws = sock;
     sock.binaryType = "arraybuffer";
-    sock.onopen = () => { if (ws !== sock) return; setConn("on", "Connected"); };
-    sock.onmessage = () => {};
-    sock.onclose = () => {
+    sock.onopen = () => {
       if (ws !== sock) return;
-      ws = null;
-      if (running) { setConn("wait", "Reconnecting"); reconnectTimer = setTimeout(connect, 1500); }
-      else setConn("off", "Not connected");
+      backoff = BACKOFF_MIN;
+      // hello goes first on every open, before any frame.
+      try {
+        sock.send(JSON.stringify({ type: "hello", device_id: deviceId, name: deviceName, platform: "web", source: "browser" }));
+        helloSent = true;
+      } catch (_) { helloSent = false; }
+      setConn("on", "Connected");
+      updateNav();
+    };
+    sock.onmessage = (e) => { if (ws === sock) onHubMessage(e); };
+    sock.onclose = (e) => {
+      if (ws !== sock) return;
+      ws = null; helloSent = false; hubState = null;
+      setCam(null); showState(); updateNav(); updateSending();
+      if (e.code === 4000) {
+        // A newer connection with our device_id took over; never auto-reconnect.
+        stop("Replaced by another camera");
+        return;
+      }
+      if (running) {
+        setConn("wait", "Reconnecting");
+        reconnectTimer = setTimeout(connect, backoff);
+        backoff = Math.min(backoff * 2, BACKOFF_MAX);
+      } else setConn("off", "Not connected");
     };
     sock.onerror = () => { try { sock.close(); } catch (_) {} };
   }
 
   function sendFrame() {
-    if (!ws || ws.readyState !== WebSocket.OPEN || encoding) return;
+    if (!socketOpen() || !helloSent || encoding) return;
     if (ws.bufferedAmount > MAX_BUFFERED) { skipped++; updateStats(); return; }
     const w = video.videoWidth, h = video.videoHeight;
     if (!w || !h) return;
@@ -117,9 +248,10 @@
     encoding = true;
     canvas.toBlob((blob) => {
       encoding = false;
-      if (!blob || !ws || ws.readyState !== WebSocket.OPEN) return;
+      if (!blob || !socketOpen() || !helloSent) return;
       ws.send(blob);
-      sent++; updateStats();
+      sent++; lastSentAt = Date.now();
+      updateStats(); updateSending();
     }, "image/jpeg", 0.7);
   }
 
@@ -178,27 +310,42 @@
     if (!(await openCamera())) return;
     $("placeholder").hidden = true;
     running = true;
+    backoff = BACKOFF_MIN;
+    lastSentAt = Date.now();  // idle clock starts now, so the notice waits 5 s for the first frame
     startBtn.textContent = "Stop camera";
     startBtn.classList.add("stop");
     connect();
     restartTimer();
     requestWakeLock();
+    updateSending();
   }
 
-  function stop() {
+  function stop(reason) {
     running = false;
     clearInterval(timer); clearTimeout(reconnectTimer);
-    if (ws) { try { ws.close(); } catch (_) {} ws = null; }
+    if (ws) { const s = ws; ws = null; try { s.close(); } catch (_) {} }
+    helloSent = false; hubState = null; lastSentAt = 0;
     if (stream) { stream.getTracks().forEach((t) => t.stop()); stream = null; }
     video.srcObject = null;
     $("placeholder").hidden = false;
     if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
     startBtn.textContent = "Start camera";
     startBtn.classList.remove("stop");
-    setConn("off", "Not connected");
+    if (reason) { setConn("wait", reason); showError(reason + ". Tap Start camera to take over again."); }
+    else setConn("off", "Not connected");
+    setCam(null); showState(); updateNav(); updateSending();
   }
 
   startBtn.addEventListener("click", () => (running ? stop() : start()));
+
+  nextBtn.addEventListener("click", () => {
+    if (nextBtn.disabled || !hubState) return;
+    sendJson({ type: "next", reason: "button", from: hubState.step });
+  });
+  backBtn.addEventListener("click", () => {
+    if (backBtn.disabled || !hubState) return;
+    sendJson({ type: "back", from: hubState.step });
+  });
 
   $("seg").addEventListener("click", (e) => {
     const b = e.target.closest("button[data-ms]");
@@ -212,7 +359,7 @@
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible" && running) {
       requestWakeLock();
-      if (!ws) connect();
+      if (!ws) { backoff = BACKOFF_MIN; connect(); }
       reviveCamera();
     }
   });

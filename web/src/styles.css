@@ -10,6 +10,8 @@
   --green: #30d158;
   --grey: #8e8e93;
   --red: #ff6961;
+  /* Warnings only: checks off, the catch. */
+  --amber: #ffb340;
   --radius: 16px;
   --radius-sm: 12px;
   --pad: clamp(16px, 1.8vw, 32px);
@@ -112,6 +114,16 @@ a {
   display: flex;
   align-items: center;
   gap: 12px;
+  min-width: 0;
+}
+
+.topbar-camera {
+  font-size: 13px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 28vw;
 }
 
 .switch {
@@ -284,6 +296,10 @@ a {
   background: rgba(255, 255, 255, 0.85);
 }
 
+.seg.mistake {
+  background: var(--amber);
+}
+
 /* Learn */
 
 .learn-grid {
@@ -312,6 +328,50 @@ a {
   width: 100%;
   height: 100%;
   object-fit: contain;
+  transition: filter 0.4s;
+}
+
+/* Camera dropped: the last frame stays so the learner keeps context, dimmed so
+   nobody takes it for live. */
+.live img.lost {
+  filter: grayscale(0.7) brightness(0.35);
+}
+
+.live-note {
+  position: absolute;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  margin: 0;
+  padding: 8px 16px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.7);
+  border: 1px solid var(--border-strong);
+  font-size: 15px;
+  white-space: nowrap;
+}
+
+/* A replayed video must never pass for a live camera. */
+.rec {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px 4px 10px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.65);
+  border: 1px solid rgba(255, 105, 97, 0.35);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.rec-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--red);
 }
 
 .placeholder {
@@ -350,6 +410,7 @@ a {
 }
 
 .side {
+  position: relative;
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -429,6 +490,42 @@ video::cue {
   overflow: hidden;
 }
 
+/* The catch. Floats over the top of the clip so nothing below it moves. */
+.mistake-banner {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px 14px 12px 18px;
+  border-radius: var(--radius-sm);
+  background: rgba(40, 28, 8, 0.94);
+  border: 1px solid rgba(255, 179, 64, 0.45);
+  color: var(--amber);
+}
+
+.mistake-text {
+  margin: 0;
+  font-size: clamp(16px, 1.3vw, 22px);
+  font-weight: 600;
+  min-width: 0;
+}
+
+.mistake-actions {
+  display: flex;
+  gap: 8px;
+  flex: none;
+}
+
+.mistake-banner .ghost {
+  color: var(--text);
+  border-color: rgba(255, 179, 64, 0.4);
+}
+
 /* Anchored to the bottom of the column with a hairline, like a toolbar. */
 .controls {
   flex: none;
@@ -453,6 +550,40 @@ video::cue {
   background: var(--panel);
   color: var(--muted);
   transition: background 0.3s, color 0.3s, border-color 0.3s;
+}
+
+.badge-wrap {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.badge {
+  flex: none;
+  white-space: nowrap;
+}
+
+/* Two short lines beside the badge, never taller than it. */
+.check-meta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.check-meta span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.check-reason {
+  color: var(--muted);
 }
 
 .badge-dot {
@@ -498,6 +629,16 @@ video::cue {
 
 .badge.manual {
   color: var(--text);
+}
+
+.badge.offline {
+  color: var(--amber);
+  background: rgba(255, 179, 64, 0.1);
+  border-color: rgba(255, 179, 64, 0.35);
+}
+
+.badge.offline .badge-dot {
+  background: var(--amber);
 }
 
 .badge.manual .badge-dot {
@@ -949,8 +1090,8 @@ video::cue {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 10px;
-  padding: 24px;
+  gap: 8px;
+  padding: 16px 20px;
   background: var(--panel);
   text-align: center;
 }
@@ -968,8 +1109,11 @@ video::cue {
 
 .finish-stats {
   display: flex;
-  gap: clamp(20px, 2.4vw, 40px);
-  margin: 6px 0 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+  column-gap: clamp(18px, 2vw, 36px);
+  row-gap: 6px;
+  margin: 2px 0 4px;
 }
 
 .finish-stats div {
@@ -993,4 +1137,83 @@ video::cue {
 .finish .restart {
   padding: 7px 16px;
   font-size: 14px;
+}
+
+/* Per-step times on the done screen; the body scrolls inside the card if long. */
+.finish-steps {
+  flex: 0 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  width: min(100%, 460px);
+  border-collapse: collapse;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.finish-steps thead,
+.finish-steps tbody {
+  display: table;
+  width: 100%;
+  table-layout: fixed;
+}
+
+.finish-steps tbody {
+  display: block;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.finish-steps tr {
+  display: table;
+  width: 100%;
+  table-layout: fixed;
+}
+
+.finish-steps th {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--faint);
+  text-align: right;
+  padding: 0 6px 2px;
+}
+
+.finish-steps th:nth-child(2) {
+  text-align: left;
+}
+
+.finish-steps th:first-child,
+.finish-steps td:first-child {
+  width: 26px;
+}
+
+.finish-steps th:nth-child(3),
+.finish-steps th:nth-child(4),
+.finish-steps td:nth-child(3),
+.finish-steps td:nth-child(4) {
+  width: 64px;
+}
+
+.finish-steps td {
+  padding: 3px 6px;
+  text-align: right;
+  border-top: 1px solid var(--border);
+}
+
+.finish-steps td.how svg {
+  display: block;
+  margin: 0 auto;
+  color: var(--muted);
+}
+
+.finish-steps td.name {
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.finish-steps .num {
+  color: var(--faint);
+  margin-right: 4px;
 }

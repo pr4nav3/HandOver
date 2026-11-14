@@ -13,6 +13,10 @@ export interface Step {
   check_type: CheckType
   check_question?: string
   prerequisites?: number[]
+  /** Absolute time in norm.mp4 of the reference frame; null = last frame of the clip. */
+  ref_time?: string | null
+  /** Shown and spoken when the learner is behind. */
+  common_mistake?: string
 }
 
 export interface Lesson {
@@ -20,6 +24,10 @@ export interface Lesson {
   title: string
   video: string
   steps: Step[]
+  /** Short warnings from the narration. */
+  safety?: string[]
+  /** Tools named in the narration. */
+  tools?: string[]
 }
 
 export interface LessonSummary {
@@ -30,14 +38,51 @@ export interface LessonSummary {
 
 export type Status = 'watching' | 'checking' | 'verified' | 'manual' | 'done'
 
+export type CheckOfflineReason = 'no_key' | 'rate_limited' | 'errors'
+
+export interface LastCheck {
+  done: 'yes' | 'no' | 'unsure'
+  confidence: number
+  latency_ms: number
+  /** Up to 8 words on what differs from the reference. */
+  reason?: string | null
+}
+
+export interface CameraInfo {
+  name: string
+  platform: string
+  source: string
+}
+
+/** The mistake object, as carried in state (the message minus `type`). */
+export interface Mistake {
+  step: number
+  kind: 'behind' | 'ahead'
+  looks_like: number
+  message: string
+  confidence: number
+  source: string
+}
+
+export interface MistakeMsg extends Mistake {
+  type: 'mistake'
+}
+
 export interface StateMsg {
   type: 'state'
   lesson_id: string | null
   step: number
   total: number
   status: Status
-  last_check: { done: 'yes' | 'no' | 'unsure'; confidence: number; latency_ms: number } | null
+  last_check: LastCheck | null
   camera_connected: boolean
+  /** Active camera, or null. Older servers omit it. */
+  camera?: CameraInfo | null
+  /** Gemini not in use although mode is gemini. */
+  check_offline?: boolean
+  check_offline_reason?: CheckOfflineReason | null
+  /** The current mistake, or null. */
+  mistake?: Mistake | null
   /** lesson.json mtime in ms; changes after a recut. Older servers omit it. */
   rev?: number
 }

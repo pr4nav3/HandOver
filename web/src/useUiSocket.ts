@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { AdvanceMsg, StateMsg } from './api'
+import type { AdvanceMsg, MistakeMsg, StateMsg } from './api'
 
 interface Handlers {
   onFrame: (jpeg: Blob) => void
   onState: (msg: StateMsg) => void
   onAdvance: (msg: AdvanceMsg) => void
   onError?: (message: string) => void
+  onMistake?: (msg: MistakeMsg) => void
   /** Called each time a connection opens, before queued messages are sent. */
   onOpen?: () => void
 }
@@ -64,6 +65,7 @@ export function useUiSocket(handlers: Handlers) {
           const msg = JSON.parse(ev.data)
           if (msg.type === 'state') handlersRef.current.onState(msg as StateMsg)
           else if (msg.type === 'advance') handlersRef.current.onAdvance(msg as AdvanceMsg)
+          else if (msg.type === 'mistake') handlersRef.current.onMistake?.(msg as MistakeMsg)
           else if (msg.type === 'error') handlersRef.current.onError?.(String(msg.message ?? 'Server error'))
         } catch {
           // Ignore anything that is not valid JSON.

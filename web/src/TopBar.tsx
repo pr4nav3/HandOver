@@ -2,7 +2,7 @@ import type { ReactNode } from 'react'
 
 export type Route = 'learn' | 'teach'
 
-export function TopBar({ route, title, children }: { route: Route; title?: string; children?: ReactNode }) {
+export function TopBar({ route, title, camera, children }: { route: Route; title?: string; camera?: string; children?: ReactNode }) {
   return (
     <header className="topbar">
       <div className="topbar-left">
@@ -10,6 +10,11 @@ export function TopBar({ route, title, children }: { route: Route; title?: strin
         {title && <span className="topbar-title">{title}</span>}
       </div>
       <div className="topbar-right">
+        {camera && (
+          <span className="topbar-camera" title="Active camera">
+            {camera}
+          </span>
+        )}
         {children}
         <nav className="switch" aria-label="Mode">
           <a href="#/learn" className={route === 'learn' ? 'on' : ''} aria-current={route === 'learn' ? 'page' : undefined}>
