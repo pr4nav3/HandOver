@@ -1,12 +1,8 @@
-// UNTESTED: written on Windows, never compiled.
+// Compiles with Xcode on macOS against MWDAT 1.0.1; not yet run on a device.
 //
-// Every Meta Wearables Device Access Toolkit (DAT 1.0.1) call lives in this file.
-// Each name we could not check against the 1.0.1 source is marked `// VERIFY:`.
-// Check them against samples/CameraAccess in github.com/facebook/meta-wearables-dat-ios.
-//
-// Uncertain types are never named in stored properties: the session, stream and listener
-// tokens are kept as `Any` and stopped through closures, so a renamed type only breaks the
-// line that creates it.
+// Every Meta Wearables Device Access Toolkit (DAT 1.0.1) call lives in this file. The names
+// and signatures below were checked against the 1.0.1 swiftinterface files (MWDATCore and
+// MWDATCamera modules).
 //
 // If this file will not compile, set HANDOVER_NO_GLASSES (see README); a stub in
 // FrameSource.swift then takes over and the app runs with the phone camera.
@@ -15,36 +11,37 @@
 
 import Foundation
 import UIKit
-import MWDATCore   // VERIFY: module name
-import MWDATCamera // VERIFY: module name
+import MWDATCore
+import MWDATCamera
 
 /// Ray-Ban Meta camera via DAT, requested at 2 fps / .low and throttled to 1 JPEG per second.
 ///
-/// Threading: call `start()` / `stop()` on the main thread. `onFrame` fires on a toolkit queue.
-/// `onFallback` and `onStatus` are always called on the main thread. `onFallback` fires at most
-/// once per `start()`: when no frame arrives within 15 s, or on any toolkit / stream error.
-final class GlassesCameraSource: FrameSource {
-    static let isAvailable = true
-    static let connectTimeout: TimeInterval = 15
+/// Threading: the class is main-actor isolated, so `start()`, `stop()` and all session state run
+/// on the main thread. Toolkit listeners fire on toolkit queues; they touch only the lock-protected
+/// `live`, `throttle` and `gotFirstFrame`, and hop to the main actor for everything else.
+/// `onFrame`, `onFallback` and `onStatus` are called on the main thread. `onFallback` fires at most
+/// once per `start()`: when no frame arrives within 15 s, or on any toolkit or stream error.
+@MainActor
+final class GlassesCameraSource: @MainActor FrameSource {
+    nonisolated static let isAvailable = true
+    nonisolated static let connectTimeout: TimeInterval = 15
 
     var onFrame: ((Data) -> Void)?
     var onFallback: ((String) -> Void)?
     var onStatus: ((String) -> Void)?
 
-    private let throttle = FrameThrottle(interval: 1.0)
-    private let live = LockedFlag(false)
-    private let gotFirstFrame = LockedFlag(false)
+    // Read on toolkit queues; each is guarded by its own lock (see FrameSource.swift).
+    nonisolated private let throttle = FrameThrottle(interval: 1.0)
+    nonisolated private let live = LockedFlag(false)
+    nonisolated private let gotFirstFrame = LockedFlag(false)
 
-    // main thread only
     private var generation = 0
     private var didFallBack = false
     private var connectTask: Task<Void, Never>?
-    private var timeoutWork: DispatchWorkItem?
-    private var sessionRef: Any?
-    private var streamRef: Any?
-    private var tokens: [Any] = []
-    private var stopStream: (() -> Void)?
-    private var stopSession: (() -> Void)?
+    private var timeoutTask: Task<Void, Never>?
+    private var session: DeviceSession?
+    private var stream: MWDATCamera.Stream?
+    private var tokens: [any AnyListenerToken] = []
 
     private enum GlassesError: LocalizedError {
         case notRegistered, permissionDenied, noCamera
@@ -59,20 +56,18 @@ final class GlassesCameraSource: FrameSource {
 
     // MARK: - App-level hooks (called from HandOverCameraApp)
 
-    @MainActor
+    /// Must run once at launch, before any other toolkit call.
     static func configureToolkit() {
         do {
-            try Wearables.configure() // VERIFY: Wearables.configure() exists, throws, must run at launch
+            try Wearables.configure()
         } catch {
             print("[glasses] Wearables.configure failed: \(error)")
         }
     }
 
-    @MainActor
     static func handleOpenURL(_ url: URL) {
-        Task { @MainActor in
+        Task {
             do {
-                // VERIFY: Wearables.shared.handleUrl(_:) name, async/throws, return type
                 _ = try await Wearables.shared.handleUrl(url)
             } catch {
                 print("[glasses] handleUrl failed: \(error)")
@@ -91,16 +86,13 @@ final class GlassesCameraSource: FrameSource {
         live.set(true)
         status("Connecting to glasses...")
 
-        let work = DispatchWorkItem { [weak self] in
-            guard let self = self, self.generation == gen else { return }
-            if !self.gotFirstFrame.value {
-                self.fallback("no glasses frames within \(Int(GlassesCameraSource.connectTimeout)) s", gen: gen)
-            }
+        timeoutTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(GlassesCameraSource.connectTimeout * 1_000_000_000))
+            guard let self, !Task.isCancelled, self.generation == gen, !self.gotFirstFrame.value else { return }
+            self.fallback("no glasses frames within \(Int(GlassesCameraSource.connectTimeout)) s", gen: gen)
         }
-        timeoutWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + GlassesCameraSource.connectTimeout, execute: work)
 
-        connectTask = Task { @MainActor [weak self] in
+        connectTask = Task { [weak self] in
             do {
                 try await self?.connect(gen: gen)
             } catch {
@@ -112,145 +104,120 @@ final class GlassesCameraSource: FrameSource {
     func stop() {
         generation += 1
         live.set(false)
-        timeoutWork?.cancel()
-        timeoutWork = nil
+        timeoutTask?.cancel()
+        timeoutTask = nil
         connectTask?.cancel()
         connectTask = nil
-        tokens.removeAll() // VERIFY: dropping listener tokens unsubscribes (or call token.cancel())
-        let endStream = stopStream
-        let endSession = stopSession
-        stopStream = nil
-        stopSession = nil
-        streamRef = nil
-        sessionRef = nil
-        endStream?()
-        endSession?()
+        // Listener tokens are cancelled explicitly; the 1.0.1 API exposes `cancel() async`.
+        let oldTokens = tokens
+        tokens = []
+        if !oldTokens.isEmpty {
+            Task {
+                for token in oldTokens { await token.cancel() }
+            }
+        }
+        stream?.stop()
+        stream = nil
+        session?.stop()
+        session = nil
     }
 
     // MARK: - Toolkit flow
 
-    @MainActor
     private func connect(gen: Int) async throws {
-        let wearables = Wearables.shared // VERIFY: Wearables.shared
+        let wearables = Wearables.shared
 
         // 1. Registration with the Meta AI app (persists across launches).
-        if !(await isRegistered()) {
+        if !isRegistered() {
             // We may be returning from the Meta AI app; give handleUrl a moment first.
             try await Task.sleep(nanoseconds: 2_000_000_000)
             guard gen == generation else { return }
-            if !(await isRegistered()) {
+            if !isRegistered() {
                 status("Registering in the Meta AI app...")
-                try await wearables.startRegistration() // VERIFY: startRegistration() async throws
+                try await wearables.startRegistration()
                 for _ in 0..<20 {
-                    if await isRegistered() { break }
+                    if isRegistered() { break }
                     try await Task.sleep(nanoseconds: 500_000_000)
                     guard gen == generation else { return }
                 }
-                guard await isRegistered() else { throw GlassesError.notRegistered }
+                guard isRegistered() else { throw GlassesError.notRegistered }
             }
         }
         guard gen == generation else { return }
 
         // 2. Camera permission (may switch to the Meta AI app).
         status("Checking glasses camera permission...")
-        // VERIFY: checkPermissionStatus(_:) / requestPermission(_:) names, `.camera` case, async throws
         var permission = try await wearables.checkPermissionStatus(.camera)
-        if !isGranted(permission) {
+        if permission != .granted {
             permission = try await wearables.requestPermission(.camera)
         }
-        guard isGranted(permission) else { throw GlassesError.permissionDenied }
+        guard permission == .granted else { throw GlassesError.permissionDenied }
         guard gen == generation else { return }
 
         // 3. Device session. Must be started before addCamera.
         status("Starting glasses session...")
-        let selector = AutoDeviceSelector(wearables: wearables) // VERIFY: AutoDeviceSelector(wearables:)
-        let session = try await wearables.createSession(deviceSelector: selector) // VERIFY: createSession(deviceSelector:)
-        sessionRef = session
-        stopSession = {
-            Task { @MainActor in
-                try? await session.stop() // VERIFY: DeviceSession.stop() (sync or async)
-            }
-        }
-        try await session.start() // VERIFY: DeviceSession.start() (sync or async, throws?)
+        let selector = AutoDeviceSelector(wearables: wearables)
+        let session = try wearables.createSession(deviceSelector: selector)
+        self.session = session
+        try session.start()
         guard gen == generation else { return }
 
         // 4. Camera stream: 2 fps is the lowest valid rate (2, 7, 15, 24, 30); .raw avoids HEVC.
-        // VERIFY: StreamConfiguration(videoCodec:resolution:frameRate:) labels and `.raw` / `.low` cases
         let config = StreamConfiguration(videoCodec: .raw, resolution: .low, frameRate: 2)
-        // VERIFY: addCamera(config:) — optional or not, throws or not (datOptional handles both)
-        guard let camera = try await datOptional(session.addCamera(config: config)) else {
+        // addCamera(config:) throws and returns nil when the device has no camera.
+        guard let camera = try session.addCamera(config: config) else {
             throw GlassesError.noCamera
         }
-        let stream = camera.stream // VERIFY: camera.stream
-        streamRef = stream
+        let stream = camera.stream
+        self.stream = stream
 
-        // VERIFY: videoFramePublisher.listen { frame in } and that it returns a token to retain
+        // Listener closures are @Sendable and run on toolkit queues. `self` is main-actor
+        // isolated (so Sendable); only its lock-protected members are read before hopping.
         let frameToken = stream.videoFramePublisher.listen { [weak self] frame in
-            guard let self = self, self.live.value else { return }
-            self.noteFrame(gen: gen)
-            guard self.throttle.shouldEmit() else { return }
-            self.emit(frame.makeUIImage()) // VERIFY: VideoFrame.makeUIImage() -> UIImage?
-        }
-        // VERIFY: errorPublisher exists on the stream
-        let errorToken = stream.errorPublisher.listen { [weak self] error in
-            guard let self = self else { return }
-            let reason = "glasses stream error: \(error)"
-            DispatchQueue.main.async {
-                self.fallback(reason, gen: gen)
+            guard let self, self.live.value else { return }
+            if !self.gotFirstFrame.value {
+                self.gotFirstFrame.set(true)
+                Task { @MainActor [weak self] in self?.firstFrameArrived(gen: gen) }
             }
+            guard self.throttle.shouldEmit(),
+                  let image = frame.makeUIImage(),
+                  let jpeg = JPEGEncoder.encode(image) else { return }
+            Task { @MainActor [weak self] in self?.deliver(jpeg, gen: gen) }
         }
-        // VERIFY: statePublisher exists on the stream
+        let errorToken = stream.errorPublisher.listen { [weak self] error in
+            let reason = "glasses stream error: \(error)"
+            Task { @MainActor [weak self] in self?.fallback(reason, gen: gen) }
+        }
         let stateToken = stream.statePublisher.listen { [weak self] state in
-            guard let self = self else { return }
             let text = "Glasses: \(state)"
-            DispatchQueue.main.async {
-                guard self.generation == gen else { return }
+            Task { @MainActor [weak self] in
+                guard let self, self.generation == gen else { return }
                 self.status(text)
             }
         }
         tokens = [frameToken, errorToken, stateToken]
-        stopStream = {
-            Task { @MainActor in
-                try? await stream.stop() // VERIFY: Stream.stop() (sync since 0.8.0?)
-            }
-        }
-        try await stream.start() // VERIFY: Stream.start() (notes say sync since 0.8.0)
+        stream.start()
         guard gen == generation else { return }
         status("Waiting for glasses frames...")
     }
 
-    @MainActor
-    private func isRegistered() async -> Bool {
-        // VERIFY: Wearables.shared.registrationState property and its `.registered` case.
-        // Compared by name so this compiles whatever the state type is called.
-        let state = await Wearables.shared.registrationState
-        return String(describing: state).lowercased().hasPrefix("registered")
+    private func isRegistered() -> Bool {
+        Wearables.shared.registrationState == .registered
     }
 
-    private func isGranted<P>(_ permission: P) -> Bool {
-        // Avoids naming the permission-status type. VERIFY: status case is spelled `granted`.
-        return String(describing: permission).lowercased().hasPrefix("granted")
+    // MARK: - Main-actor helpers
+
+    private func firstFrameArrived(gen: Int) {
+        guard generation == gen else { return }
+        timeoutTask?.cancel()
+        timeoutTask = nil
+        status("Glasses streaming")
     }
 
-    // MARK: - Frames (toolkit queue)
-
-    private func noteFrame(gen: Int) {
-        guard !gotFirstFrame.value else { return }
-        gotFirstFrame.set(true)
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self, self.generation == gen else { return }
-            self.timeoutWork?.cancel()
-            self.timeoutWork = nil
-            self.status("Glasses streaming")
-        }
-    }
-
-    private func emit(_ image: UIImage?) {
-        guard let image = image, let jpeg = JPEGEncoder.encode(image) else { return }
+    private func deliver(_ jpeg: Data, gen: Int) {
+        guard generation == gen else { return }
         onFrame?(jpeg)
     }
-
-    // MARK: - Main-thread helpers
 
     private func fallback(_ reason: String, gen: Int) {
         guard gen == generation, !didFallBack else { return }
@@ -263,11 +230,6 @@ final class GlassesCameraSource: FrameSource {
     private func status(_ text: String) {
         onStatus?(text)
     }
-}
-
-/// Turns either `T` or `T?` into `T?`, so the call compiles whichever one the toolkit returns.
-private func datOptional<T>(_ value: T?) -> T? {
-    return value
 }
 
 #endif

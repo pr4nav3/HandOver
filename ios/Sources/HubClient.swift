@@ -1,4 +1,4 @@
-// UNTESTED: written on Windows, never compiled.
+// Compiles with Xcode on macOS against MWDAT 1.0.1; not yet run on a device.
 //
 // Client for the hub's /ws/camera socket (CONTRACT.md section 6).
 //   -> hello (first), binary JPEG frames, next {from}, back {from}
