@@ -31,6 +31,8 @@ from typing import Callable
 
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
+from server import config
+
 REPO = Path(__file__).resolve().parent.parent
 HDR_TRANSFERS = {"smpte2084", "arib-std-b67"}  # PQ and HLG, what iPhones record in HDR
 SDR_TAGS = ["-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709"]
@@ -38,7 +40,12 @@ SDR_FRAME_TAGS = "setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt7
 # a keyframe every second and none from scene cuts, so the player can seek a clip smoothly
 SEEK_TAGS = ["-force_key_frames", "expr:gte(t,n_forced*1)", "-sc_threshold", "0", "-pix_fmt", "yuv420p"]
 
-MODEL = os.environ.get("HANDOVER_TEACH_MODEL", "gemini-3.8-flash")
+MODEL = config.get("HANDOVER_TEACH_MODEL")  # value at import, kept for old callers; code uses _model()
+
+
+def _model() -> str:
+    """Read per call (server/config.py), so a changed HANDOVER_TEACH_MODEL applies without a restart."""
+    return str(config.get("HANDOVER_TEACH_MODEL"))
 UPLOAD_TIMEOUT_S = 300
 REQUEST_TIMEOUT_MS = 600_000     # one extraction call may take minutes on a long video
 MAX_OUTPUT_TOKENS = 32768
@@ -168,8 +175,9 @@ do not invent speech. If nothing is said, return an empty transcript.
 def _bin(name: str) -> str:
     """Path to ffmpeg or ffprobe. Same order as server/replay.py: HANDOVER_FFMPEG (the ffmpeg binary; ffprobe is
     looked for next to it), then PATH (ffmpeg.exe on Windows), then Homebrew's folder on a Mac."""
-    override = os.environ.get("HANDOVER_FFMPEG", "").strip()
+    override = config.get("HANDOVER_FFMPEG")
     if override:
+        override = str(override)
         if not Path(override).is_file():
             raise RuntimeError(f"HANDOVER_FFMPEG points to {override}, which is not a file.")
         if name == "ffmpeg":
@@ -265,7 +273,7 @@ def sanitize_id(lesson_id: str) -> str:
 
 
 def lessons_root() -> Path:
-    return Path(os.environ.get("HANDOVER_LESSONS") or REPO / "lessons")
+    return Path(config.get("HANDOVER_LESSONS") or REPO / "lessons")
 
 
 def _write_json(path: Path, data) -> None:
@@ -392,6 +400,7 @@ def extract(norm: Path, progress: Progress = noop) -> Extraction:
     from google.genai import types
 
     norm = Path(norm)
+    model = _model()
     proxy = norm.with_name("proxy.mp4")
     client = genai.Client(api_key=_api_key(),
                           http_options=types.HttpOptions(api_version="v1beta", timeout=REQUEST_TIMEOUT_MS))
@@ -401,7 +410,7 @@ def extract(norm: Path, progress: Progress = noop) -> Extraction:
         fps = 1 if probe_duration(proxy) > LONG_VIDEO_S else 2
         size = proxy.stat().st_size
         if size < INLINE_LIMIT:
-            progress("extracting", f"Sending a {size / 1e6:.1f} MB proxy inline to {MODEL}")
+            progress("extracting", f"Sending a {size / 1e6:.1f} MB proxy inline to {model}")
             source = {"inline_data": types.Blob(data=proxy.read_bytes(), mime_type="video/mp4")}
         else:
             progress("extracting", f"Uploading a {size / 1e6:.1f} MB proxy to the Gemini Files API")
@@ -419,7 +428,7 @@ def extract(norm: Path, progress: Progress = noop) -> Extraction:
                 uploaded = client.files.get(name=uploaded.name)
             source = {"file_data": types.FileData(file_uri=uploaded.uri, mime_type=uploaded.mime_type)}
 
-        config = types.GenerateContentConfig(
+        gen_config = types.GenerateContentConfig(
             response_mime_type="application/json",
             response_json_schema=gemini_schema(),
             max_output_tokens=MAX_OUTPUT_TOKENS,
@@ -430,7 +439,7 @@ def extract(norm: Path, progress: Progress = noop) -> Extraction:
         def call(with_fps: bool):
             video = types.Part(**source, video_metadata=types.VideoMetadata(fps=fps) if with_fps else None)
             contents = [types.Content(role="user", parts=[video, types.Part(text=PROMPT)])]
-            return client.models.generate_content(model=MODEL, contents=contents, config=config)
+            return client.models.generate_content(model=model, contents=contents, config=gen_config)
 
         try:
             try:
@@ -443,7 +452,7 @@ def extract(norm: Path, progress: Progress = noop) -> Extraction:
                     raise
         except Exception as e:
             raise RuntimeError(
-                f"Gemini call failed with model {MODEL}: {e}. "
+                f"Gemini call failed with model {model}: {e}. "
                 f"Check the key and the free tier limits, or set HANDOVER_TEACH_MODEL to another free model"
             ) from e
     finally:
@@ -793,28 +802,13 @@ def recut(lesson_dir: Path, progress: Progress = noop) -> dict:
 
 # ---------------------------------------------------------------- 5. self-test (S-T)
 
-SELFTEST_TIMEOUT_S = 10.0  # teach-time checks may be slower than live ones; a slow answer is still an answer
-
-
 def _selftest_timeout() -> float:
-    raw = os.environ.get("HANDOVER_SELFTEST_TIMEOUT", "").strip()
-    try:
-        return float(raw) if raw and float(raw) > 0 else SELFTEST_TIMEOUT_S
-    except ValueError:
-        return SELFTEST_TIMEOUT_S
-
-
-def _accepts_timeout(fn) -> bool:
-    import inspect
-
-    try:
-        return "timeout" in inspect.signature(fn).parameters
-    except (TypeError, ValueError):
-        return False
+    """HANDOVER_SELFTEST_TIMEOUT through server/config.py: default 10 s, 0.1 to 120."""
+    return float(config.get("HANDOVER_SELFTEST_TIMEOUT"))
 
 
 def _check_is_mock() -> bool:
-    return os.environ.get("HANDOVER_CHECK", "").strip().lower() == "mock"
+    return config.get("HANDOVER_CHECK") == "mock"
 
 
 async def _self_test(lesson_dir: Path, progress: Progress = noop) -> tuple[dict, list[int]]:
@@ -844,10 +838,7 @@ async def _self_test(lesson_dir: Path, progress: Progress = noop) -> tuple[dict,
     refs = await asyncio.to_thread(
         lambda: [read(s.get("ref_frame") or f"frames/{i + 1:02d}.jpg") for i, s in enumerate(steps)])
 
-    # Older check.py without the timeout parameter: its own HANDOVER_CHECK_TIMEOUT applies instead.
-    extra = {"timeout": _selftest_timeout()} if _accepts_timeout(check.check_frame) else {}
-    if not extra:
-        progress("self-test", "check.check_frame has no timeout parameter; using HANDOVER_CHECK_TIMEOUT")
+    timeout = _selftest_timeout()
 
     errored: list[int] = []
     for i, s in enumerate(steps):
@@ -863,8 +854,10 @@ async def _self_test(lesson_dir: Path, progress: Progress = noop) -> tuple[dict,
             progress("self-test", f"step {n}: skipped, no earlier frame to compare with")
             continue
         # step_started_at only matters in mock mode: long ago gives yes, just now gives no.
-        own = await check.check_frame(refs[i], refs[i], q, step_started_at=time.monotonic() - 1e6, **extra)
-        prev = await check.check_frame(refs[i], before, q, step_started_at=time.monotonic(), **extra)
+        own = await check.check_frame(refs[i], refs[i], q, step_started_at=time.monotonic() - 1e6,
+                                      timeout=timeout)
+        prev = await check.check_frame(refs[i], before, q, step_started_at=time.monotonic(),
+                                       timeout=timeout)
         failed = getattr(own, "error", None) or getattr(prev, "error", None)
         if failed:
             # a timeout or API error says nothing about the question; never store it as a disagreement
@@ -944,11 +937,11 @@ def build(srcs: list[Path], lesson_id: str, title: str, progress: Progress = noo
         progress("extracting", f"Using steps from {Path(steps_json).name}")
         extraction = _clean_extraction(mock_extraction(duration, steps_json), duration)
     else:
-        if os.environ.get("HANDOVER_TEACH_MOCK") == "1":
+        if config.get("HANDOVER_TEACH_MOCK"):
             progress("extracting", "Using three placeholder steps (HANDOVER_TEACH_MOCK=1)")
             extraction = mock_extraction(duration, None)
         else:
-            progress("extracting", f"Finding steps with {MODEL}")
+            progress("extracting", f"Finding steps with {_model()}")
             extraction = extract(norm, progress)
         extraction = _first_step_manual(_clean_extraction(extraction, duration))
 
@@ -1020,7 +1013,7 @@ def _run_cli(args, show: Progress) -> int:
             show("self-test", "norm.mp4 missing; the first step may be skipped")
         lesson = json.loads((d / "lesson.json").read_text(encoding="utf-8"))
         camera = [s.get("n", i + 1) for i, s in enumerate(lesson.get("steps") or []) if s.get("check_type") != "manual"]
-        mode = "mock" if _check_is_mock() else os.environ.get("HANDOVER_CHECK_MODEL", "gemini-3.5-flash-lite")
+        mode = "mock" if _check_is_mock() else config.get("HANDOVER_CHECK_MODEL")
         show("self-test", f"{len(camera)} camera steps in {d}, check: {mode}")
         if args.dry_run:
             print(f"  would test steps {', '.join(map(str, camera)) or 'none'}")
@@ -1064,7 +1057,7 @@ def _run_cli(args, show: Progress) -> int:
     if args.steps_json and not Path(args.steps_json).is_file():
         raise UsageError(f"steps file not found: {args.steps_json}")
     if args.dry_run:
-        if not args.steps_json and os.environ.get("HANDOVER_TEACH_MOCK") != "1":
+        if not args.steps_json and not config.get("HANDOVER_TEACH_MOCK"):
             raise UsageError("--dry-run never calls Gemini: pass --steps-json, or set HANDOVER_TEACH_MOCK=1")
         duration = _sources_duration(srcs)
         extraction = _plan_extraction(duration, args.steps_json)
