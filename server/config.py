@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
+from pathlib import Path
 from dataclasses import dataclass
 from typing import Literal, Optional, Union
 
@@ -137,10 +138,17 @@ REGISTRY: tuple[Tunable, ...] = (
     T("HANDOVER_HTTPS_PORT", 8443, "int", "main.py", "https port when certs exist", 1, 65535),
     T("HANDOVER_FFMPEG", None, "path", "teach.py, replay.py", "ffmpeg binary (default PATH, then Homebrew)"),
     T("HANDOVER_LOG_JSON", False, "bool", "main.py", "log one JSON object per line"),
-    T("GEMINI_API_KEY", None, "secret", "check.py, teach.py", "Gemini key (or GOOGLE_API_KEY or <repo>/.env); Effective checks the environment only"),
+    T("GEMINI_API_KEY", None, "secret", "check.py, teach.py",
+      "Gemini key (or GOOGLE_API_KEY), from the environment or <repo>/.env"),
+    T("ANTHROPIC_API_KEY", None, "secret", "check.py, teach.py",
+      "Claude key, from the environment or <repo>/.env"),
     # check
     T("HANDOVER_CHECK", "gemini", "choice", "check.py", "gemini or mock (no network)", choices=("gemini", "mock")),
-    T("HANDOVER_CHECK_MODEL", "gemini-3.5-flash-lite", "str", "check.py", "check model"),
+    T("HANDOVER_CHECK_PROVIDER", "auto", "choice", "check.py",
+      "live check provider; auto picks claude when a Claude key is found, else gemini",
+      choices=("auto", "claude", "gemini")),
+    T("HANDOVER_CHECK_MODEL", "gemini-3.5-flash-lite", "str", "check.py", "Gemini check model"),
+    T("HANDOVER_CLAUDE_CHECK_MODEL", "claude-haiku-5-5", "str", "check.py", "Claude check model"),
     T("HANDOVER_CHECK_TIMEOUT", 3.0, "float", "check.py", "seconds before a check counts as a timeout", 0.1, 60),
     T("HANDOVER_CHECK_LIVE_RES", "low", "choice", "check.py", "media resolution of the live image",
       choices=("low", "medium")),
@@ -149,6 +157,10 @@ REGISTRY: tuple[Tunable, ...] = (
       0, 600),
     # breaker
     T("HANDOVER_BREAKER_SECONDS", 30.0, "float", "check.py", "seconds checks stay off after failures", 1, 3600),
+    # Claude budget
+    T("HANDOVER_CLAUDE_BUDGET_DAY_USD", 20.0, "float", "spend.py", "Claude spend allowed per local day, USD", 0, 10000),
+    T("HANDOVER_CLAUDE_BUDGET_TOTAL_USD", 50.0, "float", "spend.py", "Claude spend allowed in total, USD", 0, 100000),
+    T("HANDOVER_CLAUDE_SPEND_FILE", None, "path", "spend.py", "spend ledger (default <repo>/logs/claude_spend.json)"),
     # debounce
     T("HANDOVER_DEBOUNCE_N", 2, "int", "check.py", "confident yes answers in a row to advance", 1, 10),
     T("HANDOVER_MIN_CONF", 0.8, "float", "check.py", "minimum confidence for a yes", 0, 1),
@@ -166,21 +178,33 @@ REGISTRY: tuple[Tunable, ...] = (
       "seconds of settled consecutive no before the mistake compare runs", 0.5, 60),
     T("HANDOVER_MISTAKE_COOLDOWN_S", 10.0, "float", "mistake.py",
       "minimum seconds between mistake compares on one step", 1, 120),
+    T("HANDOVER_MOCK_MISTAKE_AFTER_S", 4.0, "float", "mistake.py",
+      "test only, mock mode: seconds on the step before the mock mistake fires", 0.5, 60),
     T("HANDOVER_MOCK_MISTAKE", None, "str", "mistake.py",
       "test only, mock mode: behind:<step> or ahead:<step> (0-based)"),
     # engine
     T("HANDOVER_VERIFIED_HOLD", 0.8, "float", "main.py", "seconds the verified status shows before advancing",
       0, 10),
     T("HANDOVER_MISTAKE_PARALLEL", True, "bool", "main.py", "run the mistake compare alongside the normal check"),
+    T("HANDOVER_HELLO_GRACE_MS", 300, "float", "main.py",
+      "ms a new camera has to send hello before its first state broadcast", 0, 5000),
+    T("HANDOVER_WEB_DIST", None, "str", "main.py", "folder with the built web app; default <repo>/web/dist"),
     T("HANDOVER_MIN_FRAME_GAP", 0.2, "float", "main.py", "seconds between camera frames the hub accepts", 0, 5),
     T("HANDOVER_MAX_CAMERAS", 8, "int", "main.py", "camera connections allowed at once", 1, 64),
     T("HANDOVER_MAX_VIEWERS", 32, "int", "main.py", "UI connections allowed at once", 1, 256),
+    T("HANDOVER_STARTUP_CLEANUP", False, "bool", "main.py",
+      "delete stale upload leftovers at startup; unset only logs what it would remove", status="proposed"),
     T("HANDOVER_MAX_UPLOAD_MB", 2048, "int", "main.py", "largest teach upload in MB", 1, 16384, status="proposed"),
     T("HANDOVER_MAX_FRAME_MB", 2, "int", "main.py", "camera frames larger than this are ignored", 1, 64,
       status="proposed"),
     # teach
     T("HANDOVER_TEACH_MODEL", "gemini-3.8-flash", "str", "teach.py", "step extraction model"),
     T("HANDOVER_TEACH_MOCK", False, "bool", "teach.py", "no Gemini; three placeholder steps"),
+    T("HANDOVER_TEACH_PROVIDER", "auto", "choice", "teach.py",
+      "step extraction: gemini, claude, or auto (gemini with a Gemini key, else claude with ANTHROPIC_API_KEY, "
+      "else placeholder steps)", choices=("gemini", "claude", "auto")),
+    T("HANDOVER_CLAUDE_TEACH_MODEL", "claude-haiku-5-5", "str", "teach.py",
+      "Claude model for step extraction (frames only, no audio)"),
     T("HANDOVER_SELFTEST_TIMEOUT", 10.0, "float", "teach.py", "seconds per teach-time self-test check", 0.1, 120),
 )
 del T
@@ -228,9 +252,31 @@ def _fmt(v: object) -> str:
     return str(v)
 
 
+def _dotenv_names() -> set[str]:
+    """Names with a non-empty value in <repo>/.env. Values are never kept or returned."""
+    path = Path(__file__).resolve().parent.parent / ".env"
+    names: set[str] = set()
+    try:
+        lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+    except OSError:
+        return names
+    for line in lines:
+        line = line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            k, v = line.split("=", 1)
+            if v.strip().strip('"').strip("'"):
+                names.add(k.strip().removeprefix("export ").strip())
+    return names
+
+
 def _effective(t: Tunable) -> str:
     if t.kind == "secret":
-        return "set" if os.environ.get(t.name) or os.environ.get("GOOGLE_API_KEY") else "not set"
+        names = (t.name, "GOOGLE_API_KEY") if t.name == "GEMINI_API_KEY" else (t.name,)
+        if any(os.environ.get(n) for n in names):
+            return "set (env)"
+        if _dotenv_names() & set(names):
+            return "set (.env)"
+        return "not set"
     return _fmt(get(t.name))
 
 

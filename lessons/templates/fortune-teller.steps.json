@@ -1,0 +1,102 @@
+{
+  "_note": "PLACEHOLDER TIMES: every start and end below is an even split, not the real take. Retime each step from the take before cutting (see README.md). check_type is for people: the CLI treats a step as manual when check_question is \"manual\".",
+  "transcript": [],
+  "steps": [
+    {
+      "start": "00:00",
+      "end": "00:12",
+      "title": "Lay the square sheet flat",
+      "check_type": "manual",
+      "check_question": "manual",
+      "prerequisites": [],
+      "ref_time": "",
+      "common_mistake": "Start with a square sheet, not a rectangle."
+    },
+    {
+      "start": "00:12",
+      "end": "00:24",
+      "title": "Fold corner to corner into triangle",
+      "check_type": "camera",
+      "check_question": "Is the paper folded into a single triangle with three corners?",
+      "prerequisites": [
+        1
+      ],
+      "ref_time": "",
+      "common_mistake": "Line the corners up exactly before creasing."
+    },
+    {
+      "start": "00:24",
+      "end": "00:36",
+      "title": "Crease both diagonals, then unfold flat",
+      "check_type": "manual",
+      "check_question": "manual",
+      "prerequisites": [
+        2
+      ],
+      "ref_time": "",
+      "common_mistake": "Unfold both diagonals so the sheet lies flat with an X crease."
+    },
+    {
+      "start": "00:36",
+      "end": "00:48",
+      "title": "Fold all four corners to center",
+      "check_type": "camera",
+      "check_question": "Is the paper a smaller square with four triangular flaps whose points meet at the center?",
+      "prerequisites": [
+        3
+      ],
+      "ref_time": "",
+      "common_mistake": "Bring every corner to the exact center."
+    },
+    {
+      "start": "00:48",
+      "end": "01:00",
+      "title": "Flip the paper over",
+      "check_type": "camera",
+      "check_question": "Is the side facing up a plain square with no flaps on it, only crease lines?",
+      "prerequisites": [
+        4
+      ],
+      "ref_time": "",
+      "common_mistake": "Flip it over first."
+    },
+    {
+      "start": "01:00",
+      "end": "01:12",
+      "title": "Fold four corners to center again",
+      "check_type": "camera",
+      "check_question": "Is the paper a small square with four triangular flaps whose points meet at the center?",
+      "prerequisites": [
+        5
+      ],
+      "ref_time": "",
+      "common_mistake": "Fold all four corners to the center again, on this side."
+    },
+    {
+      "start": "01:12",
+      "end": "01:24",
+      "title": "Crease in half both ways, unfold",
+      "check_type": "manual",
+      "check_question": "manual",
+      "prerequisites": [
+        6
+      ],
+      "ref_time": "",
+      "common_mistake": "Crease both halves firmly, then open it flat again."
+    },
+    {
+      "start": "01:24",
+      "end": "01:36",
+      "title": "Flip, then push into four pockets",
+      "check_type": "camera",
+      "check_question": "Does the paper stand up in four separate pointed pockets instead of lying flat?",
+      "prerequisites": [
+        7
+      ],
+      "ref_time": "",
+      "common_mistake": "Flip it, slide your fingers under the four flaps and push to the center."
+    }
+  ],
+  "safety": [],
+  "tools": []
+}
