@@ -81,11 +81,13 @@ def test_heartbeat_after_6s():
     assert allowed == [2, 8, 14], allowed
 
 
-def test_heartbeat_not_during_heavy_motion():
+def test_heartbeat_during_continuous_motion():
     g = MotionGate(enabled=True)
-    feed(g, [frame()] * 3)  # check at t=2
-    out = feed(g, [frame(rect_x=100 + 100 * (i % 2)) for i in range(10)], t0=3.0)
-    assert not any(out), out
+    shaky = [frame(rect_x=100 + 100 * (i % 2)) for i in range(61)]  # 0..30 s at 2 fps, never settles
+    out = feed(g, shaky, dt=0.5)
+    allowed = [i * 0.5 for i, ok in enumerate(out) if ok]
+    assert allowed == [6.0, 12.0, 18.0, 24.0, 30.0], allowed
+    assert g.stats["last_motion"] > g.motion_thresh  # still moving at the end
 
 
 def test_disabled_gate():
