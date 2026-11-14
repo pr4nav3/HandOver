@@ -82,7 +82,10 @@ export function useUiSocket(handlers: Handlers) {
       ws.onerror = () => ws.close()
     }
 
-    connect()
+    // Connect on the next task, not right away: React StrictMode mounts, cleans up and
+    // mounts again in one go in development, and the cleanup cancels this timer before
+    // a socket exists, so only one socket ever opens.
+    retryTimer = window.setTimeout(connect, 0)
     markDown()
     return () => {
       closed = true
