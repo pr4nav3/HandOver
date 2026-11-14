@@ -1,21 +1,45 @@
-"""Check tests: debouncer, mock, breaker, error classes, reason, compare. No network.
+"""Check tests: debouncer, mock, breaker, error classes, reason, compare, both providers. No network.
 
 Run: .venv/bin/python -m server.test_check (or pytest if installed).
+
+Hermetic on purpose: a real Claude key may sit in .env, so this module pins the provider to
+gemini (Claude tests opt in), replaces the real Claude client with one that fails the test,
+and points the spend ledger at a temp file.
 """
 
 import asyncio
 import io
+import itertools
 import json
 import os
+import subprocess
+import sys
+import tempfile
 import time
 from contextlib import contextmanager
+from pathlib import Path
 from types import SimpleNamespace
 
+import anthropic
+import httpx2
 from google.genai import errors as genai_errors
 from PIL import Image
 
-from server import check
+from server import check, spend
 from server.check import Breaker, CheckResult, Debouncer, MatchResult, check_frame, compare_refs, trim_reason
+
+_TMP = Path(tempfile.mkdtemp(prefix="handover-test-check-"))
+os.environ["HANDOVER_CHECK_PROVIDER"] = "gemini"
+os.environ["HANDOVER_NO_NETWORK"] = "1"
+os.environ["HANDOVER_CLAUDE_SPEND_FILE"] = str(_TMP / "spend.json")
+
+
+def _no_real_claude():
+    raise AssertionError("a test reached the real Claude client")
+
+
+_real_get_claude = check._get_claude
+check._get_claude = _no_real_claude
 
 
 def test_two_confident_yes_advance():
@@ -354,12 +378,12 @@ def test_thinking_per_model():
 
 def test_client_per_loop_without_retries():
     """Two asyncio.run calls in one process each get a working client; closed loops are dropped."""
-    saved_key = os.environ.get("GEMINI_API_KEY")
-    os.environ["GEMINI_API_KEY"] = "fake-key-for-unit-test"
+    saved_key, saved_nn = os.environ.get("GEMINI_API_KEY"), os.environ.pop("HANDOVER_NO_NETWORK", None)
+    os.environ["GEMINI_API_KEY"] = "fake-key-for-unit-test"  # building a client is local; no call is made
 
     async def grab():
         c1, c2 = check._get_client(), check._get_client()  # no network: building a client is local
-        assert c1 is c2 and check._has_client()
+        assert c1 is c2 and check._has_client("gemini")
         return c1
 
     try:
@@ -373,7 +397,7 @@ def test_client_per_loop_without_retries():
 
         assert isinstance(b._api_client._async_httpx_client, httpx2.AsyncClient)
         assert pool._keepalive_expiry == 120 and pool._max_keepalive_connections == 4
-        assert not check._has_client()  # outside any loop
+        assert not check._has_client("gemini")  # outside any loop
 
         async def build_and_list():
             check._get_client()
@@ -382,6 +406,7 @@ def test_client_per_loop_without_retries():
         assert _run(build_and_list()) == [False]  # closed loops pruned on each build
     finally:
         _restore("GEMINI_API_KEY", saved_key)
+        _restore("HANDOVER_NO_NETWORK", saved_nn)
         check._clients.clear()
 
 
@@ -405,6 +430,7 @@ def test_two_asyncio_runs_both_work():
             return SimpleNamespace(text=_answer("nothing", "yes", 0.9))
 
     saved_cls, saved_key = genai.Client, os.environ.get("GEMINI_API_KEY")
+    saved_nn = os.environ.pop("HANDOVER_NO_NETWORK", None)  # the stand-in replaces the real client class
     genai.Client = _LoopBoundClient
     os.environ["GEMINI_API_KEY"] = "fake-key-for-unit-test"
     try:
@@ -418,6 +444,7 @@ def test_two_asyncio_runs_both_work():
     finally:
         genai.Client = saved_cls
         _restore("GEMINI_API_KEY", saved_key)
+        _restore("HANDOVER_NO_NETWORK", saved_nn)
         check._clients.clear()
     assert [(r.done, r.error) for r in (r1, r2, r3, r4)] == [("yes", None)] * 4
     assert len(built_on) == 3  # one client per loop, reused within a loop
@@ -440,6 +467,97 @@ def test_max_side_env():
         assert long_side(check.downscale_jpeg(data)) == 640
     finally:
         del os.environ["HANDOVER_CHECK_MAX_SIDE"]
+
+
+def test_has_key():
+    saved = {k: os.environ.pop(k) for k in ("GEMINI_API_KEY", "GOOGLE_API_KEY") if k in os.environ}
+    saved_read = check._read_env_file
+    try:
+        check._read_env_file = lambda: {}
+        assert check.has_key() is False
+        check._read_env_file = lambda: {"GEMINI_API_KEY": "from-dotenv"}
+        assert check.has_key() is True  # .env counts
+        check._read_env_file = lambda: {}
+        os.environ["GOOGLE_API_KEY"] = "from-env"
+        assert check.has_key() is True
+    finally:
+        check._read_env_file = saved_read
+        os.environ.pop("GOOGLE_API_KEY", None)
+        os.environ.update(saved)
+
+
+class _WarmModels:
+    def __init__(self, behavior):
+        self.behavior, self.calls = behavior, []
+
+    async def get(self, *, model):
+        self.calls.append(model)
+        out = self.behavior()
+        if isinstance(out, BaseException):
+            raise out
+        if out == "hang":
+            await asyncio.sleep(10)
+        return SimpleNamespace(name=f"models/{model}")
+
+
+@contextmanager
+def warm_client(behavior):
+    models = _WarmModels(behavior)
+    saved_get, saved_key = check._get_client, os.environ.get("GEMINI_API_KEY")
+    saved_nn = os.environ.get("HANDOVER_NO_NETWORK")
+    check._get_client = lambda: SimpleNamespace(aio=SimpleNamespace(models=models))
+    os.environ["GEMINI_API_KEY"] = "fake-key-for-unit-test"
+    os.environ["HANDOVER_NO_NETWORK"] = "0"  # warm_up talks to the fake client
+    try:
+        yield models
+    finally:
+        check._get_client = saved_get
+        _restore("GEMINI_API_KEY", saved_key)
+        _restore("HANDOVER_NO_NETWORK", saved_nn)
+
+
+def test_warm_up():
+    with warm_client(lambda: "ok") as models:
+        os.environ["HANDOVER_CHECK_MODEL"] = "gemini-3.8-flash"
+        try:
+            assert _run(check.warm_up()) is True
+        finally:
+            del os.environ["HANDOVER_CHECK_MODEL"]
+    assert models.calls == ["gemini-3.8-flash"]
+    cases = [
+        lambda: genai_errors.ClientError(400, {"error": {"code": 400, "details": [{"reason": "API_KEY_INVALID"}]}}),
+        lambda: genai_errors.ClientError(429, {"error": {"code": 429, "status": "RESOURCE_EXHAUSTED"}}),
+        lambda: RuntimeError("network down"),
+    ]
+    for behavior in cases:
+        with warm_client(behavior):
+            assert _run(check.warm_up()) is False
+    with warm_client(lambda: "hang"):
+        t0 = time.monotonic()
+        assert _run(check.warm_up(timeout=0.2)) is False
+        assert time.monotonic() - t0 < 2
+    with warm_client(lambda: "ok") as models:
+        os.environ["HANDOVER_CHECK"] = "mock"
+        try:
+            assert _run(check.warm_up()) is False
+        finally:
+            del os.environ["HANDOVER_CHECK"]
+    assert models.calls == []  # mock never touches the client
+
+
+def test_warm_up_without_key_makes_no_call():
+    saved = {k: os.environ.pop(k) for k in ("GEMINI_API_KEY", "GOOGLE_API_KEY") if k in os.environ}
+    saved_get, saved_read = check._get_client, check._read_env_file
+
+    def _must_not_build():
+        raise AssertionError("built a client without a key")
+
+    check._get_client, check._read_env_file = _must_not_build, lambda: {}
+    try:
+        assert _run(check.warm_up()) is False
+    finally:
+        check._get_client, check._read_env_file = saved_get, saved_read
+        os.environ.update(saved)
 
 
 def test_trim_reason():
@@ -571,6 +689,417 @@ def test_bad_env_falls_back():
     finally:
         for k in bad:
             os.environ.pop(k, None)
+
+
+# ---------------------------------------------------------------- Claude provider (fake client)
+
+_ledger_ids = itertools.count()
+_REQ = httpx2.Request("POST", "https://api.anthropic.com/v1/messages")
+
+
+def _status_error(cls, code: int):
+    return cls(f"{code} test", response=httpx2.Response(code, request=_REQ), body=None)
+
+
+def _claude_msg(text=None, stop="end_turn", usage=None, content=None, category=None):
+    blocks = content if content is not None else [SimpleNamespace(type="text", text=text)]
+    return SimpleNamespace(
+        content=blocks, stop_reason=stop,
+        stop_details=SimpleNamespace(category=category) if category else None,
+        usage=usage or SimpleNamespace(input_tokens=1200, output_tokens=40, cache_read_input_tokens=0,
+                                       cache_creation_input_tokens=0, cache_creation=None),
+    )
+
+
+class _FakeClaude:
+    def __init__(self, behavior):
+        self.behavior, self.calls, self.retrieved = behavior, [], []
+        self.messages = SimpleNamespace(create=self._create)
+        self.models = SimpleNamespace(retrieve=self._retrieve)
+
+    async def _create(self, **kw):
+        self.calls.append(kw)
+        out = self.behavior()
+        if isinstance(out, BaseException):
+            raise out
+        if out == "hang":
+            await asyncio.sleep(10)
+        return out
+
+    async def _retrieve(self, model_id, **kw):
+        self.retrieved.append((model_id, kw))
+        out = self.behavior()
+        if isinstance(out, BaseException):
+            raise out
+        return SimpleNamespace(id=model_id)
+
+    async def close(self):
+        pass
+
+
+@contextmanager
+def claude_client(behavior, timeout: str = "3", **extra_env):
+    """Claude provider with a fake client, a fake key and a fresh temp ledger."""
+    fake = _FakeClaude(behavior)
+    env = {"HANDOVER_CHECK_PROVIDER": "claude", "ANTHROPIC_API_KEY": "sk-ant-test-not-real",
+           "HANDOVER_CHECK_TIMEOUT": timeout,
+           "HANDOVER_CLAUDE_SPEND_FILE": str(_TMP / f"spend-{next(_ledger_ids)}.json"), **extra_env}
+    saved_env = {k: os.environ.get(k) for k in env}
+    saved_get = check._get_claude
+    os.environ.update(env)
+    check._get_claude = lambda: fake
+    try:
+        yield fake
+    finally:
+        check._get_claude = saved_get
+        for k, v in saved_env.items():
+            _restore(k, v)
+
+
+def test_provider_selection():
+    saved = {k: os.environ.get(k) for k in ("HANDOVER_CHECK_PROVIDER", "ANTHROPIC_API_KEY")}
+    saved_read = check._read_env_file
+    try:
+        os.environ.pop("ANTHROPIC_API_KEY", None)
+        check._read_env_file = lambda: {}
+        os.environ["HANDOVER_CHECK_PROVIDER"] = "auto"
+        assert check.provider() == "gemini"  # no Claude key anywhere
+        check._read_env_file = lambda: {"ANTHROPIC_API_KEY": "sk-ant-from-dotenv"}
+        assert check.provider() == "claude"  # .env counts
+        assert check.active_model() == "claude-haiku-5-5"
+        check._read_env_file = lambda: {}
+        os.environ["ANTHROPIC_API_KEY"] = "sk-ant-from-env"
+        assert check.provider() == "claude" and check.has_key()
+        os.environ["HANDOVER_CHECK_PROVIDER"] = "gemini"  # explicit choice wins over the key
+        assert check.provider() == "gemini"
+        os.environ["HANDOVER_CHECK_PROVIDER"] = "CLAUDE"
+        os.environ.pop("ANTHROPIC_API_KEY")
+        assert check.provider() == "claude" and not check.has_key()
+        r = _run(check_frame(b"x", b"y", "q"))
+        assert r.error == "no_key"  # claude chosen but no key: fail fast, no client built
+    finally:
+        check._read_env_file = saved_read
+        for k, v in saved.items():
+            _restore(k, v)
+
+
+def _jpeg_sized(w: int, h: int, color=(10, 20, 30)) -> bytes:
+    buf = io.BytesIO()
+    Image.new("RGB", (w, h), color).save(buf, format="JPEG")
+    return buf.getvalue()
+
+
+def _sent_size(block: dict) -> int:
+    import base64
+    return max(Image.open(io.BytesIO(base64.b64decode(block["source"]["data"]))).size)
+
+
+def test_claude_request_shape():
+    img = _jpeg()
+    with claude_client(lambda: _claude_msg(_answer("left flap open", "no", 0.86)), timeout="2.5") as fake:
+        r = _run(check_frame(img, img, "Is the left flap folded?", prev_ref=img))
+        led = spend.default_ledger().status()
+    assert (r.done, r.confidence, r.reason, r.error) == ("no", 0.86, "left flap open", None)
+    assert r.cost_usd == spend.cost("claude-haiku-5-5", {"input_tokens": 1200, "output_tokens": 40}) > 0
+    assert led.day_calls == 1 and abs(led.day_usd - r.cost_usd) < 1e-12  # every call reaches the ledger
+    kw = fake.calls[0]
+    assert kw["model"] == "claude-haiku-5-5" and kw["max_tokens"] == 256
+    assert kw["thinking"] == {"type": "disabled"} and "stream" not in kw
+    assert kw["output_config"]["effort"] == "low"
+    fmt = kw["output_config"]["format"]
+    assert fmt["type"] == "json_schema"
+    assert list(fmt["schema"]["properties"]) == ["seen", "differs", "done", "confidence"]
+    assert fmt["schema"]["required"] == ["seen", "differs", "done", "confidence"]
+    assert fmt["schema"]["additionalProperties"] is False
+    assert "8 words" in fmt["schema"]["properties"]["seen"]["description"]
+    assert not {"temperature", "top_p", "top_k"} & set(kw), "sampling params are rejected on 2026-10-21"
+    assert kw["timeout"] == 2.5  # the per-call timeout goes to the SDK
+    # Fixed rules live in system, one text block.
+    assert kw["system"] == [{"type": "text", "text": check.CLAUDE_SYSTEM}] and check.RULE in check.CLAUDE_SYSTEM
+    content = kw["messages"][0]["content"]
+    assert kw["messages"][0]["role"] == "user" and len(kw["messages"]) == 1  # no prefill
+    kinds = [b["type"] if b["type"] != "text" else b["text"].split(":")[0] for b in content]
+    assert kinds == ["IMAGE BEFORE", "image", "IMAGE DONE", "image", "Question", "IMAGE LIVE", "image",
+                     check.CLAUDE_FINAL.split(":")[0]]
+    q = content[4]
+    assert q["text"] == "Question: Is the left flap folded?" and q["cache_control"] == {"type": "ephemeral"}
+    assert [b for b in content if "cache_control" in b] == [q]  # one breakpoint, on the question
+    images = [b for b in content if b["type"] == "image"]
+    assert all(b["source"]["type"] == "base64" and b["source"]["media_type"] == "image/jpeg" for b in images)
+
+
+def test_claude_two_image_form_sizes_and_memo():
+    step = _jpeg_sized(1600, 900, (1, 2, 3))
+    live = _jpeg_sized(1600, 900, (200, 2, 3))
+    with claude_client(lambda: _claude_msg(_answer("nothing", "yes", 0.9))) as fake:
+        r1 = _run(check_frame(step, live, "q"))
+        r2 = _run(check_frame(step, _jpeg_sized(1500, 900, (9, 9, 9)), "q"))
+    assert r1.done == r2.done == "yes" and r1.reason is None
+    c1, c2 = (call["messages"][0]["content"] for call in fake.calls)
+    imgs1 = [b for b in c1 if b["type"] == "image"]
+    assert len(imgs1) == 2  # DONE and LIVE, no BEFORE
+    assert _sent_size(imgs1[0]) == 672 and _sent_size(imgs1[1]) == 640  # step 672 px, LIVE max side
+    done1, done2 = c1[1], c2[1]
+    assert done1 is done2  # memoized: byte-identical across calls, so the cache prefix matches
+    assert "cache_control" not in done1  # a shared image dict never carries the breakpoint
+    os.environ["HANDOVER_CHECK_MAX_SIDE"] = "560"
+    try:
+        with claude_client(lambda: _claude_msg(_answer("nothing", "yes", 0.9))) as fake:
+            _run(check_frame(step, live, "q"))
+    finally:
+        del os.environ["HANDOVER_CHECK_MAX_SIDE"]
+    imgs = [b for b in fake.calls[0]["messages"][0]["content"] if b["type"] == "image"]
+    assert _sent_size(imgs[0]) == 672 and _sent_size(imgs[1]) == 560  # the env moves LIVE only
+
+
+def test_claude_no_cache_switch():
+    img = _jpeg()
+    with claude_client(lambda: _claude_msg(_answer("nothing", "yes", 0.9)), HANDOVER_CLAUDE_CACHE="0") as fake:
+        _run(check_frame(img, img, "q"))
+    assert not [b for b in fake.calls[0]["messages"][0]["content"] if "cache_control" in b]
+
+
+def test_claude_cache_read_tokens_reported():
+    img = _jpeg()
+    usage = SimpleNamespace(input_tokens=300, output_tokens=30, cache_read_input_tokens=900,
+                            cache_creation_input_tokens=0, cache_creation=None)
+    with claude_client(lambda: _claude_msg(_answer("nothing", "yes", 0.9), usage=usage)):
+        r = _run(check_frame(img, img, "q"))
+    assert r.cache_read_tokens == 900
+    assert abs(r.cost_usd - spend.cost("claude-haiku-5-5", usage)) < 1e-12  # reads at 0.1x
+
+
+def test_done_normalized_and_contradiction_guard():
+    img = _jpeg()
+    for raw, differs, want_done, want_reason in [
+        (" Yes ", "nothing", "yes", None),
+        ("NO", "flap open", "no", "flap open"),
+        ("yes", "left flap still open", "unsure", "left flap still open"),  # says done, names a gap
+    ]:
+        text = json.dumps({"seen": "s", "differs": differs, "done": raw, "confidence": 0.9})
+        with claude_client(lambda: _claude_msg(text)):
+            r = _run(check_frame(img, img, "q"))
+        assert (r.done, r.reason, r.error) == (want_done, want_reason, None), raw
+        with fake_client(lambda: text):  # the guard is shared by both providers
+            g = _run(check_frame(img, img, "q"))
+        assert (g.done, g.reason) == (want_done, want_reason), raw
+
+
+def test_claude_error_mapping():
+    img = _jpeg()
+    cases = [
+        (lambda: _status_error(anthropic.AuthenticationError, 401), "no_key"),
+        (lambda: _status_error(anthropic.PermissionDeniedError, 403), "no_key"),
+        (lambda: _status_error(anthropic.RateLimitError, 429), "rate_limited"),
+        (lambda: _status_error(anthropic.InternalServerError, 500), "error"),
+        (lambda: _status_error(anthropic.InternalServerError, 529), "error"),
+        (lambda: _status_error(anthropic.BadRequestError, 400), "error"),
+        (lambda: _status_error(anthropic.NotFoundError, 404), "error"),
+        (lambda: _status_error(anthropic.APIStatusError, 402), "error"),
+        (lambda: anthropic.APITimeoutError(request=_REQ), "timeout"),
+        (lambda: anthropic.APIConnectionError(request=_REQ), "error"),
+        (lambda: RuntimeError("boom"), "error"),
+        (lambda: _claude_msg("not json"), "error"),
+    ]
+    for behavior, want in cases:
+        with claude_client(behavior):
+            r = _run(check_frame(img, img, "q"))
+            m = _run(compare_refs(img, [(0, img), (1, img)]))
+        assert (r.done, r.confidence, r.reason, r.error) == ("unsure", 0.0, None, want), (want, r)
+        assert (m.step, m.confidence, m.error) == (None, 0.0, want), (want, m)
+    with claude_client(lambda: "hang", timeout="0.2"):
+        t0 = time.monotonic()
+        r = _run(check_frame(img, img, "q"))
+        assert r.error == "timeout" and time.monotonic() - t0 < 2
+
+
+def test_claude_refusal_and_truncation_are_errors_but_billed():
+    img = _jpeg()
+    for msg, why in [
+        (_claude_msg("", stop="refusal", category="cyber"), "refusal"),
+        (_claude_msg('{"seen": "a', stop="max_tokens"), "truncated"),
+        (_claude_msg(content=[SimpleNamespace(type="thinking", thinking="")]), "no text"),
+    ]:
+        with claude_client(lambda: msg):
+            r = _run(check_frame(img, img, "q"))
+            led = spend.default_ledger().status()
+        assert (r.done, r.error) == ("unsure", "error"), why
+        assert r.cost_usd > 0 and led.day_calls == 1, why  # the tokens were billed, so they are counted
+
+
+def test_claude_compare_labels():
+    img = _jpeg()
+    refs = [(3, img), (4, img), (5, img)]
+    with claude_client(lambda: _claude_msg(json.dumps({"match": "B", "confidence": 0.8}))) as fake:
+        m = _run(compare_refs(img, refs, "Fold the flap"))
+    assert (m.step, m.confidence, m.error) == (4, 0.8, None) and m.cost_usd > 0
+    kw = fake.calls[0]
+    schema = kw["output_config"]["format"]["schema"]
+    assert schema["properties"]["match"]["enum"] == ["A", "B", "C", "none"]
+    assert schema["additionalProperties"] is False and kw["thinking"] == {"type": "disabled"}
+    texts = [b["text"] for b in kw["messages"][0]["content"] if b["type"] == "text"]
+    assert texts[:4] == ["Reference A", "Reference B", "Reference C", "Live camera now"]
+    assert "Fold the flap" in texts[-1]
+
+
+def _spent_ledger(usd_target: float) -> None:
+    """Fill the active temp ledger past usd_target with one big fake usage."""
+    tokens = int(usd_target / 0.5 * 1_000_000) + 1_000  # haiku output tokens at $0.50 per MTok
+    spend.default_ledger().record("claude-haiku-5-5", {"input_tokens": 0, "output_tokens": tokens})
+
+
+def test_budget_day_cap_blocks_without_a_call():
+    img = _jpeg()
+    with claude_client(lambda: _claude_msg(_answer("nothing", "yes", 0.9)),
+                       HANDOVER_CLAUDE_BUDGET_DAY_USD="0.01", HANDOVER_NO_NETWORK="0") as fake:
+        assert _run(check_frame(img, img, "q")).error is None
+        _spent_ledger(0.01)
+        r = _run(check_frame(img, img, "q"))
+        m = _run(compare_refs(img, [(0, img)]))
+        warm = _run(check.warm_up())
+    assert (r.done, r.confidence, r.error, r.latency_ms) == ("unsure", 0.0, "budget", 0)
+    assert m.error == "budget" and warm is False
+    assert len(fake.calls) == 1 and fake.retrieved == []  # nothing sent once the cap was hit
+
+
+def test_budget_total_cap_blocks():
+    img = _jpeg()
+    with claude_client(lambda: _claude_msg(_answer("nothing", "yes", 0.9)),
+                       HANDOVER_CLAUDE_BUDGET_TOTAL_USD="0.02") as fake:
+        _spent_ledger(0.02)
+        assert spend.default_ledger().status().blocked == "total"
+        assert _run(check_frame(img, img, "q")).error == "budget"
+    assert fake.calls == []
+
+
+def test_gemini_ignores_the_claude_budget():
+    img = _jpeg()
+    os.environ["HANDOVER_CLAUDE_BUDGET_TOTAL_USD"] = "0"
+    try:
+        with fake_client(lambda: _answer("nothing", "yes", 0.9)):
+            r = _run(check_frame(img, img, "q"))
+    finally:
+        del os.environ["HANDOVER_CLAUDE_BUDGET_TOTAL_USD"]
+    assert r.error is None and r.cost_usd == 0.0
+
+
+def test_breaker_budget_reason():
+    budget = CheckResult("unsure", 0.0, 0, error="budget")
+    b = Breaker(errors=3, open_seconds=30)
+    b.record(budget, 0)
+    assert b.offline and b.reason == "budget" and not b.allow(10)
+    assert b.allow(30)  # trial: check_frame answers budget again without a request
+    b.record(budget, 30)
+    assert b.reason == "budget" and not b.allow(59)
+    assert b.allow(60)
+    b.record(CheckResult("no", 0.9, 400), 61)  # the date changed: a real answer closes it
+    assert not b.offline and b.reason is None
+    b.force_open("budget", now=100)
+    assert b.reason == "budget"
+
+
+def test_claude_warm_up():
+    with claude_client(lambda: "ok", HANDOVER_NO_NETWORK="0") as fake:
+        assert _run(check.warm_up(timeout=2)) is True
+    assert fake.retrieved[0][0] == "claude-haiku-5-5" and fake.retrieved[0][1]["timeout"] == 2
+    assert fake.calls == []  # metadata only, no billed message
+    with claude_client(lambda: _status_error(anthropic.AuthenticationError, 401), HANDOVER_NO_NETWORK="0"):
+        assert _run(check.warm_up()) is False
+
+
+def test_claude_mock_mode_makes_no_call():
+    os.environ["HANDOVER_CHECK"], os.environ["HANDOVER_MOCK_PASS_SECONDS"] = "mock", "0"
+    try:
+        with claude_client(lambda: _claude_msg(_answer("nothing"))) as fake:
+            r = _run(check_frame(b"r", b"l", "q", step_started_at=time.monotonic() - 1))
+            m = _run(compare_refs(b"l", [(0, b"a")]))
+    finally:
+        del os.environ["HANDOVER_CHECK"], os.environ["HANDOVER_MOCK_PASS_SECONDS"]
+    assert r.done == "yes" and m.step is None and fake.calls == [] and r.cost_usd == 0
+
+
+def test_redact_claude_keys():
+    saved = os.environ.get("ANTHROPIC_API_KEY")
+    os.environ["ANTHROPIC_API_KEY"] = "sk-ant-api03-secretvalue"
+    try:
+        out = check._redact("auth failed for sk-ant-api03-secretvalue and sk-ant-other_key-123 ok")
+    finally:
+        _restore("ANTHROPIC_API_KEY", saved)
+    assert "secretvalue" not in out and "other_key" not in out and out.count("***") == 2
+
+
+def test_cli_refuses_when_budget_exhausted():
+    ledger = _TMP / "cli-spend.json"
+    spend.Ledger(ledger).record("claude-haiku-5-5", {"output_tokens": 1_000_000})  # $0.50
+    env = {**os.environ, "HANDOVER_CHECK_PROVIDER": "claude", "ANTHROPIC_API_KEY": "sk-ant-test-not-real",
+           "HANDOVER_CLAUDE_SPEND_FILE": str(ledger), "HANDOVER_CLAUDE_BUDGET_DAY_USD": "0.10"}
+    out = subprocess.run([sys.executable, "-m", "server.check", "--time", "a.jpg", "b.jpg", "q", "-n", "1"],
+                         cwd=check.REPO, env=env, capture_output=True, text=True, timeout=60)
+    assert out.returncode == 2, out.stdout + out.stderr
+    assert "Refusing to run" in out.stdout and "sk-ant-test-not-real" not in out.stdout + out.stderr
+
+
+def test_claude_thinking_per_model():
+    img = _jpeg()
+    seen = {}
+    for model in ("claude-haiku-5-5", "claude-opus-5-5", "claude-sonnet-5-5"):
+        with claude_client(lambda: _claude_msg(_answer("nothing", "yes", 0.9)),
+                           HANDOVER_CLAUDE_CHECK_MODEL=model) as fake:
+            assert _run(check_frame(img, img, "q")).error is None
+            _run(compare_refs(img, [(0, img)]))
+        seen[model] = fake.calls
+    for kw in seen["claude-haiku-5-5"]:
+        assert kw["thinking"] == {"type": "disabled"} and kw["max_tokens"] == 256
+    for model in ("claude-opus-5-5", "claude-sonnet-5-5"):  # disabled is a 400 there
+        assert len(seen[model]) == 2
+        for kw in seen[model]:
+            assert "thinking" not in kw and kw["max_tokens"] == 1024, model
+            assert kw["output_config"]["effort"] == "low" and kw["model"] == model
+            assert not {"temperature", "top_p", "top_k"} & set(kw)
+
+
+def test_no_network_switch():
+    """HANDOVER_NO_NETWORK=1: warm_up is a no-op and real clients are never built."""
+    assert os.environ.get("HANDOVER_NO_NETWORK") == "1" and check.no_network()
+    with claude_client(lambda: "ok") as fake:
+        assert _run(check.warm_up()) is False
+    assert fake.retrieved == [] and fake.calls == []
+    saved = {k: os.environ.get(k) for k in ("HANDOVER_CHECK_PROVIDER", "ANTHROPIC_API_KEY")}
+    os.environ.update({"HANDOVER_CHECK_PROVIDER": "claude", "ANTHROPIC_API_KEY": "sk-ant-test-not-real"})
+    check._get_claude = _real_get_claude  # the real builder must refuse under the switch
+    try:
+        r = _run(check_frame(_jpeg(), _jpeg(), "q"))
+    finally:
+        check._get_claude = _no_real_claude
+        for k, v in saved.items():
+            _restore(k, v)
+        check._clients.clear()
+    assert r.error == "error" and r.cost_usd == 0  # nothing was sent
+
+
+def test_httpx2_timeout_is_timeout():
+    req = httpx2.Request("POST", "https://example.invalid")
+    assert check.classify_error(httpx2.ReadTimeout("slow", request=req)) == "timeout"
+    assert check.classify_error(httpx2.ConnectError("down", request=req)) == "error"
+
+
+def test_sdk_load_is_outside_the_timeout():
+    """A slow first SDK import must not turn a fast answer (here a 429) into a timeout."""
+    img = _jpeg()
+    real_load = check._load_sdk
+
+    def slow_load(prov):
+        time.sleep(0.5)
+        real_load(prov)
+
+    check._load_sdk = slow_load
+    try:
+        rate = genai_errors.ClientError(429, {"error": {"code": 429, "status": "RESOURCE_EXHAUSTED"}})
+        with fake_client(lambda: rate, timeout="0.3"):
+            r = _run(check_frame(img, img, "q"))
+    finally:
+        check._load_sdk = real_load
+    assert r.error == "rate_limited", r
 
 
 if __name__ == "__main__":

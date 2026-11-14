@@ -58,7 +58,7 @@ class Hub:
                if not k.startswith("HANDOVER_") and k not in ("GEMINI_API_KEY", "GOOGLE_API_KEY")}
         env.update({
             "HANDOVER_PORT": str(port), "HANDOVER_HTTPS_PORT": str(https_port), "HANDOVER_CERTS": "/nonexistent",
-            "HANDOVER_CHECK": "mock", "HANDOVER_MOCK_PASS_SECONDS": str(PASS_SECONDS), "HANDOVER_TEACH_MOCK": "1",
+            "HANDOVER_CHECK": "mock", "HANDOVER_NO_NETWORK": "1", "HANDOVER_MOCK_PASS_SECONDS": str(PASS_SECONDS), "HANDOVER_TEACH_MOCK": "1",
             "HANDOVER_LESSONS": str(lessons),
             "HANDOVER_GATE": "0",  # identical synthetic frames would never pass the motion gate
             "PYTHONUNBUFFERED": "1",
