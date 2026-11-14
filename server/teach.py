@@ -282,13 +282,11 @@ def _write_json(path: Path, data) -> None:
     tmp.replace(path)
 
 
-def _api_key() -> str:
-    for name in ("GEMINI_API_KEY", "GOOGLE_API_KEY"):
-        if os.environ.get(name):
-            return os.environ[name]
+def _env_file() -> dict[str, str]:
+    """KEY=value pairs from <repo>/.env (never printed)."""
     env = REPO / ".env"
+    values: dict[str, str] = {}
     if env.exists():
-        values = {}
         for line in env.read_text(encoding="utf-8", errors="ignore").splitlines():
             line = line.strip()
             if not line or line.startswith("#") or "=" not in line:
@@ -296,10 +294,46 @@ def _api_key() -> str:
             k, v = line.split("=", 1)
             k = k.strip().removeprefix("export ").strip()
             values[k] = v.strip().strip('"').strip("'")
-        for name in ("GEMINI_API_KEY", "GOOGLE_API_KEY"):
-            if values.get(name):
-                return values[name]
-    raise RuntimeError("no Gemini key: set GEMINI_API_KEY (or GOOGLE_API_KEY) or add it to .env at the repo root")
+    return values
+
+
+def _secret(*names: str) -> str | None:
+    """The first of names set in the environment, else in <repo>/.env."""
+    for name in names:
+        if os.environ.get(name):
+            return os.environ[name]
+    values = _env_file()
+    for name in names:
+        if values.get(name):
+            return values[name]
+    return None
+
+
+def _api_key() -> str:
+    key = _secret("GEMINI_API_KEY", "GOOGLE_API_KEY")
+    if not key:
+        raise RuntimeError("no Gemini key: set GEMINI_API_KEY (or GOOGLE_API_KEY) or add it to .env at the repo root")
+    return key
+
+
+def _anthropic_key() -> str | None:
+    return _secret("ANTHROPIC_API_KEY")
+
+
+def teach_provider() -> str:
+    """Which extractor a new lesson uses: "gemini", "claude" or "mock" (three placeholder steps).
+    HANDOVER_TEACH_MOCK wins; then HANDOVER_TEACH_PROVIDER; auto prefers Gemini (it hears the narration and its
+    free tier costs nothing), then Claude when ANTHROPIC_API_KEY exists, else placeholders."""
+    if config.get("HANDOVER_TEACH_MOCK"):
+        return "mock"
+    choice = config.get("HANDOVER_TEACH_PROVIDER")
+    if choice in ("gemini", "claude"):
+        return str(choice)
+    if _secret("GEMINI_API_KEY", "GOOGLE_API_KEY"):
+        return "gemini"
+    if _anthropic_key():
+        return "claude"
+    return "mock"
 
 
 # ---------------------------------------------------------------- 1. normalize
@@ -483,6 +517,124 @@ def mock_extraction(duration: float, steps_json: Path | None) -> Extraction:
         for i in range(3)
     ]
     return Extraction(steps=steps, transcript=[])
+
+
+# ---------------------------------------------------------------- 2b. Claude fallback (frames only)
+
+CLAUDE_MAX_FRAMES = 120
+CLAUDE_MAX_TOKENS = 8000
+
+CLAUDE_PROMPT = """These are frames from one video of an expert doing a hands-on task, about one per second.
+The text before each image is its timestamp in the video. There is no audio: judge only what you see.
+Split the video into the ordered steps a beginner would follow to repeat the task.
+
+How to find step boundaries:
+- A new step starts when the hands start a new action with a new visible result.
+- Steps are in order, contiguous and cover the whole task: each step's end equals the next step's start.
+  The first step starts at the first frame of the task and the last step ends when the task is finished.
+- Prefer 3 to 12 steps. One step is one physical action with a clear result. Do not merge unrelated actions
+  and do not split one action into tiny pieces.
+- Only use timestamps that appear in the frame labels, or times between them.
+
+""" + PROMPT[PROMPT.index("For each step give:"):PROMPT.index("First give the transcript")].replace(
+    "the narration and video give", "the video gives").replace(
+    "the expert actually says or clearly shows", "the expert clearly shows").replace(
+    "the expert names or uses", "the expert uses")
+
+
+class _ClaudeExtraction(BaseModel):
+    steps: list[Step]
+    safety: list[str]
+    tools: list[str]
+
+
+def claude_schema() -> dict:
+    """Flat schema for output_config.format: every field required, no extra fields, no defaults."""
+    schema = _ClaudeExtraction.model_json_schema()
+    for node in [schema, *schema.get("$defs", {}).values()]:
+        if "properties" in node:
+            node["required"] = list(node["properties"])
+            node["additionalProperties"] = False
+            for prop in node["properties"].values():
+                prop.pop("default", None)
+    return schema
+
+
+def _claude_model() -> str:
+    return str(config.get("HANDOVER_CLAUDE_TEACH_MODEL"))
+
+
+def sample_frames(video: Path, out_dir: Path, max_frames: int = CLAUDE_MAX_FRAMES) -> list[tuple[float, Path]]:
+    """About one JPEG per second, evenly spread and at most max_frames, as (time in seconds, file)."""
+    duration = probe_duration(video)
+    count = max(1, min(max_frames, int(duration)))
+    rate = count / duration if duration > 0 else 1.0
+    out_dir.mkdir(parents=True, exist_ok=True)
+    _run([_bin("ffmpeg"), "-y", "-v", "error", "-i", str(video), "-vf", f"fps={rate:.6f}", "-frames:v", str(count),
+          "-q:v", "4", str(out_dir / "%04d.jpg")])
+    files = sorted(out_dir.glob("*.jpg"))
+    return [(k / rate, f) for k, f in enumerate(files)]
+
+
+def _spend():
+    """server/spend.py guards the paid Claude budget. Without it, no paid call is made."""
+    try:
+        from server import spend
+    except ImportError:
+        raise RuntimeError("server/spend.py is missing, so the Claude budget cannot be checked; "
+                           "no paid call was made") from None
+    return spend
+
+
+def extract_claude(norm: Path, progress: Progress = noop) -> Extraction:
+    """One Claude call on about 1 fps frames of a small proxy. Claude cannot hear the narration, so the
+    transcript is empty and the captions will be empty files."""
+    import base64
+
+    import anthropic
+
+    key = _anthropic_key()
+    if not key:
+        raise RuntimeError("no Anthropic key: set ANTHROPIC_API_KEY or add it to .env at the repo root")
+    spend = _spend()
+    model = _claude_model()
+    norm = Path(norm)
+    with tempfile.TemporaryDirectory(prefix="handover-frames-") as tmp:
+        proxy = Path(tmp) / "proxy.mp4"
+        make_proxy(norm, proxy)
+        frames = sample_frames(proxy, Path(tmp) / "frames")
+        content: list[dict] = []
+        for t, f in frames:
+            content.append({"type": "text", "text": fmt_mmss(t)})
+            content.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
+                                                        "data": base64.standard_b64encode(f.read_bytes()).decode()}})
+    content.append({"type": "text", "text": CLAUDE_PROMPT})
+    progress("extracting", f"Sending {len(frames)} frames to {model} (no audio: captions will be empty)")
+    if not spend.allow():
+        raise RuntimeError("the Claude spending limit is reached; no call was made")
+    client = anthropic.Anthropic(api_key=key)
+    try:
+        response = client.messages.create(
+            model=model,
+            max_tokens=CLAUDE_MAX_TOKENS,
+            messages=[{"role": "user", "content": content}],
+            output_config={"format": {"type": "json_schema", "schema": claude_schema()}},
+        )
+    except anthropic.APIError as e:
+        raise RuntimeError(f"Claude call failed with model {model}: {e}") from None
+    spend.record(model, response.usage)
+    if response.stop_reason == "refusal":
+        raise RuntimeError("Claude declined to describe this video")
+    if response.stop_reason == "max_tokens":
+        raise RuntimeError(f"Claude's answer was cut off at {CLAUDE_MAX_TOKENS} tokens")
+    text = next((b.text for b in response.content if b.type == "text"), "")
+    if not text:
+        raise RuntimeError("Claude returned an empty response")
+    try:
+        got = _ClaudeExtraction.model_validate_json(text)
+    except ValidationError as e:
+        raise RuntimeError(f"Claude answer did not match the lesson schema: {e}") from None
+    return Extraction(transcript=[], steps=got.steps, safety=got.safety, tools=got.tools)
 
 
 # ---------------------------------------------------------------- 3. cut
@@ -937,9 +1089,14 @@ def build(srcs: list[Path], lesson_id: str, title: str, progress: Progress = noo
         progress("extracting", f"Using steps from {Path(steps_json).name}")
         extraction = _clean_extraction(mock_extraction(duration, steps_json), duration)
     else:
-        if config.get("HANDOVER_TEACH_MOCK"):
-            progress("extracting", "Using three placeholder steps (HANDOVER_TEACH_MOCK=1)")
+        provider = teach_provider()
+        if provider == "mock":
+            why = "HANDOVER_TEACH_MOCK is set" if config.get("HANDOVER_TEACH_MOCK") else "no Gemini or Anthropic key"
+            progress("extracting", f"Using three placeholder steps ({why})")
             extraction = mock_extraction(duration, None)
+        elif provider == "claude":
+            progress("extracting", f"Finding steps with {_claude_model()} from frames (no audio)")
+            extraction = extract_claude(norm, progress)
         else:
             progress("extracting", f"Finding steps with {_model()}")
             extraction = extract(norm, progress)
@@ -952,7 +1109,8 @@ def build(srcs: list[Path], lesson_id: str, title: str, progress: Progress = noo
 
 
 def scrub(text: str) -> str:
-    """Error text safe to show in a job status: the Gemini key removed (check._redact) and absolute paths
+    """Error text safe to show in a job status: the Gemini and Anthropic keys removed (check._redact and the
+    same rule for ANTHROPIC_API_KEY) and absolute paths
     replaced by <lessons>, <repo> and <tmp>."""
     try:
         from server import check
@@ -960,6 +1118,9 @@ def scrub(text: str) -> str:
         text = check._redact(text)
     except Exception:  # check.py unavailable or no key configured: nothing to redact
         pass
+    for key in (_secret("GEMINI_API_KEY", "GOOGLE_API_KEY"), _anthropic_key()):
+        if key:
+            text = text.replace(key, "***")
     roots = []
     for label, root in (("<lessons>", lessons_root()), ("<repo>", REPO), ("<tmp>", Path(tempfile.gettempdir()))):
         for form in {str(root), str(Path(root).resolve()), Path(root).as_posix(), Path(root).resolve().as_posix()}:

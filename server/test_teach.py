@@ -168,10 +168,12 @@ def _built_from_fake(lesson_id: str) -> Path:
                 "-pix_fmt", "yuv420p", str(src))
     real = teach.extract
     teach.extract = lambda norm, progress=None: _fake_extraction()
+    os.environ["HANDOVER_TEACH_PROVIDER"] = "gemini"
     try:
         teach.process_upload(src, lesson_id, "Fake lesson")
     finally:
         teach.extract = real
+        os.environ.pop("HANDOVER_TEACH_PROVIDER", None)
     return teach.lessons_root() / lesson_id
 
 
@@ -456,6 +458,195 @@ def test_tunables_come_from_config():
         for name in ("HANDOVER_SELFTEST_TIMEOUT", "HANDOVER_TEACH_MODEL", "HANDOVER_TEACH_MOCK"):
             os.environ.pop(name, None)
     assert teach._model() == config.tunable("HANDOVER_TEACH_MODEL").default
+
+
+# ---------------------------------------------------------------- Claude fallback (fake client, fake budget)
+
+@contextlib.contextmanager
+def _env(**values):
+    saved = {k: os.environ.get(k) for k in values}
+    for k, v in values.items():
+        if v is None:
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = v
+    try:
+        yield
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+
+NO_KEYS = dict(GEMINI_API_KEY=None, GOOGLE_API_KEY=None, ANTHROPIC_API_KEY=None, HANDOVER_TEACH_MOCK=None,
+               HANDOVER_TEACH_PROVIDER=None)
+
+
+@contextlib.contextmanager
+def _no_env_file():
+    real = teach._env_file
+    teach._env_file = lambda: {}
+    try:
+        yield
+    finally:
+        teach._env_file = real
+
+
+def test_provider_choice():
+    with _no_env_file(), _env(**NO_KEYS):
+        assert teach.teach_provider() == "mock"
+        with _env(ANTHROPIC_API_KEY="sk-ant-fake"):
+            assert teach.teach_provider() == "claude"
+            with _env(GEMINI_API_KEY="g-fake"):
+                assert teach.teach_provider() == "gemini"  # Gemini first: it hears the narration, free tier
+                with _env(HANDOVER_TEACH_PROVIDER="claude"):
+                    assert teach.teach_provider() == "claude"
+                with _env(HANDOVER_TEACH_MOCK="1"):
+                    assert teach.teach_provider() == "mock"
+        with _env(HANDOVER_TEACH_PROVIDER="gemini"):
+            assert teach.teach_provider() == "gemini"  # explicit choice; extract then reports the missing key
+
+
+class _FakeSpend:
+    def __init__(self, allow=True):
+        self.allowed, self.calls = allow, []
+
+    def allow(self):
+        self.calls.append("allow")
+        return self.allowed
+
+    def record(self, model, usage):
+        self.calls.append(("record", model, usage))
+
+
+@contextlib.contextmanager
+def _fake_claude(spend, answer=None, stop_reason="end_turn"):
+    import sys
+
+    import anthropic
+
+    import server
+
+    log = {"requests": []}
+    answer = answer or {
+        "steps": [{"start": "00:00", "end": "00:01.5", "title": "Lay it flat", "check_question": "Is it flat?",
+                   "prerequisites": [], "ref_time": "00:01", "common_mistake": ""},
+                  {"start": "00:01.5", "end": "00:03", "title": "Fold it", "check_question": "Is it folded?",
+                   "prerequisites": [1], "ref_time": "", "common_mistake": "Flip it over first."}],
+        "safety": [], "tools": ["Paper"],
+    }
+
+    class Messages:
+        def create(self, **kw):
+            log["requests"].append(kw)
+            spend.calls.append("create")
+            usage = type("U", (), {"input_tokens": 1000, "output_tokens": 200})()
+            block = type("B", (), {"type": "text", "text": json.dumps(answer)})()
+            return type("M", (), {"content": [block], "usage": usage, "stop_reason": stop_reason})()
+
+    class Client:
+        def __init__(self, api_key):
+            log["api_key"] = api_key
+            self.messages = Messages()
+
+    real_client = anthropic.Anthropic
+    had_attr, real_attr = hasattr(server, "spend"), getattr(server, "spend", None)
+    real_mod = sys.modules.get("server.spend")
+    anthropic.Anthropic = Client
+    sys.modules["server.spend"] = spend
+    server.spend = spend
+    try:
+        yield log
+    finally:
+        anthropic.Anthropic = real_client
+        if real_mod is None:
+            sys.modules.pop("server.spend", None)
+        else:
+            sys.modules["server.spend"] = real_mod
+        if had_attr:
+            server.spend = real_attr
+        else:
+            server.__dict__.pop("spend", None)
+
+
+def test_claude_request_shape_and_budget():
+    d = _demo_copy("claude-extract")
+    spend = _FakeSpend()
+    lines = []
+    with _env(ANTHROPIC_API_KEY="sk-ant-fake", HANDOVER_CLAUDE_TEACH_MODEL=None), _fake_claude(spend) as log:
+        ex = teach.extract_claude(d / "norm.mp4", lambda st, msg: lines.append(msg))
+    (req,) = log["requests"]
+    assert log["api_key"] == "sk-ant-fake"
+    assert req["model"] == "claude-haiku-5-5" and req["max_tokens"] == 8000
+    assert not {"temperature", "top_p", "top_k"} & set(req)
+    fmt = req["output_config"]["format"]
+    assert fmt["type"] == "json_schema" and fmt["schema"]["additionalProperties"] is False
+    assert set(fmt["schema"]["required"]) == {"steps", "safety", "tools"}
+    blocks = req["messages"][0]["content"]
+    labels, images = blocks[0:-1:2], blocks[1:-1:2]
+    assert len(images) == 40 and all(b["type"] == "image" for b in images)  # 40 s video, about 1 fps
+    assert [b["text"] for b in labels[:3]] == ["00:00", "00:01", "00:02"]
+    assert blocks[-1]["type"] == "text" and "no audio" in blocks[-1]["text"].lower()
+    assert spend.calls[0] == "allow" and spend.calls[1] == "create"
+    assert spend.calls[2][0:2] == ("record", "claude-haiku-5-5")
+    assert ex.transcript == [] and ex.tools == ["Paper"] and ex.steps[1].common_mistake == "Flip it over first."
+    assert any("captions will be empty" in m for m in lines)
+    assert not list(d.glob("proxy*"))
+
+
+def test_claude_frames_are_capped_and_even():
+    with tempfile.TemporaryDirectory() as tmp:
+        frames = teach.sample_frames(DEMO / "norm.mp4", Path(tmp), max_frames=10)
+    assert len(frames) == 10
+    assert [round(t, 1) for t, _ in frames] == [0.0, 4.0, 8.0, 12.0, 16.0, 20.0, 24.0, 28.0, 32.0, 36.0]
+
+
+def test_claude_respects_the_budget_and_missing_spend():
+    import sys
+
+    d = _demo_copy("claude-budget")
+    spend = _FakeSpend(allow=False)
+    with _env(ANTHROPIC_API_KEY="sk-ant-fake"), _fake_claude(spend) as log:
+        try:
+            teach.extract_claude(d / "norm.mp4")
+            raise AssertionError("expected the budget to stop the call")
+        except RuntimeError as e:
+            assert "spending limit" in str(e)
+        assert log["requests"] == [] and "create" not in spend.calls
+        import server
+
+        sys.modules["server.spend"] = None  # as if server/spend.py did not exist
+        server.__dict__.pop("spend", None)
+        try:
+            teach.extract_claude(d / "norm.mp4")
+            raise AssertionError("expected an error without spend.py")
+        except RuntimeError as e:
+            assert "spend.py is missing" in str(e)
+        assert log["requests"] == []
+
+
+def test_claude_lesson_has_empty_captions_and_scrubbed_errors():
+    src = TMP / "claude-src.mp4"
+    _ffmpeg("-f", "lavfi", "-i", "testsrc2=s=320x240:r=30:d=3", "-c:v", "libx264", "-preset", "ultrafast",
+            "-pix_fmt", "yuv420p", str(src))
+    lines = []
+    with _no_env_file(), _env(**{**NO_KEYS, "ANTHROPIC_API_KEY": "sk-ant-fake"}), _fake_claude(_FakeSpend()):
+        lesson = teach.process_upload(src, "claude-lesson", "Claude lesson", lambda st, msg: lines.append(msg))
+    d = teach.lessons_root() / "claude-lesson"
+    assert [s["check_type"] for s in lesson["steps"]] == ["manual", "camera"]  # step 1 manual, as for Gemini
+    assert all((d / s["captions"]).read_text(encoding="utf-8").strip() == "WEBVTT" for s in lesson["steps"])
+    assert lesson["tools"] == ["Paper"] and any("no audio" in m for m in lines)
+    with _no_env_file(), _env(**{**NO_KEYS, "ANTHROPIC_API_KEY": "sk-ant-secret-123"}):
+        assert teach.scrub(f"bad key sk-ant-secret-123 in {d}") == "bad key *** in <lessons>/claude-lesson"
+        spend = _FakeSpend()
+        with _fake_claude(spend, stop_reason="refusal"):
+            try:
+                teach.process_upload(src, "claude-refused", "X")
+                raise AssertionError("expected an error")
+            except RuntimeError as e:
+                assert "declined" in str(e) and str(TMP) not in str(e)
 
 
 def test_sanitize_id_fits_the_read_rule():
