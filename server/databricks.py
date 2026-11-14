@@ -4,8 +4,11 @@ Every call here returns at once and never raises. Events always go to the local 
 `<repo>/logs/events.jsonl` (one JSON object per line). When DATABRICKS_HOST, DATABRICKS_TOKEN and
 DATABRICKS_WAREHOUSE_ID are set (environment or repo-root .env), a daemon thread also sends them to
 the SQL warehouse through the Statement Execution API, batched: one statement per table per flush, at
-most 200 rows, at most every 5 s, nothing when there is nothing to send (Free Edition has a daily
-compute quota). Failures are soft: logged at most once a minute, exponential back-off to 60 s.
+most 200 rows, at most every 60 s, plus one flush right after a run ends, nothing when there is nothing
+to send (Free Edition has a daily compute quota). Events are written with MERGE on event_id, so a retried
+batch never duplicates rows. A run started with check_mode "mock" stays in the local JSONL only, so
+simulated checks never reach the dashboards. The local JSONL rotates to events.jsonl.1 past 50 MB.
+Failures are soft: logged at most once a minute, exponential back-off to 60 s.
 
 Env (values are never printed):
     DATABRICKS_HOST          https://xxx.cloud.databricks.com
@@ -16,7 +19,7 @@ Env (values are never printed):
     HANDOVER_EVENTS_JSONL    optional override of the local mirror path
 
 API:
-    run_id = start_run(lesson_id, learner=None)
+    run_id = start_run(lesson_id, learner=None, source="phone", check_mode="claude")
     emit("step_enter", step=0)
     emit("check", step=2, done="no", confidence=0.8, latency_ms=900, reason="seams up")
     emit("advance", from_step=2, to_step=3, reason="camera")
@@ -31,6 +34,7 @@ CLI (from the repo root):
     python -m server.databricks --selftest   three events to a temp JSONL; with credentials, flush one batch
     python -m server.databricks --tail       last 20 local events
     python -m server.databricks --warm       with credentials, SELECT 1 to start the warehouse
+    python -m server.databricks --upload ID  with credentials, upload one lesson folder and wait
 """
 
 from __future__ import annotations
@@ -58,11 +62,13 @@ REPO = Path(__file__).resolve().parent.parent
 SQL_FILE = Path(__file__).resolve().parent / "static" / "databricks_init.sql"
 
 BATCH_MAX = 200
-FLUSH_EVERY = 5.0  # seconds
+FLUSH_EVERY = 60.0  # seconds; a run's end flushes at once
 QUEUE_MAX = 10_000
 BACKOFF_MAX = 60.0
 LOG_EVERY = 60.0  # at most one failure log line per minute
 MAX_FILE_BYTES = 200 * 1024**2
+LOCAL_MAX_BYTES = 50 * 1024**2  # the local JSONL rotates to .1 past this
+LESSON_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")  # CONTRACT.md section 2
 MAX_RETRIES = 3  # a failed batch is retried this many times, then dropped (the JSONL keeps it)
 HTTP_TIMEOUT = 45.0  # wait_timeout is 30 s on the server side
 IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
@@ -72,7 +78,8 @@ KINDS = {"run_start", "run_end", "step_enter", "check", "advance", "mistake", "c
 # ---------------------------------------------------------------- config (read at import, no side effects)
 
 def _read_env_file() -> dict[str, str]:
-    """Same rules as server/check.py: KEY=VALUE lines, # comments, optional export and quotes."""
+    """KEY=VALUE lines, # comments, optional export and quotes. An unquoted value ends at " #"
+    (an inline comment); a quoted value is taken as written between its quotes."""
     out: dict[str, str] = {}
     path = REPO / ".env"
     try:
@@ -84,10 +91,21 @@ def _read_env_file() -> dict[str, str]:
                 continue
             k, v = line.split("=", 1)
             k = k.strip().removeprefix("export ").strip()
-            out[k] = v.strip().strip('"').strip("'")
+            out[k] = _env_value(v)
     except OSError:
         pass
     return out
+
+
+def _env_value(raw: str) -> str:
+    v = raw.strip()
+    if v[:1] in ('"', "'"):
+        end = v.find(v[0], 1)
+        return v[1:end] if end > 0 else v[1:]
+    hash_at = v.find(" #")
+    if hash_at < 0:
+        hash_at = v.find("\t#")
+    return (v[:hash_at] if hash_at >= 0 else v).strip()
 
 
 def _load_config() -> dict[str, str]:
@@ -145,7 +163,8 @@ TABLES: dict[str, dict[str, Any]] = {
             "latency_ms": "INT", "reason": "STRING", "from_step": "INT", "to_step": "INT",
             "mistake_kind": "STRING", "looks_like": "INT", "extra": "STRING",
         },
-        "key": None,  # append only
+        "key": ("event_id",),
+        "insert_only": True,  # an event never changes; a retried row is skipped, not duplicated
     },
     "runs": {
         "cols": {"run_id": "STRING", "lesson_id": "STRING", "learner": "STRING",
@@ -178,10 +197,13 @@ def _statement_for(table: str) -> str:
     if spec["key"] is None:
         return f"INSERT INTO {_fq(table)} ({names}) {src}"
     on = " AND ".join(f"t.`{k}` = s.`{k}`" for k in spec["key"])
+    vals = ", ".join(f"s.`{c}`" for c in cols)
+    if spec.get("insert_only"):
+        return (f"MERGE INTO {_fq(table)} t USING ({src}) s ON {on} "
+                f"WHEN NOT MATCHED THEN INSERT ({names}) VALUES ({vals})")
     upd = ", ".join(f"t.`{c}` = s.`{c}`" for c in cols if c not in spec["key"])
     if table == "runs":  # the start row has no ended_at; never let a late start row erase it
         upd = upd.replace("t.`ended_at` = s.`ended_at`", "t.`ended_at` = coalesce(s.`ended_at`, t.`ended_at`)")
-    vals = ", ".join(f"s.`{c}`" for c in cols)
     return (f"MERGE INTO {_fq(table)} t USING ({src}) s ON {on} "
             f"WHEN MATCHED THEN UPDATE SET {upd} WHEN NOT MATCHED THEN INSERT ({names}) VALUES ({vals})")
 
@@ -192,7 +214,9 @@ _lock = threading.Lock()  # run state, counters, queue
 _cond = threading.Condition(_lock)
 _file_lock = threading.Lock()
 _queue: collections.deque = collections.deque()  # (table, row) tuples, bounded by QUEUE_MAX
-_run: dict[str, Any] = {"run_id": None, "lesson_id": None, "learner": None, "started_at": None, "step": 0}
+# local_only: the run's rows stay in the JSONL (check_mode "mock": simulated checks never reach the tables).
+_run: dict[str, Any] = {"run_id": None, "lesson_id": None, "learner": None, "started_at": None, "step": 0,
+                        "local_only": False}
 _stats: dict[str, Any] = {"flushed": 0, "statements": 0, "dropped": 0, "failed_batches": 0,
                           "last_error": None, "last_error_at": None, "last_flush_at": None,
                           "uploaded_files": 0, "local_errors": 0}
@@ -230,26 +254,33 @@ def _soft_fail(where: str, msg: str) -> None:
 # ---------------------------------------------------------------- public API
 
 def start_run(lesson_id: Optional[str], learner: Optional[str] = None, source: Optional[str] = None,
-              **extra: Any) -> Optional[str]:
+              check_mode: Optional[str] = None, **extra: Any) -> Optional[str]:
     """Begin a learner run (ends any active one first). Returns the run id.
 
     `source` is the camera source from the hello ("phone", "glasses", "browser", "file"). It lands in the
     run_start event's extra column so dashboards can leave replays (source "file") out of the live-run charts.
-    Any further keyword goes into extra too."""
+    `check_mode` is the hub's check backend ("claude", "gemini", "mock"); it lands in extra too, and a
+    "mock" run is kept in the local JSONL only, never sent to the tables.
+    Any further keyword goes into extra too. The hub passes source and check_mode when it has them."""
     try:
         if _run["run_id"] is not None:
             end_run()
         run_id = str(uuid.uuid4())
         started = _now_iso()
+        local_only = str(check_mode or "").lower() == "mock"
         with _lock:
-            _run.update(run_id=run_id, lesson_id=lesson_id, learner=learner, started_at=started, step=0)
-        _enqueue("runs", {"run_id": run_id, "lesson_id": lesson_id, "learner": learner,
-                          "started_at": started, "ended_at": None})
+            _run.update(run_id=run_id, lesson_id=lesson_id, learner=learner, started_at=started, step=0,
+                        local_only=local_only)
+        if not local_only:
+            _enqueue("runs", {"run_id": run_id, "lesson_id": lesson_id, "learner": learner,
+                              "started_at": started, "ended_at": None})
         tags = dict(extra)
         if learner:
             tags["learner"] = learner
         if source:
             tags["source"] = source
+        if check_mode:
+            tags["check_mode"] = check_mode
         emit("run_start", step=0, **tags)
         return run_id
     except Exception as e:  # never raise into the server
@@ -266,8 +297,15 @@ def end_run() -> None:
         with _lock:
             row = {"run_id": _run["run_id"], "lesson_id": _run["lesson_id"], "learner": _run["learner"],
                    "started_at": _run["started_at"], "ended_at": _now_iso()}
-            _run.update(run_id=None, learner=None, started_at=None)
-        _enqueue("runs", row)
+            local_only = _run["local_only"]
+            _run.update(run_id=None, learner=None, started_at=None, local_only=False)
+        if not local_only:
+            _enqueue("runs", row)
+            # A finished run goes out now rather than waiting up to FLUSH_EVERY.
+            if _enabled():
+                with _cond:
+                    _flush_now.set()
+                    _cond.notify_all()
     except Exception as e:
         _soft_fail("end_run", f"{type(e).__name__}: {e}")
 
@@ -298,6 +336,7 @@ def emit(kind: str, /, **fields: Any) -> None:
             if kind in ("advance", "step_enter") and f.get("to_step") is not None:
                 _run["step"] = f["to_step"]
             run_id = _run["run_id"]
+            local_only = _run["local_only"]
             lesson_id = f.pop("lesson_id", None) or _run["lesson_id"]
             if lesson_id is not None and _run["run_id"] is None:
                 _run["lesson_id"] = lesson_id
@@ -319,7 +358,8 @@ def emit(kind: str, /, **fields: Any) -> None:
             extra["unknown_kind"] = True
         row["extra"] = json.dumps(extra, default=str, separators=(",", ":")) if extra else None
         _write_local(row)
-        _enqueue("events", row)
+        if not local_only:
+            _enqueue("events", row)
     except Exception as e:
         _soft_fail("emit", f"{type(e).__name__}: {e}")
 
@@ -329,6 +369,9 @@ def upload_lesson_files(lesson_dir: Path, lesson_id: str) -> None:
     lessons and steps rows. Does nothing when Databricks is not configured."""
     try:
         if not _enabled():
+            return
+        if not LESSON_ID_RE.match(str(lesson_id)):
+            _soft_fail("upload", f"bad lesson id {str(lesson_id)[:80]!r}")
             return
         t = threading.Thread(target=_upload_worker, args=(Path(lesson_dir), str(lesson_id)),
                              name="databricks-upload", daemon=True)
@@ -385,6 +428,11 @@ def _write_local(row: dict) -> None:
         line = json.dumps(row, default=str, separators=(",", ":")) + "\n"
         with _file_lock:
             path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                if path.stat().st_size > LOCAL_MAX_BYTES:
+                    path.replace(path.with_name(path.name + ".1"))  # keeps one old file
+            except FileNotFoundError:
+                pass
             with path.open("a", encoding="utf-8") as fh:
                 fh.write(line)
     except Exception as e:
@@ -769,6 +817,9 @@ def _cli_warm() -> int:
 
 def _cli_upload(lesson_id: str) -> int:
     """Upload one lesson folder now (lessons and steps rows plus files to the Volume) and wait for it."""
+    if not LESSON_ID_RE.match(lesson_id):
+        print(f"bad lesson id {lesson_id!r}: letters, digits, _ and -, up to 64, starting with a letter or digit")
+        return 2
     if not _enabled():
         print("Databricks not configured" + (f" ({_config_error()})" if _config_error() else ""))
         return 1
