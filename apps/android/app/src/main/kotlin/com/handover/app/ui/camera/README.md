@@ -1,12 +1,8 @@
-# Camera screen
+# Camera Mode
 
-Status: placeholder. Future owner: the Camera screen builder, assigned by the lead. Until then, nobody else edits this package.
+The phone, or the learner's Ray-Ban Meta glasses through the phone, as the hub's camera (SCREENS.md 10).
 
-What belongs here: CameraX preview and JPEG frames at about 1 per second, long side 640 to 1280, sent with `vm.startCamera()?.sendFrame(jpeg)` (it drops frames while the last one is still sending), the active badge from `CameraSocket.active`, the step title from `CameraSocket.state`, next and back on the camera socket, the "replaced" state (close 4000, no auto-reconnect), and the camera permission request. Add the CameraX dependency here when building it.
-
-Build against:
-- `AppState` (core/AppState.kt) for everything to draw. Read it with `vm.state.collectAsStateWithLifecycle()` higher up; the shell passes it in.
-- `AppViewModel` (core/AppViewModel.kt) for every action. Screens never call the hub directly.
-- `HandOverTheme` and `HandOver.colors` (ui/theme) for color and type. No hard-coded colors.
-
-Keep `CameraScreen(state, vm, modifier)` as the entry point; the shell (ui/shell/AppShell.kt) calls it.
+- `CameraScreen(state, vm, modifier, onClose)`: entry point. Camera pre-prompt, then Camera Mode.
+- `CameraModeContent`: the stateless layout (screenshots use it).
+- `FramePipeline`, `FrameGate`, `FpsMeter`: upright, long side 960, JPEG 70, about 1 fps, and the real sent rate.
+- Glasses: `ui/glasses` (Meta Wearables Device Access Toolkit 1.0.1). Frames go through the same gate into core's `CameraSocket` with source "glasses".

@@ -1,12 +1,8 @@
-# Settings screen
+# Settings
 
-Status: placeholder. Future owner: the Settings screen builder, assigned by the lead. Until then, nobody else edits this package.
+SCREENS.md 17. `SettingsScreen(state, vm, modifier)` is the entry point; `SettingsMain` is the stateless page.
 
-What belongs here: the hub address field and QR scan, both feeding `vm.connect(raw)` (parsed by `HubUrl`), the connection status from `state.connection`, the check mode from `state.session.checkMode`, the theme picker over `ThemeSpec`, and about and licenses.
-
-Build against:
-- `AppState` (core/AppState.kt) for everything to draw. Read it with `vm.state.collectAsStateWithLifecycle()` higher up; the shell passes it in.
-- `AppViewModel` (core/AppViewModel.kt) for every action. Screens never call the hub directly.
-- `HandOverTheme` and `HandOver.colors` (ui/theme) for color and type. No hard-coded colors.
-
-Keep `SettingsScreen(state, vm, modifier)` as the entry point; the shell (ui/shell/AppShell.kt) calls it.
+- `AppSettings` and `SettingsStore`: captions, caption size, haptics, voice next (off by default), camera source. Theme and Appearance live in ui/theme's `ThemeStore`.
+- `ThemePicker`: all 14 themes as live miniatures, search, Appearance.
+- `Parts.kt`: form rows, field, switch, segmented control, pushed bar. Shared with pairing, account and onboarding.
+- `VoiceNext.kt`: the "next" and "back" matcher and a SpeechRecognizer listener for Learn to use.

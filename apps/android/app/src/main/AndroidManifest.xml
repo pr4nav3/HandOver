@@ -6,7 +6,13 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- The phone as the hub's camera, and scanning the hub's QR code. -->
     <uses-permission android:name="android.permission.CAMERA" />
+    <!-- Teach: the narration recorded with a take. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
+    <!-- Ray-Ban Meta glasses (Meta Wearables Device Access Toolkit). The toolkit adds BLUETOOTH_CONNECT. -->
+    <uses-permission android:name="android.permission.BLUETOOTH" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
 
     <application
         android:allowBackup="false"
@@ -18,6 +24,9 @@
         android:networkSecurityConfig="@xml/network_security_config"
         android:supportsRtl="true"
         android:theme="@style/Theme.HandOver">
+        <!-- Meta Wearables toolkit: "0" in Developer Mode (build.gradle.kts manifestPlaceholders). -->
+        <meta-data android:name="com.meta.wearable.mwdat.APPLICATION_ID" android:value="${mwdat_application_id}" />
+        <meta-data android:name="com.meta.wearable.mwdat.CLIENT_TOKEN" android:value="${mwdat_client_token}" />
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -27,7 +36,8 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-            <!-- handover://connect?host=192.168.1.20&port=8000 or handover://192.168.1.20:8000 -->
+            <!-- handover://connect?host=192.168.1.20&port=8000 or handover://192.168.1.20:8000.
+                 Also the Meta AI app's return to HandOver after glasses registration. -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
