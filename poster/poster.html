@@ -1,0 +1,436 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>HandOver Poster</title>
+<meta name="viewport" content="width=2304">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=block" rel="stylesheet">
+<style>
+  /* 24 x 36 in at 96 px/in = 2304 x 3456 px. Every size below is in px of that canvas. */
+  @page { size: 24in 36in; margin: 0; }
+
+  :root {
+    --bg: #fafaf9;
+    --ink: #0c0c0d;
+    --ink-2: #3a3a3c;
+    --muted: #6e6e73;
+    --faint: #a1a1a6;
+    --line: #e4e2df;
+    --frame: #d9d7d3;
+    --green: #30d158;
+    --green-ink: #1f8a3b;
+    --amber: #ffb340;
+    --shotbg: #0b0b0c;
+    --m: 168px;          /* outer margin */
+    --g: 56px;           /* gutter */
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 2304px;
+    height: 3450px;
+    background: var(--bg);
+  }
+
+  body {
+    color: var(--ink);
+    font-family: Inter, -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+    font-feature-settings: "tnum" 1, "cv11" 1, "ss01" 1;
+    -webkit-font-smoothing: antialiased;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+    overflow: hidden;
+  }
+
+  .page {
+    position: relative;
+    width: 2304px;
+    height: 3450px;
+    padding: 140px var(--m) 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(12, 1fr);
+    column-gap: var(--g);
+  }
+
+  /* ---------- header ---------- */
+  .top {
+    align-items: center;
+    font-size: 30px;
+    line-height: 1;
+    color: var(--muted);
+  }
+  .brand {
+    grid-column: 1 / span 6;
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    font-size: 44px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    color: var(--ink);
+  }
+  .dot {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: var(--green);
+    flex: none;
+  }
+  .event {
+    grid-column: 7 / span 6;
+    text-align: right;
+    letter-spacing: -0.005em;
+  }
+  .event b { color: var(--ink); font-weight: 500; }
+
+  /* ---------- headline ---------- */
+  .hook {
+    margin-top: 120px;
+    font-size: 98px;
+    line-height: 1.08;
+    font-weight: 600;
+    letter-spacing: -0.042em;
+    max-width: 1968px;
+  }
+  .hook span { color: var(--faint); }
+
+  /* ---------- hero ---------- */
+  .hero {
+    margin-top: 100px;
+    align-items: start;
+  }
+  .shot {
+    border-radius: 22px;
+    border: 1px solid var(--frame);
+    background: #0b0b0c;
+    padding: 0;
+    overflow: hidden;
+    box-shadow: 0 1px 0 rgba(0,0,0,0.02), 0 24px 48px -32px rgba(0,0,0,0.18);
+  }
+  .shot img { display: block; width: 100%; height: auto; }
+  .hero .shot {
+    grid-column: 1 / span 7;
+    position: relative;
+  }
+  .pin {
+    position: absolute;
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    background: #fff;
+    color: var(--ink);
+    font-size: 24px;
+    font-weight: 600;
+    display: grid;
+    place-items: center;
+    box-shadow: 0 0 0 6px rgba(255,255,255,0.18);
+  }
+  .notes {
+    grid-column: 8 / span 5;
+    padding-left: 24px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    height: 100%;
+    padding-top: 4px;
+  }
+  .note { display: grid; grid-template-columns: 48px 1fr; column-gap: 24px; }
+  .note .n {
+    width: 48px; height: 48px; border-radius: 50%;
+    border: 1.5px solid var(--ink);
+    display: grid; place-items: center;
+    font-size: 24px; font-weight: 600;
+  }
+  .note h3 {
+    font-size: 36px; line-height: 48px; font-weight: 600; letter-spacing: -0.02em;
+  }
+  .note p {
+    grid-column: 2;
+    margin-top: 10px;
+    font-size: 29px; line-height: 1.42; color: var(--muted); letter-spacing: -0.01em;
+  }
+
+  /* ---------- section label ---------- */
+  .label {
+    display: flex;
+    align-items: center;
+    gap: 24px;
+    font-size: 26px;
+    font-weight: 500;
+    color: var(--muted);
+    letter-spacing: 0.01em;
+  }
+  .label::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+
+  /* ---------- flow ---------- */
+  .flow-wrap { margin-top: 96px; }
+  .flow { margin-top: 52px; }
+  .step { grid-column: span 4; display: flex; flex-direction: column; }
+  .step .num {
+    display: flex; align-items: center; gap: 20px;
+    font-size: 28px; font-weight: 500; color: var(--muted);
+  }
+  .step .num .rule { flex: 1; height: 2px; background: var(--line); }
+  .step:last-child .num .rule { background: var(--green); }
+  .step h2 {
+    margin-top: 24px;
+    font-size: 46px; line-height: 1.05; font-weight: 600; letter-spacing: -0.035em;
+  }
+  .step p {
+    margin-top: 22px;
+    font-size: 30px; line-height: 1.42; color: var(--muted); letter-spacing: -0.01em;
+    height: 128px;
+    margin-bottom: 0;
+  }
+  .step .shot { margin-top: 36px; aspect-ratio: 16 / 10; }
+  .step .shot img { width: 100%; height: 100%; object-fit: cover; object-position: center top; }
+  .step .shot.contain { background: var(--shotbg); display: grid; place-items: center; }
+  .step .shot.contain img { object-fit: contain; width: auto; height: auto; max-width: 88%; max-height: 88%; }
+
+  /* ---------- details row ---------- */
+  .more-wrap { margin-top: 96px; }
+  .more { margin-top: 52px; align-items: start; }
+  .cell { grid-column: span 4; }
+  .cell h3 {
+    font-size: 38px; line-height: 1.12; font-weight: 600; letter-spacing: -0.025em;
+  }
+  .cell p {
+    margin-top: 14px;
+    font-size: 27px; line-height: 1.42; color: var(--muted); letter-spacing: -0.01em;
+  }
+  .cell .vis { margin-bottom: 32px; height: 340px; }
+
+  /* the catch */
+  .catch {
+    height: 100%;
+    border-radius: 22px;
+    border: 1px solid var(--frame);
+    background: #0b0b0c;
+    padding: 36px;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-start;
+    gap: 28px;
+  }
+  .catch .bar {
+    display: flex; align-items: center; justify-content: space-between; gap: 20px;
+    padding: 22px 22px 22px 30px;
+    border-radius: 14px;
+    background: rgba(40, 28, 8, 0.96);
+    border: 1px solid rgba(255, 179, 64, 0.35);
+    color: var(--amber);
+    font-size: 27px; font-weight: 600; letter-spacing: -0.01em;
+  }
+  .catch .acts { display: flex; gap: 10px; flex: none; }
+  .catch .btn {
+    font-size: 20px; font-weight: 500; color: #f5f5f7;
+    padding: 9px 16px; border-radius: 10px;
+    border: 1px solid rgba(255, 179, 64, 0.4);
+  }
+  .catch .frames { flex: 1; display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .catch .f {
+    border-radius: 12px;
+    background: #161618;
+    border: 1px solid rgba(255,255,255,0.07);
+    display: flex; flex-direction: column; justify-content: flex-end;
+    padding: 18px;
+    font-size: 21px; color: rgba(235,235,245,0.5);
+  }
+  .catch .f b { display: block; font-weight: 500; color: #f5f5f7; font-size: 23px; margin-bottom: 4px; }
+  .catch .f.hit { border-color: rgba(255,179,64,0.65); }
+  .catch .f.hit b { color: var(--amber); }
+
+  /* done */
+  .vis.shot { background: #141416; }
+  .vis.shot img { width: 100%; height: 100%; object-fit: cover; object-position: center; }
+
+  /* databricks */
+  .db {
+    height: 100%;
+    border-radius: 22px;
+    border: 1px solid var(--frame);
+    background: #fff;
+    padding: 28px 32px;
+    display: flex; flex-direction: column;
+    font-size: 23px;
+  }
+  .db .q {
+    display: flex; flex-direction: column; gap: 6px;
+    padding: 18px 22px;
+    border-radius: 14px;
+    background: #f3f2f0;
+    font-size: 27px; font-weight: 500; letter-spacing: -0.01em;
+  }
+  .db .q .who { font-size: 18px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+  .db table { margin-top: 18px; width: 100%; border-collapse: collapse; }
+  .db th, .db td { text-align: left; padding: 8px 0; border-bottom: 1px solid var(--line); }
+  .db th { font-size: 19px; font-weight: 500; color: var(--faint); letter-spacing: 0.02em; }
+  .db td { color: var(--ink-2); }
+  .db td.k { color: var(--ink); font-weight: 500; }
+  .db .tname { margin-top: auto; padding-top: 12px; font-size: 19px; color: var(--faint); }
+
+  /* ---------- footer ---------- */
+  .foot {
+    margin-top: auto;
+    padding-top: 64px;
+    border-top: 1px solid var(--line);
+    padding-bottom: 130px;
+    align-items: end;
+  }
+  .privacy { grid-column: 1 / span 5; }
+  .privacy .big {
+    font-size: 50px; line-height: 1.1; font-weight: 600; letter-spacing: -0.03em;
+  }
+  .privacy p {
+    margin-top: 18px; font-size: 28px; line-height: 1.45; color: var(--muted);
+  }
+  .meta { grid-column: 6 / span 5; font-size: 26px; line-height: 1.5; color: var(--muted); }
+  .meta dl { display: grid; grid-template-columns: 160px 1fr; row-gap: 14px; }
+  .meta dt { color: var(--faint); }
+  .meta dd { color: var(--ink-2); }
+  .qr { grid-column: 11 / span 2; justify-self: end; text-align: center; }
+  .qr .box {
+    width: 210px; height: 210px;
+    border: 2px dashed var(--faint);
+    border-radius: 16px;
+    display: grid; place-items: center;
+    font-size: 22px; color: var(--faint); line-height: 1.3;
+  }
+  .qr .cap { margin-top: 16px; font-size: 22px; color: var(--muted); }
+
+  .fill {
+    display: inline-block;
+    border: 1.5px dashed var(--faint);
+    border-radius: 8px;
+    padding: 2px 12px;
+    color: var(--muted);
+  }
+</style>
+</head>
+<body>
+<main class="page">
+
+  <header class="grid top">
+    <div class="brand"><span class="dot"></span>HandOver</div>
+    <div class="event"><b>MadHacks 2026</b>&nbsp;&nbsp;·&nbsp;&nbsp;Soham, Pranav, Sikandar, Prayush</div>
+  </header>
+
+  <h1 class="hook">Experts teach the same task over and over.<br><span>With HandOver they do it once, and the lesson watches the next person.</span></h1>
+
+  <section class="grid hero">
+    <figure class="shot">
+      <img src="img/learn.png" alt="HandOver learn screen: live camera on the left, the expert's captioned clip on the right">
+      <span class="pin" style="left: 3.2%; top: 9%;">1</span>
+      <span class="pin" style="left: 48.4%; top: 9%;">2</span>
+      <span class="pin" style="left: 48.4%; top: 81%;">3</span>
+    </figure>
+    <div class="notes">
+      <div class="note">
+        <span class="n">1</span>
+        <h3>Your camera</h3>
+        <p>A phone on a stand or on your chest, pointed at your hands.</p>
+      </div>
+      <div class="note">
+        <span class="n">2</span>
+        <h3>The expert's clip</h3>
+        <p>Their own hands and voice for this step, captioned, on loop.</p>
+      </div>
+      <div class="note">
+        <span class="n">3</span>
+        <h3>It waits for you</h3>
+        <p>The next clip plays when the camera sees the step is done, or when you press Next.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="flow-wrap">
+    <div class="label">How it works</div>
+    <div class="grid flow">
+      <div class="step">
+        <div class="num">01 <span class="rule"></span></div>
+        <h2>Record once</h2>
+        <p>The expert does the task on Meta glasses and talks it through. One video, nothing to label.</p>
+        <figure class="shot contain"><img src="img/record.png" alt="New lesson: upload one video of the whole task"></figure>
+      </div>
+      <div class="step">
+        <div class="num">02 <span class="rule"></span></div>
+        <h2>Cut into steps</h2>
+        <p>One Gemini call splits the take into captioned clips, each with a reference frame and a yes or no question.</p>
+        <figure class="shot"><img src="img/steps.png" alt="Lesson cut into five step clips with a timeline"></figure>
+      </div>
+      <div class="step">
+        <div class="num">03 <span class="rule"></span></div>
+        <h2>Camera checks each step</h2>
+        <p>Gemini sees the live frame next to the reference and answers the question. Yes plays the next clip. Unsure never counts.</p>
+        <figure class="shot"><img src="img/verified.png" alt="Step verified by the camera"></figure>
+      </div>
+    </div>
+  </section>
+
+  <section class="more-wrap">
+    <div class="label">Around the loop</div>
+    <div class="grid more">
+      <div class="cell">
+        <div class="vis catch">
+          <div class="bar">This still looks like step 4.
+            <span class="acts"><span class="btn">Show step 4</span><span class="btn">I'm fine</span></span>
+          </div>
+          <div class="frames">
+            <div class="f"><b>Step 3</b>before</div>
+            <div class="f hit"><b>Step 4</b>matches</div>
+            <div class="f"><b>Step 5</b>expected</div>
+          </div>
+        </div>
+        <h3>Skip a step and it says so</h3>
+        <p>When the check keeps saying not yet, the hub compares your frame with the neighboring steps and names the one you are still on.</p>
+      </div>
+      <div class="cell">
+        <figure class="vis shot"><img src="img/done.png" alt="Lesson complete: time, steps checked by camera, steps marked done"></figure>
+        <h3>A record of the run</h3>
+        <p>At the end: your time, how many steps the camera checked, and how many you marked done yourself.</p>
+      </div>
+      <div class="cell">
+        <div class="vis db">
+          <div class="q"><span class="who">Ask Genie</span>Which step do people get stuck on?</div>
+          <table>
+            <tr><th>handover.events</th><th>what it records</th></tr>
+            <tr><td class="k">check</td><td>yes, no or unsure, latency</td></tr>
+            <tr><td class="k">advance</td><td>camera, button or voice</td></tr>
+            <tr><td class="k">mistake</td><td>behind or ahead, which step</td></tr>
+          </table>
+        </div>
+        <h3>Where people get stuck</h3>
+        <p>Every check and advance lands in a Databricks table. A dashboard and Genie answer which steps need a better clip.</p>
+      </div>
+    </div>
+  </section>
+
+  <footer class="grid foot">
+    <div class="privacy">
+      <div class="big">The hub never saves<br>camera frames.</div>
+      <p>Each frame is checked in memory and dropped. Nothing the learner's camera sees is written to disk.</p>
+    </div>
+    <div class="meta">
+      <dl>
+        <dt>Compared</dt><dd>Dozuki turns video into written guides. Retrocausal needs a fixed camera and labeled cycles.</dd>
+        <dt>Built with</dt><dd>Meta glasses, Gemini, FastAPI, React, Databricks</dd>
+        <dt>Measured</dt><dd>Median check latency <span class="fill">__ s</span></dd>
+      </dl>
+    </div>
+    <div class="qr">
+      <div class="box">Devpost<br>QR code</div>
+      <div class="cap">Try it on Devpost</div>
+    </div>
+  </footer>
+
+</main>
+</body>
+</html>
