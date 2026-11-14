@@ -19,8 +19,10 @@ Env (registered in server/config.py; bad values fall back to the default):
     HANDOVER_MISTAKE_COOLDOWN_S minimum seconds between compares on one step (default 10, range 1 to 120)
     HANDOVER_CHECK=mock         mock mode; the only time HANDOVER_MOCK_MISTAKE is read
     HANDOVER_MOCK_MISTAKE       test only: "behind:<step>" or "ahead:<step>" (0-based);
-                                after MOCK_AFTER_S on that step, mock() returns the
+                                after mock_after_s() on that step, mock() returns the
                                 mistake once per visit to that step, source "mock"
+    HANDOVER_MOCK_MISTAKE_AFTER_S  test only: seconds before the mock fires (default 4,
+                                range 0.5 to 60), clamped to HANDOVER_MOCK_PASS_SECONDS - 0.5
 """
 
 from __future__ import annotations
@@ -32,17 +34,29 @@ from server.check import is_mock
 
 # An "ahead" match is acted on only after one normal check of step k+1 at this confidence.
 AHEAD_CONFIRM_CONF = 0.8
-# Seconds on the step before the HANDOVER_MOCK_MISTAKE hook fires.
-MOCK_AFTER_S = 4.0
 # Confidence reported by the mock hook.
 MOCK_CONF = 0.9
 
 AHEAD_MESSAGE = "You're ahead."
+# Engine tests may set this to skip the registry delay (still clamped below the mock pass time).
+MOCK_AFTER_S: Optional[float] = None
 
 
 def _min_conf() -> float:
     """Minimum k-1 / k / k+1 compare confidence for a mistake. Registry value; a bad or out-of-range env value falls back to the default."""
     return config.env_float("HANDOVER_MISTAKE_MIN_CONF", 0.7, 0, 1)
+
+
+def mock_after_s() -> float:
+    """Seconds on the step before the mock hook fires. Kept 0.5 s under the mock pass time
+    (when that is over 1 s) so the hook always fires before the mock check says yes."""
+    after = config.env_float("HANDOVER_MOCK_MISTAKE_AFTER_S", 4.0, 0.5, 60)
+    if MOCK_AFTER_S is not None:
+        after = MOCK_AFTER_S
+    pass_s = float(config.get("HANDOVER_MOCK_PASS_SECONDS"))  # type: ignore[arg-type]
+    if pass_s > 1:
+        after = min(after, pass_s - 0.5)
+    return after
 
 
 def behind_message(step: int, steps: Optional[list[dict]]) -> str:
@@ -116,7 +130,7 @@ class MistakeWatch:
         return None
 
     def mock(self, step: int, elapsed: float, steps: Optional[list[dict]] = None) -> Optional[dict]:
-        """HANDOVER_MOCK_MISTAKE hook, mock mode only. Fires once per visit, after MOCK_AFTER_S."""
+        """HANDOVER_MOCK_MISTAKE hook, mock mode only. Fires once per visit, after mock_after_s()."""
         if self._mock_fired == step or not is_mock():
             return None
         raw = (config.env_str("HANDOVER_MOCK_MISTAKE", None) or "").lower()
@@ -127,7 +141,7 @@ class MistakeWatch:
             target = int(num)
         except ValueError:
             return None
-        if target != step or elapsed < MOCK_AFTER_S:
+        if target != step or elapsed < mock_after_s():
             return None
         if kind == "behind" and step < 1:
             return None

@@ -2,7 +2,7 @@
 
 import os
 
-from server.mistake import MistakeWatch, needs_confirmation
+from server.mistake import MistakeWatch, mock_after_s, needs_confirmation
 
 STEPS = [{"title": f"s{i}"} for i in range(6)]
 STEPS[4] = {"title": "s4", "common_mistake": "Flip it over first."}
@@ -151,6 +151,35 @@ def test_mock_behind_once():
         assert MistakeWatch().mock(4, 4.0)["message"] == "This still looks like step 4."
         w.reset()  # a new visit to the step re-arms it
         assert w.mock(4, 4.0) is not None
+
+
+def test_mock_after_setting_and_clamp():
+    with _env(HANDOVER_MOCK_PASS_SECONDS="6"):
+        assert mock_after_s() == 4.0
+        with _env(HANDOVER_MOCK_MISTAKE_AFTER_S="2"):
+            assert mock_after_s() == 2.0
+        for bad in ("0.4", "61", "x"):
+            with _env(HANDOVER_MOCK_MISTAKE_AFTER_S=bad):
+                assert mock_after_s() == 4.0, bad
+    for pass_s, want in [("4", 3.5), ("3", 2.5), ("1.2", 0.7), ("1", 4.0), ("0", 4.0)]:
+        with _env(HANDOVER_MOCK_PASS_SECONDS=pass_s):
+            assert abs(mock_after_s() - want) < 1e-9, pass_s
+    # the module override (used by the engine tests) wins over env and is still clamped
+    import server.mistake as mistake
+    try:
+        mistake.MOCK_AFTER_S = 0.3
+        with _env(HANDOVER_MOCK_PASS_SECONDS="100", HANDOVER_MOCK_MISTAKE_AFTER_S="9"):
+            assert mock_after_s() == 0.3
+        mistake.MOCK_AFTER_S = 50.0
+        with _env(HANDOVER_MOCK_PASS_SECONDS="6"):
+            assert mock_after_s() == 5.5
+    finally:
+        mistake.MOCK_AFTER_S = None
+    # the hook fires inside the window before the mock check passes
+    with _env(HANDOVER_CHECK="mock", HANDOVER_MOCK_MISTAKE="behind:2", HANDOVER_MOCK_PASS_SECONDS="3"):
+        w = MistakeWatch()
+        assert w.mock(2, 2.4) is None
+        assert w.mock(2, 2.5)["kind"] == "behind"
 
 
 def test_mock_ahead():
