@@ -2,7 +2,7 @@ Compiles with Xcode on macOS against MWDAT 1.0.1; not yet run on a device.
 
 # HandOver Camera (iPhone app, PLAN.md W8)
 
-A small SwiftUI app that sends about one JPEG per second to the hub's `/ws/camera`
+A small SwiftUI app that sends about two JPEGs per second to the hub's `/ws/camera`
 (CONTRACT.md section 6). It shows the current step and status, and has large Next and Back buttons.
 The source is the phone's back camera (W8a), or Ray-Ban Meta glasses through the Meta Wearables
 Device Access Toolkit 1.0.1 (W8b). If the glasses fail, the app switches to the phone camera on its own.
@@ -18,7 +18,7 @@ an iPhone or the glasses yet.
 | `project.yml` | xcodegen spec: target HandOverCamera, iOS 17.2, Swift 5 mode, `com.handover.camera`, DAT package from 1.0.1, Info.plist keys, portrait only |
 | `Sources/HandOverCameraApp.swift` | `@main`; configures the toolkit and forwards `onOpenURL` callbacks from the Meta AI app |
 | `Sources/FrameSource.swift` | `FrameSource` protocol, JPEG helper (long side 960, quality 0.6), 2 fps throttle, and the glasses stub for builds without the toolkit |
-| `Sources/PhoneCameraSource.swift` | AVCaptureSession back camera, 1280x720, portrait, 1 frame/s |
+| `Sources/PhoneCameraSource.swift` | AVCaptureSession back camera, 1280x720, portrait, 2 frames/s |
 | `Sources/GlassesCameraSource.swift` | All toolkit calls: 2 fps at `.low`, throttled to 2 fps. Falls back after 15 s without frames, or on any error |
 | `Sources/HubClient.swift` | WebSocket client: hello, binary frames, next/back with `from`, state parsing, reconnect with backoff capped at 5 s, stops on close code 4000 |
 | `Sources/ContentView.swift` | UI and `SessionController` (source switching, idle timer, scene phase) |
@@ -28,7 +28,7 @@ an iPhone or the glasses yet.
 1. `brew install xcodegen`
 2. `cd ios && xcodegen generate`. This writes `HandOverCamera.xcodeproj` and `Supporting/Info.plist`. Both are gitignored; edit `project.yml` instead.
 3. `open HandOverCamera.xcodeproj`. Wait for the package to resolve (File > Packages > Resolve Package Versions if it stalls).
-4. Select the HandOverCamera target, then Signing & Capabilities. Tick "Automatically manage signing" and pick your free Personal Team. If the bundle id is taken, change it to something like `com.<you>.handover.camera`.
+4. Select the HandOverCamera target, then Signing & Capabilities. Tick "Automatically manage signing" and pick your team. A free Personal Team is enough for the phone camera; glasses streaming needs a paid Apple Developer Program team (see below). If the bundle id is taken, change it to something like `com.<you>.handover.camera`.
 5. Plug in the iPhone and select it as the run destination. Press Run.
 6. On the iPhone, turn on Settings > Privacy & Security > Developer Mode (needed once, and the phone restarts). Trust the developer under Settings > General > VPN & Device Management.
 7. On first launch, allow Camera and Local Network. If Local Network is denied, the socket fails silently. Re-enable it in Settings > HandOver.
@@ -47,6 +47,10 @@ resolve. In that case, use the fallback below.
 - If iOS blocks `ws://<ip>` with an ATS error (-1022), `NSAllowsLocalNetworking` is not covering the address. For the demo, add `NSAllowsArbitraryLoads: true` under `NSAppTransportSecurity` in `project.yml` and regenerate.
 
 ## Glasses: Developer Mode in the Meta AI app
+
+**Glasses streaming needs a paid Apple Developer Program team.** The toolkit's registration with the
+Meta AI app was rejected when the app was signed with a free Personal Team (checked 2026-11-14). With a
+free team, use the phone camera; choosing Glasses falls back to it.
 
 1. Pair the glasses in the Meta AI app (v254 or later). Update the glasses firmware first if it asks.
 2. In the Meta AI app, open Settings > App Info and tap the version number 5 times. Turn on Developer Mode.
