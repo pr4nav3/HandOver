@@ -31,7 +31,8 @@
 //   /mock/upload_fail?m=text      the next POST /api/lesson fails with 413 {"detail": text}
 //
 // /capture serves the real server/static/capture.html, so its sending can be
-// measured here; /ws/camera counts the frames and otherwise ignores them.
+// measured here; /ws/camera counts the frames, and after a hello gets state,
+// advance and mistake like the real hub (CONTRACT.md section 6).
 
 import { createServer } from 'node:http'
 import { createReadStream, existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
@@ -152,9 +153,13 @@ const stateMsg = () => ({
   ...(NEXT_CLIP ? { next_clip: state.status === 'done' ? null : (steps()[state.step + 1]?.clip ?? null) } : {}),
 })
 
+// Camera sockets that sent hello.
+const cameraClients = new Set()
+
 function broadcast(msg) {
   const text = JSON.stringify(msg)
   for (const ws of clients) ws.send(text)
+  for (const ws of cameraClients) ws.send(text)
 }
 
 function baseStatus() {
@@ -399,15 +404,29 @@ server.on('upgrade', (req, socket, head) => {
   if (path === '/ws/ui') {
     wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws))
   } else if (path === '/ws/camera') {
-    wss.handleUpgrade(req, socket, head, (ws) =>
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      ws.on('close', () => cameraClients.delete(ws))
       ws.on('message', (data, isBinary) => {
-        if (!isBinary) return
+        if (!isBinary) {
+          let msg
+          try {
+            msg = JSON.parse(String(data))
+          } catch {
+            return
+          }
+          if (msg.type === 'hello') {
+            cameraStats.hello = msg
+            cameraClients.add(ws)
+            ws.send(JSON.stringify(stateMsg()))
+          }
+          return
+        }
         cameraStats.frames += 1
         cameraStats.bytes += data.length
         cameraStats.sizes.push(data.length)
         cameraStats.last = jpegSize(data)
-      }),
-    )
+      })
+    })
   } else {
     socket.destroy()
   }
