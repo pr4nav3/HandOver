@@ -597,9 +597,10 @@ def test_compare_label_mapping():
         assert (m.step, m.confidence, m.error) == (want, 0.86, None), (label, m)
     call = models.calls[0]
     assert call.config.response_json_schema["properties"]["match"]["enum"] == ["A", "B", "C", "none"]
+    assert list(call.config.response_json_schema["properties"]) == ["seen", "match", "confidence"]
     texts = [p.text for p in call.contents[0].parts if p.text]
-    assert texts[:4] == ["Reference A", "Reference B", "Reference C", "Live camera now"]
-    assert "Fold the flap" in texts[-1]
+    assert texts[:4] == ["Reference A", "Reference B", "Reference C", "LIVE: the camera now"]
+    assert "Fold the flap" not in " ".join(texts)  # question-neutral
     assert sum(1 for p in call.contents[0].parts if p.inline_data) == 4
 
 
@@ -808,10 +809,10 @@ def test_claude_request_shape():
     assert kw["output_config"]["effort"] == "low"
     fmt = kw["output_config"]["format"]
     assert fmt["type"] == "json_schema"
-    assert list(fmt["schema"]["properties"]) == ["seen", "differs", "done", "confidence"]
-    assert fmt["schema"]["required"] == ["seen", "differs", "done", "confidence"]
+    assert list(fmt["schema"]["properties"]) == ["differs", "done", "confidence"]  # lean, evidence first
+    assert fmt["schema"]["required"] == ["differs", "done", "confidence"]
     assert fmt["schema"]["additionalProperties"] is False
-    assert "8 words" in fmt["schema"]["properties"]["seen"]["description"]
+    assert "4 words" in fmt["schema"]["properties"]["differs"]["description"]
     assert not {"temperature", "top_p", "top_k"} & set(kw), "sampling params are rejected on 2026-10-21"
     assert kw["timeout"] == 2.5  # the per-call timeout goes to the SDK
     # Fixed rules live in system, one text block.
@@ -937,9 +938,10 @@ def test_claude_compare_labels():
     schema = kw["output_config"]["format"]["schema"]
     assert schema["properties"]["match"]["enum"] == ["A", "B", "C", "none"]
     assert schema["additionalProperties"] is False and kw["thinking"] == {"type": "disabled"}
+    assert schema["required"] == ["seen", "match", "confidence"]  # evidence first
     texts = [b["text"] for b in kw["messages"][0]["content"] if b["type"] == "text"]
-    assert texts[:4] == ["Reference A", "Reference B", "Reference C", "Live camera now"]
-    assert "Fold the flap" in texts[-1]
+    assert texts[:4] == ["Reference A", "Reference B", "Reference C", "LIVE: the camera now"]
+    assert "Fold the flap" not in " ".join(texts)  # question-neutral
 
 
 def _spent_ledger(usd_target: float) -> None:
@@ -1100,6 +1102,169 @@ def test_sdk_load_is_outside_the_timeout():
     finally:
         check._load_sdk = real_load
     assert r.error == "rate_limited", r
+
+
+# ---------------------------------------------------------------- latency defaults, neutral compare, bench
+
+def test_claude_lean_form_is_default_and_full_still_parses():
+    lean, full = check._claude_answer_schema(), check._claude_answer_schema("full")
+    assert check.CLAUDE_FORM == "lean" and list(lean["properties"]) == ["differs", "done", "confidence"]
+    assert list(full["properties"]) == ["seen", "differs", "done", "confidence"]
+    assert check.CLAUDE_SYSTEM == check.CLAUDE_SYSTEMS["lean"] and '"seen"' not in check.CLAUDE_SYSTEM
+    assert all(check.RULE in s for s in check.CLAUDE_SYSTEMS.values())
+    assert '"seen"' in check.CLAUDE_SYSTEMS["full"]
+    img = _jpeg()
+    lean_text = json.dumps({"differs": "left flap open", "done": "no", "confidence": 0.9})
+    with claude_client(lambda: _claude_msg(lean_text)) as fake:
+        r = _run(check_frame(img, img, "q"))
+    assert (r.done, r.reason, r.error) == ("no", "left flap open", None)
+    assert fake.calls[0]["system"][0]["text"] == check.CLAUDE_SYSTEMS["lean"]
+    contra = json.dumps({"differs": "flap open", "done": "yes", "confidence": 0.95})
+    with claude_client(lambda: _claude_msg(contra)):
+        assert _run(check_frame(img, img, "q")).done == "unsure"  # the guard still holds without seen
+
+
+def test_compare_prompt_is_question_neutral():
+    """The step question never reaches the compare prompt, on either provider."""
+    img = _jpeg()
+    refs = [(3, img), (4, img), (5, img)]
+    secret = "Is the zebra-striped flap tucked under?"
+    with fake_client(lambda: json.dumps({"seen": "s", "match": "A", "confidence": 0.9})) as models:
+        _run(compare_refs(img, refs, secret))
+        _run(compare_refs(img, refs, None))
+    with_q, without_q = ([p.text for p in c.contents[0].parts if p.text] for c in models.calls)
+    assert with_q == without_q and not any("zebra" in t for t in with_q)
+    with claude_client(lambda: _claude_msg(json.dumps({"seen": "s", "match": "B", "confidence": 0.9}))) as fake:
+        m1 = _run(compare_refs(img, refs, secret))
+        m2 = _run(compare_refs(img, refs))
+    assert m1.step == m2.step == 4
+    t1, t2 = ([b["text"] for b in kw["messages"][0]["content"] if b["type"] == "text"] for kw in fake.calls)
+    assert t1 == t2 and not any("zebra" in t for t in t1)
+    prompt = t1[-1]
+    assert "same physical state as LIVE" in prompt and "which side faces up" in prompt
+    assert '"A"|"B"|"C"|"none"' in prompt and "Task step" not in prompt
+
+
+def test_new_claude_refuses_offline():
+    try:
+        check._new_claude()
+    except RuntimeError as e:
+        assert "HANDOVER_NO_NETWORK" in str(e)
+    else:
+        raise AssertionError("built a real client under HANDOVER_NO_NETWORK=1")
+
+
+def _bench_lesson(with_variants: bool) -> tuple[Path, Path]:
+    root = Path(tempfile.mkdtemp(prefix="bench-", dir=_TMP))
+    (root / "frames").mkdir()
+    steps = []
+    for k, kind in ((1, "manual"), (2, "camera"), (3, "camera")):
+        (root / "frames" / f"{k:02d}.jpg").write_bytes(_jpeg_sized(64, 48, (k * 40, 0, 0)))
+        steps.append({"n": k, "check_type": kind, "check_question": f"question {k}", "ref_frame": f"frames/{k:02d}.jpg"})
+    (root / "lesson.json").write_text(json.dumps({"steps": steps}))
+    vdir = root / "variants"
+    vdir.mkdir()
+    if with_variants:
+        for k in (1, 2, 3):
+            for i in range(2):
+                (vdir / f"state{k}_v{i:02d}.jpg").write_bytes(_jpeg_sized(1000, 600, (k * 40, i * 50, 9)))
+    return root, vdir
+
+
+def test_bench_probes_variants_and_fallback():
+    root, vdir = _bench_lesson(True)
+    probes, source = check.bench_probes(root, vdir, 2)
+    assert [p.id for p in probes] == ["s2own0", "s2prev0", "s3own0", "s3prev0",
+                                      "s2own1", "s2prev1", "s3own1", "s3prev1"]
+    assert "held-out" in source
+    by = {p.id: p for p in probes}
+    assert by["s3own1"].live == (vdir / "state3_v01.jpg").read_bytes() and by["s3own1"].expect == "yes"
+    assert by["s3prev1"].live == (vdir / "state2_v01.jpg").read_bytes() and by["s3prev1"].expect == "no"
+    assert by["s3prev1"].prev == (root / "frames" / "02.jpg").read_bytes() and by["s3prev1"].question == "question 3"
+    empty_root, empty_v = _bench_lesson(False)
+    probes, source = check.bench_probes(empty_root, empty_v, 3)
+    assert len(probes) == 4 and "reference frames" in source  # one round from the lesson's own frames
+
+
+class _FakeStream:
+    def __init__(self, msg):
+        self.msg = msg
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    def __aiter__(self):
+        async def events():
+            yield SimpleNamespace(type="message_start")
+            yield SimpleNamespace(type="content_block_delta", delta=SimpleNamespace(type="text_delta", text="{"))
+        return events()
+
+    async def get_final_message(self):
+        return self.msg
+
+
+def test_run_bench_interleaves_arms_offline():
+    root, vdir = _bench_lesson(True)
+    probes, _ = check.bench_probes(root, vdir, 1)
+    yes = lambda: _claude_msg(json.dumps({"differs": "nothing", "done": "yes", "confidence": 0.9}))  # noqa: E731
+    cold = _FakeClaude(yes)
+    built = []
+    saved_new = check._new_claude
+    check._new_claude = lambda: built.append(1) or cold
+    try:
+        with claude_client(yes) as fake:
+            fake.messages.stream = lambda **kw: fake.calls.append({**kw, "_stream": True}) or _FakeStream(yes())
+            out = _run(check.run_bench(probes, check.BENCH_ARMS, max_usd=1.0, pairs=2))
+    finally:
+        check._new_claude = saved_new
+    arms = check.BENCH_ARMS
+    rs = out["results"]
+    assert len(rs) == len(arms) * len(probes) and out["stopped"] is None
+    assert [r["arm"] for r in rs[:len(arms)]] == [a.name for a in arms]  # probe 0: arms in order
+    assert rs[len(arms)]["arm"] == arms[1].name  # probe 1: the order rotates
+    assert all(not r.get("error") for r in rs + out["pairs"]) and len(out["pairs"]) == 4
+    assert len(built) == len(cold.calls) == 1 + len(probes)  # cold arm: a new client every call
+    assert all("first_ms" in r for r in rs if r["arm"] == "streamed")
+    calls = fake.calls + cold.calls
+    assert len(calls) == len(arms) * (len(probes) + 1) + 4  # warm-ups, timed calls, 2 pairs of 2
+    full = [c for c in calls if list(c["output_config"]["format"]["schema"]["properties"])[0] == "seen"]
+    assert len(full) == 1 + len(probes)  # only the full-schema arm sends seen
+    nocache = [c for c in calls if not any("cache_control" in b for b in c["messages"][0]["content"])]
+    assert len(nocache) == 1 + len(probes)
+    sizes = [_sent_size([b for b in c["messages"][0]["content"] if b["type"] == "image"][-1]) for c in calls]
+    assert sizes.count(512) == 1 + len(probes) and sizes.count(640) == len(calls) - sizes.count(512)  # LIVE side
+    table = check.bench_table(rs, arms)
+    assert len(table) == 2 + len(arms) and "| default | 4/4 |" in table[2]
+    assert table[2].split(" | ")[6:8] == ["2/2", "2/2"]  # own yes, prev false pass (the fake always says yes)
+    assert abs(out["spent"] - sum(r["usd"] for r in rs + out["pairs"]) - sum(  # warm-ups counted too
+        spend.cost("claude-haiku-5-5", {"input_tokens": 1200, "output_tokens": 40}) for _ in arms)) < 1e-9
+
+
+def test_run_bench_max_usd_is_a_hard_stop():
+    root, vdir = _bench_lesson(True)
+    probes, _ = check.bench_probes(root, vdir, 2)
+    per_call = spend.cost("claude-haiku-5-5", {"input_tokens": 1200, "output_tokens": 40})
+    with claude_client(lambda: _claude_msg(json.dumps({"differs": "x", "done": "no", "confidence": 0.9}))) as fake:
+        out = _run(check.run_bench(probes, check.BENCH_ARMS[:2], max_usd=0.0025, pairs=4))
+        none = _run(check.run_bench(probes, check.BENCH_ARMS[:2], max_usd=0.001, pairs=4))
+    assert out["stopped"] and "max-usd" in out["stopped"]
+    assert out["spent"] <= 0.0025 and len(fake.calls) * per_call <= 0.0025 + 1e-12
+    assert none["results"] == [] and none["spent"] == 0  # below the first-call estimate: nothing sent
+
+
+def test_cli_bench_offline_makes_no_paid_call():
+    root, vdir = _bench_lesson(True)
+    env = {**os.environ, "HANDOVER_CHECK_PROVIDER": "claude", "ANTHROPIC_API_KEY": "sk-ant-test-not-real",
+           "HANDOVER_CLAUDE_SPEND_FILE": str(_TMP / "cli-bench.json"), "HANDOVER_NO_NETWORK": "1"}
+    out = subprocess.run([sys.executable, "-m", "server.check", "--bench", "--lesson", str(root),
+                          "--variants", str(vdir), "--max-usd", "0.01"],
+                         cwd=check.REPO, env=env, capture_output=True, text=True, timeout=60)
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert "| Arm |" in out.stdout and "| default | 0/4 |" in out.stdout and "spent $0.0000" in out.stdout
+    assert "sk-ant-test-not-real" not in out.stdout + out.stderr
 
 
 if __name__ == "__main__":
