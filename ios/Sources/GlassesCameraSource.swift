@@ -14,7 +14,8 @@ import UIKit
 import MWDATCore
 import MWDATCamera
 
-/// Ray-Ban Meta camera via DAT, requested at 2 fps / .low and throttled to 1 JPEG per second.
+/// Ray-Ban Meta camera via DAT, requested at 2 fps / .low and throttled to 2 JPEGs per second.
+/// While `busy` is set (the previous frame is still being sent) frames are skipped before encoding.
 ///
 /// Threading: the class is main-actor isolated, so `start()`, `stop()` and all session state run
 /// on the main thread. Toolkit listeners fire on toolkit queues; they touch only the lock-protected
@@ -31,7 +32,8 @@ final class GlassesCameraSource: @MainActor FrameSource {
     var onStatus: ((String) -> Void)?
 
     // Read on toolkit queues; each is guarded by its own lock (see FrameSource.swift).
-    nonisolated private let throttle = FrameThrottle(interval: 1.0)
+    nonisolated private let throttle = FrameThrottle()
+    nonisolated private let busy: LockedFlag?
     nonisolated private let live = LockedFlag(false)
     nonisolated private let gotFirstFrame = LockedFlag(false)
 
@@ -42,6 +44,10 @@ final class GlassesCameraSource: @MainActor FrameSource {
     private var session: DeviceSession?
     private var stream: MWDATCamera.Stream?
     private var tokens: [any AnyListenerToken] = []
+
+    init(busy: LockedFlag? = nil) {
+        self.busy = busy
+    }
 
     private enum GlassesError: LocalizedError {
         case notRegistered, permissionDenied, noCamera
@@ -179,7 +185,8 @@ final class GlassesCameraSource: @MainActor FrameSource {
                 self.gotFirstFrame.set(true)
                 Task { @MainActor [weak self] in self?.firstFrameArrived(gen: gen) }
             }
-            guard self.throttle.shouldEmit(),
+            guard self.busy?.value != true,
+                  self.throttle.shouldEmit(),
                   let image = frame.makeUIImage(),
                   let jpeg = JPEGEncoder.encode(image) else { return }
             Task { @MainActor [weak self] in self?.deliver(jpeg, gen: gen) }

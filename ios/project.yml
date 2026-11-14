@@ -67,7 +67,7 @@ targets:
           UIApplicationSupportsMultipleScenes: false
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
-        NSCameraUsageDescription: "HandOver sends about one camera frame per second to the HandOver hub on your laptop so it can check each step."
+        NSCameraUsageDescription: "HandOver sends about two camera frames per second to the HandOver hub on your laptop so it can check each step."
         NSLocalNetworkUsageDescription: "HandOver connects to the HandOver hub on your local network and to your Meta glasses."
         NSBluetoothAlwaysUsageDescription: "HandOver uses Bluetooth to stream the camera of your Meta glasses."
         NSAppTransportSecurity:
