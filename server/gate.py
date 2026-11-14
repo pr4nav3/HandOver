@@ -159,6 +159,11 @@ class MotionGate:
         self._last_change = None
 
     @property
+    def settled(self) -> bool:
+        """True when the newest frame is still, so a fast confirm can trust it; always True when disabled."""
+        return not self.enabled or self._still_count >= self.still_frames
+
+    @property
     def stats(self) -> dict:
         """Counters and the latest measurements, for logs."""
         return {

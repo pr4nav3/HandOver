@@ -90,6 +90,22 @@ def test_heartbeat_during_continuous_motion():
     assert g.stats["last_motion"] > g.motion_thresh  # still moving at the end
 
 
+def test_settled_property():
+    g = MotionGate(enabled=True)
+    assert g.settled is False  # no frames yet
+    still = frame()
+    feed(g, [still, still], engine=False)
+    assert g.settled is False  # one still frame is not enough
+    g.observe(still, 2.0)
+    assert g.settled is True
+    g.observe(frame(rect_x=300), 2.5)
+    assert g.settled is False  # motion clears it
+    g.reset()
+    feed(g, [frame(rect_x=300)] * 2, t0=3.0, engine=False)
+    assert g.settled is True
+    assert MotionGate(enabled=False).settled is True
+
+
 def test_disabled_gate():
     g = MotionGate(enabled=False)
     assert feed(g, [frame(rect_x=i * 50) for i in range(5)] + [b"junk"]) == [True] * 6
