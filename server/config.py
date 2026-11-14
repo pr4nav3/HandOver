@@ -162,6 +162,10 @@ REGISTRY: tuple[Tunable, ...] = (
     # mistake
     T("HANDOVER_MISTAKE_MIN_CONF", 0.7, "float", "mistake.py", "minimum compare confidence for behind or ahead",
       0, 1),
+    T("HANDOVER_MISTAKE_SETTLE_S", 5.0, "float", "mistake.py",
+      "seconds of settled consecutive no before the mistake compare runs", 0.5, 60),
+    T("HANDOVER_MISTAKE_COOLDOWN_S", 10.0, "float", "mistake.py",
+      "minimum seconds between mistake compares on one step", 1, 120),
     T("HANDOVER_MOCK_MISTAKE", None, "str", "mistake.py",
       "test only, mock mode: behind:<step> or ahead:<step> (0-based)"),
     # engine

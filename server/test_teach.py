@@ -397,7 +397,6 @@ def test_self_test_uses_its_own_timeout():
         os.environ.pop("HANDOVER_SELFTEST_TIMEOUT", None)
     assert seen[:8] == [10.0] * 8 and seen[8:] == [25.0] * 8, seen
     assert dict(os.environ) == env_before  # the self-test never touches the environment
-    assert teach._accepts_timeout(real)  # the real check_frame has the parameter
     results = [s.get("self_test") for s in _read(d)["steps"]]
     # demo step 1 starts and ends on the same picture (its moving box wraps back to x=0), so the fake check,
     # which compares bytes, rightly fails it; steps 2, 4 and 5 compare against a different previous reference
@@ -437,6 +436,26 @@ def test_self_test_async_runs_on_a_loop():
     finally:
         os.environ.pop("HANDOVER_CHECK", None)
     assert lesson["steps"][1]["self_test"]["ok"] is True and _read(d) == lesson
+
+
+def test_tunables_come_from_config():
+    import inspect
+
+    from server import check, config
+
+    assert "timeout" in inspect.signature(check.check_frame).parameters
+    os.environ["HANDOVER_SELFTEST_TIMEOUT"] = "500"   # outside 0.1 to 120: config falls back to the default
+    os.environ["HANDOVER_TEACH_MODEL"] = "some-free-model"
+    os.environ["HANDOVER_TEACH_MOCK"] = "true"
+    try:
+        assert teach._selftest_timeout() == config.tunable("HANDOVER_SELFTEST_TIMEOUT").default == 10.0
+        assert teach._model() == "some-free-model"
+        code, out, _ = _cli(str(DEMO / "norm.mp4"), "--id", "mock-dry", "--dry-run")
+        assert code == 0 and "3 steps" in out
+    finally:
+        for name in ("HANDOVER_SELFTEST_TIMEOUT", "HANDOVER_TEACH_MODEL", "HANDOVER_TEACH_MOCK"):
+            os.environ.pop(name, None)
+    assert teach._model() == config.tunable("HANDOVER_TEACH_MODEL").default
 
 
 def test_sanitize_id_fits_the_read_rule():
