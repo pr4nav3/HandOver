@@ -11,8 +11,9 @@ grayscale image using the JPEG decoder's built-in downscaling, blurred, and
 compared with the previous one. Measure of difference between two frames: the
 fraction of pixels whose gray value differs by more than 25.
 
-Env (a constructor argument wins over env; a bad value falls back to the default):
-    HANDOVER_GATE=0                disable the gate (every frame is allowed)
+Env, read through server/config.py (a constructor argument wins over env; a bad or
+out-of-range value logs one warning and falls back to the default):
+    HANDOVER_GATE                  0 disables the gate, every frame is allowed (default 1)
     HANDOVER_GATE_MOTION           hold while motion is above this (default 0.02)
     HANDOVER_GATE_STILL            a frame is still below this (default 0.005)
     HANDOVER_GATE_STILL_FRAMES     still frames in a row to count as settled (default 2)
@@ -24,33 +25,18 @@ from __future__ import annotations
 
 import io
 import logging
-import os
 import threading
 from typing import Optional
 
 from PIL import Image, ImageChops, ImageFilter
+
+from server import config
 
 log = logging.getLogger("handover.gate")
 
 SIZE = (160, 90)
 PIXEL_DIFF = 25  # gray levels; below this counts as sensor noise or lighting flicker
 BLUR_RADIUS = 1.5
-
-
-def _env_num(name: str, default: float, cast: type = float) -> float:
-    """Read a positive number from env so thresholds can be tuned without code edits."""
-    raw = os.environ.get(name)
-    if raw is None or raw.strip() == "":
-        return default
-    try:
-        value = cast(raw)
-    except ValueError:
-        log.warning("gate: ignoring bad %s=%r, using %s", name, raw, default)
-        return default
-    if value <= 0:
-        log.warning("gate: ignoring non-positive %s=%r, using %s", name, raw, default)
-        return default
-    return value
 
 
 def _small(jpeg: bytes) -> Image.Image:
@@ -91,16 +77,23 @@ class MotionGate:
         change_thresh: Optional[float] = None,
         heartbeat_s: Optional[float] = None,
     ) -> None:
-        if enabled is None:
-            enabled = os.environ.get("HANDOVER_GATE", "1") != "0"
-        self.enabled = enabled
-        self.motion_thresh = motion_thresh if motion_thresh is not None else _env_num("HANDOVER_GATE_MOTION", 0.02)
-        self.still_thresh = still_thresh if still_thresh is not None else _env_num("HANDOVER_GATE_STILL", 0.005)
-        self.still_frames = int(
-            still_frames if still_frames is not None else _env_num("HANDOVER_GATE_STILL_FRAMES", 2, int)
+        # Defaults and ranges match server/config.py REGISTRY (test_config enforces it).
+        self.enabled = enabled if enabled is not None else config.env_bool("HANDOVER_GATE", True)
+        self.motion_thresh = (
+            motion_thresh if motion_thresh is not None else config.env_float("HANDOVER_GATE_MOTION", 0.02, 0, 1)
         )
-        self.change_thresh = change_thresh if change_thresh is not None else _env_num("HANDOVER_GATE_CHANGE", 0.018)
-        self.heartbeat_s = heartbeat_s if heartbeat_s is not None else _env_num("HANDOVER_GATE_HEARTBEAT_S", 6.0)
+        self.still_thresh = (
+            still_thresh if still_thresh is not None else config.env_float("HANDOVER_GATE_STILL", 0.005, 0, 1)
+        )
+        self.still_frames = (
+            still_frames if still_frames is not None else config.env_int("HANDOVER_GATE_STILL_FRAMES", 2, 1, 30)
+        )
+        self.change_thresh = (
+            change_thresh if change_thresh is not None else config.env_float("HANDOVER_GATE_CHANGE", 0.018, 0, 1)
+        )
+        self.heartbeat_s = (
+            heartbeat_s if heartbeat_s is not None else config.env_float("HANDOVER_GATE_HEARTBEAT_S", 6.0, 0.5, 600)
+        )
 
         self._prev: Optional[Image.Image] = None  # last decoded frame, for motion
         self._still_count = 0
