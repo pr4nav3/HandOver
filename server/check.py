@@ -11,7 +11,7 @@ Env:
     HANDOVER_CHECK_MODEL             model id (default gemini-3.5-flash-lite)
     HANDOVER_CHECK=mock              no network; pass after N seconds on a step
     HANDOVER_MOCK_PASS_SECONDS       N for mock mode (default 6)
-    HANDOVER_CHECK_TIMEOUT           seconds before a call counts as unsure (default 8)
+    HANDOVER_CHECK_TIMEOUT           seconds before a call counts as unsure (default 3)
     HANDOVER_DEBOUNCE_N              consecutive yes needed (default 2)
     HANDOVER_MIN_CONF                minimum confidence for a yes (default 0.8)
 """
@@ -199,7 +199,7 @@ async def check_frame(
     if is_mock():
         return await _mock_check(ref_jpeg, step_started_at)
     t0 = time.monotonic()
-    timeout = float(os.environ.get("HANDOVER_CHECK_TIMEOUT", "8"))
+    timeout = float(os.environ.get("HANDOVER_CHECK_TIMEOUT", "3"))
     try:
         done, conf = await asyncio.wait_for(_gemini_check(ref_jpeg, live_jpeg, question), timeout)
     except asyncio.TimeoutError:

@@ -22,11 +22,12 @@ import time
 from pathlib import Path
 from typing import Callable
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 REPO = Path(__file__).resolve().parent.parent
-FFMPEG = shutil.which("ffmpeg") or "/opt/homebrew/bin/ffmpeg"
-FFPROBE = shutil.which("ffprobe") or "/opt/homebrew/bin/ffprobe"
+HDR_TRANSFERS = {"smpte2084", "arib-std-b67"}  # PQ and HLG, what iPhones record in HDR
+SDR_TAGS = ["-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709"]
+SDR_FRAME_TAGS = "setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709"
 
 MODEL = os.environ.get("HANDOVER_TEACH_MODEL", "gemini-3.8-flash")
 FALLBACK_MODEL_HINT = "gemini-3.1-pro-preview"
@@ -91,18 +92,32 @@ do not invent speech. If nothing is said, return an empty transcript.
 
 # ---------------------------------------------------------------- helpers
 
+def _bin(name: str) -> str:
+    """Path to ffmpeg or ffprobe: PATH first (ffmpeg.exe on Windows), then Homebrew's folder on a Mac."""
+    found = shutil.which(name)
+    if found:
+        return found
+    brew = Path("/opt/homebrew/bin") / name
+    if brew.is_file():
+        return str(brew)
+    raise RuntimeError(f"{name} not found on PATH. Install ffmpeg and make sure {name} runs from a terminal.")
+
+
+def _capture(cmd: list[str]) -> subprocess.CompletedProcess:
+    return subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                          text=True, encoding="utf-8", errors="replace")
+
+
 def _run(cmd: list[str]) -> None:
-    p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    p = _capture(cmd)
     if p.returncode != 0:
         tail = "\n".join(p.stderr.strip().splitlines()[-15:])
         raise RuntimeError(f"command failed ({p.returncode}): {' '.join(cmd[:3])} ...\n{tail}")
 
 
 def probe_duration(path: Path) -> float:
-    out = subprocess.run(
-        [FFPROBE, "-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nk=1", str(path)],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-    )
+    out = _capture([_bin("ffprobe"), "-v", "error", "-show_entries", "format=duration",
+                    "-of", "default=nw=1:nk=1", str(path)])
     try:
         return float(out.stdout.strip())
     except ValueError:
@@ -110,11 +125,16 @@ def probe_duration(path: Path) -> float:
 
 
 def has_audio(path: Path) -> bool:
-    out = subprocess.run(
-        [FFPROBE, "-v", "error", "-select_streams", "a", "-show_entries", "stream=index", "-of", "csv=p=0", str(path)],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-    )
+    out = _capture([_bin("ffprobe"), "-v", "error", "-select_streams", "a", "-show_entries", "stream=index",
+                    "-of", "csv=p=0", str(path)])
     return bool(out.stdout.strip())
+
+
+def color_transfer(path: Path) -> str:
+    """Transfer function of the first video stream, for example bt709, smpte2084 (PQ) or arib-std-b67 (HLG)."""
+    out = _capture([_bin("ffprobe"), "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=color_transfer",
+                    "-of", "default=nw=1:nk=1", str(path)])
+    return out.stdout.strip().lower()
 
 
 def parse_time(value) -> float:
@@ -133,8 +153,16 @@ def parse_time(value) -> float:
 
 
 def fmt_mmss(seconds: float) -> str:
-    s = max(0, int(round(seconds)))
-    return f"{s // 60:02d}:{s % 60:02d}"
+    """ "MM:SS", or "MM:SS.s" (one decimal) when the time is not a whole second, so short steps keep their length."""
+    tenths = max(0, int(round(seconds * 10)))
+    m, rem = divmod(tenths, 600)
+    s, t = divmod(rem, 10)
+    return f"{m:02d}:{s:02d}" + (f".{t}" if t else "")
+
+
+def quantize(seconds: float) -> float:
+    """The time fmt_mmss writes, so a clip and its lesson.json timestamps agree."""
+    return parse_time(fmt_mmss(seconds))
 
 
 def fmt_vtt(seconds: float) -> str:
@@ -159,8 +187,8 @@ def lessons_root() -> Path:
 
 def _write_json(path: Path, data) -> None:
     tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
-    os.replace(tmp, path)
+    tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    tmp.replace(path)
 
 
 def _api_key() -> str:
@@ -170,7 +198,7 @@ def _api_key() -> str:
     env = REPO / ".env"
     if env.exists():
         values = {}
-        for line in env.read_text().splitlines():
+        for line in env.read_text(encoding="utf-8", errors="ignore").splitlines():
             line = line.strip()
             if not line or line.startswith("#") or "=" not in line:
                 continue
@@ -186,16 +214,22 @@ def _api_key() -> str:
 # ---------------------------------------------------------------- 1. normalize
 
 def normalize(src: Path, dst: Path) -> None:
-    """1080p tall, 30 fps constant, H.264 + AAC, faststart. Adds silent audio when the input has none."""
+    """1080p tall, 30 fps constant, H.264 + AAC, faststart, tagged SDR bt709. Adds silent audio when the input
+    has none. iPhone HDR (PQ or HLG, bt2020) is converted to the bt709 color matrix so browsers show it SDR."""
     dst.parent.mkdir(parents=True, exist_ok=True)
     audio = has_audio(src)
-    cmd = [FFMPEG, "-y", "-i", str(src)]
+    if color_transfer(src) in HDR_TRANSFERS:
+        vf = "scale=-2:1080:in_color_matrix=bt2020:out_color_matrix=bt709,format=yuv420p"
+    else:
+        vf = "scale=-2:1080,format=yuv420p"
+    vf += "," + SDR_FRAME_TAGS  # the encoder flags alone lose to the frame tags ffmpeg carries from the input
+    cmd = [_bin("ffmpeg"), "-y", "-i", str(src)]
     if not audio:
         cmd += ["-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo", "-shortest"]
     cmd += [
         "-map", "0:v:0", "-map", "0:a:0" if audio else "1:a:0",
-        "-vf", "scale=-2:1080,format=yuv420p", "-r", "30", "-fps_mode", "cfr",
-        "-c:v", "libx264", "-crf", "20", "-preset", "veryfast",
+        "-vf", vf, "-r", "30", "-fps_mode", "cfr",
+        "-c:v", "libx264", "-crf", "20", "-preset", "veryfast", *SDR_TAGS,
         "-c:a", "aac", "-ar", "48000", "-ac", "2",
         "-movflags", "+faststart", str(dst),
     ]
@@ -204,15 +238,15 @@ def normalize(src: Path, dst: Path) -> None:
 
 def concat(normalized: list[Path], dst: Path) -> None:
     """Joins already normalized files (same codec settings) without re-encoding."""
-    with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as f:
+    with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False, encoding="utf-8") as f:
         for p in normalized:
-            f.write("file '" + str(Path(p).resolve()).replace("'", "'\\''") + "'\n")
-        listfile = f.name
+            f.write("file '" + Path(p).resolve().as_posix().replace("'", "'\\''") + "'\n")
+        listfile = Path(f.name)
     try:
-        _run([FFMPEG, "-y", "-f", "concat", "-safe", "0", "-i", listfile, "-c", "copy",
+        _run([_bin("ffmpeg"), "-y", "-f", "concat", "-safe", "0", "-i", str(listfile), "-c", "copy",
               "-movflags", "+faststart", str(dst)])
     finally:
-        os.unlink(listfile)
+        listfile.unlink(missing_ok=True)
 
 
 # ---------------------------------------------------------------- 2. extract
@@ -224,9 +258,10 @@ def _clean_extraction(ex: Extraction, duration: float) -> Extraction:
     for old_n, st in indexed:
         a = min(max(0.0, parse_time(st.start)), duration)
         b = min(max(0.0, parse_time(st.end)), duration)
-        if b - a < 0.5:
+        start, end = fmt_mmss(a), fmt_mmss(b)
+        if b - a < 0.5 or start == end:
             continue
-        kept.append((old_n, st.model_copy(update={"start": fmt_mmss(a), "end": fmt_mmss(b)})))
+        kept.append((old_n, st.model_copy(update={"start": start, "end": end})))
     renum = {old: new for new, (old, _) in enumerate(kept, start=1)}
     steps = []
     for new_n, (_, st) in enumerate(kept, start=1):
@@ -297,7 +332,7 @@ def extract(norm: Path) -> Extraction:
 def mock_extraction(duration: float, steps_json: Path | None) -> Extraction:
     """Steps from a JSON file (same shape as Extraction), or three equal placeholder steps."""
     if steps_json:
-        return Extraction.model_validate_json(Path(steps_json).read_text())
+        return Extraction.model_validate_json(Path(steps_json).read_text(encoding="utf-8"))
     third = duration / 3
     steps = [
         Step(start=fmt_mmss(i * third), end=fmt_mmss(duration if i == 2 else (i + 1) * third),
@@ -320,13 +355,13 @@ def _write_vtt(path: Path, transcript: list[Segment], start: float, length: floa
         if b - a < 0.05 or not text:
             continue
         lines += [f"{fmt_vtt(a)} --> {fmt_vtt(b)}", text, ""]
-    path.write_text("\n".join(lines) + "\n")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def _last_frame(clip: Path, out: Path) -> None:
     for offset in ("-0.1", "-0.5", "-1.0"):
         out.unlink(missing_ok=True)
-        p = subprocess.run([FFMPEG, "-y", "-sseof", offset, "-i", str(clip), "-frames:v", "1", "-q:v", "2", str(out)],
+        p = subprocess.run([_bin("ffmpeg"), "-y", "-sseof", offset, "-i", str(clip), "-frames:v", "1", "-q:v", "2", str(out)],
                            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         if p.returncode == 0 and out.exists() and out.stat().st_size > 0:
             return
@@ -334,34 +369,78 @@ def _last_frame(clip: Path, out: Path) -> None:
 
 
 def cut(lesson_dir: Path, extraction: Extraction, lesson_id: str | None = None, title: str | None = None) -> dict:
-    """Cuts clips, captions and reference frames per step and writes lesson.json and extraction.json."""
+    """Cuts clips, captions and reference frames per step and writes lesson.json and extraction.json.
+
+    Every timestamp is checked before anything is cut, and the new files are built in .recut_tmp/ and swapped
+    in only when every step succeeded, so a bad timestamp or an ffmpeg failure leaves the old lesson intact."""
     lesson_dir = Path(lesson_dir)
     norm = lesson_dir / "norm.mp4"
     duration = probe_duration(norm)
     old = {}
     if (lesson_dir / "lesson.json").exists():
-        old = json.loads((lesson_dir / "lesson.json").read_text())
+        old = json.loads((lesson_dir / "lesson.json").read_text(encoding="utf-8"))
     lesson_id = lesson_id or old.get("id") or lesson_dir.name
     title = title or old.get("title") or lesson_id
 
-    for sub in ("clips", "captions", "frames"):
-        shutil.rmtree(lesson_dir / sub, ignore_errors=True)
-        (lesson_dir / sub).mkdir(parents=True)
-
-    steps_out = []
+    if not extraction.steps:
+        raise ValueError("lesson has no steps")
+    spans: list[tuple[float, float]] = []
     for n, st in enumerate(extraction.steps, start=1):
-        a = min(max(0.0, parse_time(st.start)), duration)
-        b = min(max(0.0, parse_time(st.end)), duration)
+        try:
+            a = quantize(min(max(0.0, parse_time(st.start)), duration))
+            b = quantize(min(max(0.0, parse_time(st.end)), duration))
+        except ValueError as e:
+            raise ValueError(f"step {n}: {e}") from None
         if b - a < 0.2:
             raise ValueError(f"step {n} has no length after clamping ({st.start} to {st.end}, video {duration:.1f} s)")
+        spans.append((a, b))
+
+    tmp = lesson_dir / ".recut_tmp"
+    shutil.rmtree(tmp, ignore_errors=True)
+    for sub in SUBDIRS:
+        (tmp / sub).mkdir(parents=True)
+
+    try:
+        steps_out = _cut_steps(norm, tmp, extraction, spans)
+    except BaseException:
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise
+    _swap_in(lesson_dir, tmp)
+
+    lesson = {"id": lesson_id, "title": title, "video": "norm.mp4", "steps": steps_out}
+    _write_json(lesson_dir / "extraction.json", json.loads(extraction.model_dump_json()))
+    _write_json(lesson_dir / "lesson.json", lesson)
+    return lesson
+
+
+SUBDIRS = ("clips", "captions", "frames")
+
+
+def _swap_in(lesson_dir: Path, tmp: Path) -> None:
+    """Moves the old folders aside, the new ones in, then deletes the old ones. Works on Windows too, where a
+    folder cannot be renamed over an existing one."""
+    old = lesson_dir / ".recut_old"
+    shutil.rmtree(old, ignore_errors=True)
+    old.mkdir()
+    for sub in SUBDIRS:
+        if (lesson_dir / sub).exists():
+            (lesson_dir / sub).replace(old / sub)
+        (tmp / sub).replace(lesson_dir / sub)
+    shutil.rmtree(old, ignore_errors=True)
+    shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _cut_steps(norm: Path, out_dir: Path, extraction: Extraction, spans: list[tuple[float, float]]) -> list[dict]:
+    steps_out = []
+    for n, (st, (a, b)) in enumerate(zip(extraction.steps, spans), start=1):
         nn = f"{n:02d}"
-        clip = lesson_dir / "clips" / f"{nn}.mp4"
-        _run([FFMPEG, "-y", "-ss", f"{a:.3f}", "-to", f"{b:.3f}", "-i", str(norm),
-              "-c:v", "libx264", "-crf", "20", "-preset", "veryfast", "-c:a", "aac",
+        clip = out_dir / "clips" / f"{nn}.mp4"
+        _run([_bin("ffmpeg"), "-y", "-ss", f"{a:.3f}", "-to", f"{b:.3f}", "-i", str(norm),
+              "-c:v", "libx264", "-crf", "20", "-preset", "veryfast", *SDR_TAGS, "-c:a", "aac",
               "-movflags", "+faststart", str(clip)])
         length = probe_duration(clip)
-        _write_vtt(lesson_dir / "captions" / f"{nn}.vtt", extraction.transcript, a, length)
-        _last_frame(clip, lesson_dir / "frames" / f"{nn}.jpg")
+        _write_vtt(out_dir / "captions" / f"{nn}.vtt", extraction.transcript, a, length)
+        _last_frame(clip, out_dir / "frames" / f"{nn}.jpg")
         question = st.check_question.strip()
         manual = question.lower().strip(" .") == "manual" or not question
         steps_out.append({
@@ -376,11 +455,7 @@ def cut(lesson_dir: Path, extraction: Extraction, lesson_id: str | None = None, 
             "check_question": "" if manual else question,
             "prerequisites": [p for p in st.prerequisites if 1 <= p < n],
         })
-
-    lesson = {"id": lesson_id, "title": title, "video": "norm.mp4", "steps": steps_out}
-    _write_json(lesson_dir / "extraction.json", json.loads(extraction.model_dump_json()))
-    _write_json(lesson_dir / "lesson.json", lesson)
-    return lesson
+    return steps_out
 
 
 # ---------------------------------------------------------------- 4. recut
@@ -388,17 +463,20 @@ def cut(lesson_dir: Path, extraction: Extraction, lesson_id: str | None = None, 
 def recut(lesson_dir: Path) -> dict:
     """Rebuilds clips, captions and frames from lesson.json (possibly hand-edited) and the saved transcript."""
     lesson_dir = Path(lesson_dir)
-    lesson = json.loads((lesson_dir / "lesson.json").read_text())
+    lesson = json.loads((lesson_dir / "lesson.json").read_text(encoding="utf-8"))
     transcript: list[Segment] = []
     ex_path = lesson_dir / "extraction.json"
     if ex_path.exists():
-        transcript = Extraction.model_validate_json(ex_path.read_text()).transcript
-    steps = [
-        Step(start=str(s["start"]), end=str(s["end"]), title=s["title"],
-             check_question="manual" if s.get("check_type") == "manual" else (s.get("check_question") or "manual"),
-             prerequisites=list(s.get("prerequisites") or []))
-        for s in lesson["steps"]
-    ]
+        transcript = Extraction.model_validate_json(ex_path.read_text(encoding="utf-8")).transcript
+    try:
+        steps = [
+            Step(start=str(s["start"]), end=str(s["end"]), title=str(s.get("title") or f"Step {i}"),
+                 check_question="manual" if s.get("check_type") == "manual" else (s.get("check_question") or "manual"),
+                 prerequisites=list(s.get("prerequisites") or []))
+            for i, s in enumerate(lesson["steps"], start=1)
+        ]
+    except (KeyError, TypeError, AttributeError, ValidationError) as e:  # hand-edited lesson.json with a bad step
+        raise ValueError(f"bad step in lesson.json: {type(e).__name__}: {e}") from None
     return cut(lesson_dir, Extraction(steps=steps, transcript=transcript), lesson.get("id"), lesson.get("title"))
 
 
