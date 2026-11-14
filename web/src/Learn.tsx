@@ -69,13 +69,18 @@ export function Learn() {
 
   const liveRef = useRef<HTMLImageElement>(null)
   const frameUrl = useRef<string | null>(null)
+  // The live panel hugs the camera's real shape (glasses and replays are landscape,
+  // a phone held upright is portrait). Null until the first frame decodes.
+  const liveCellRef = useRef<HTMLElement>(null)
+  const [liveAspect, setLiveAspect] = useState<number | null>(null)
+  const liveBox = useFitBox(liveCellRef, liveAspect ?? 1)
   const videoRef = useRef<HTMLVideoElement>(null)
   const clipAreaRef = useRef<HTMLDivElement>(null)
   const [aspect, setAspect] = useState(16 / 9)
   const infoRef = useRef<HTMLDivElement>(null)
   const gridRef = useRef<HTMLElement>(null)
   const controlsRef = useRef<HTMLDivElement>(null)
-  const sideWidth = useSideWidth(gridRef, aspect, infoRef, controlsRef)
+  const sideWidth = useSideWidth(gridRef, aspect, infoRef, controlsRef, liveAspect)
   const clipBox = useFitBox(clipAreaRef, aspect, infoRef, CLIP_GAP)
   const flashTimer = useRef<number | undefined>(undefined)
   const [serverError, setServerError] = useState('')
@@ -90,6 +95,15 @@ export function Learn() {
     frameUrl.current = url
     setHasFrame(true)
     setStale(false)
+  }, [])
+
+  // Runs per frame but sets state only when the shape changes, so frames of the
+  // same size never re-render or move the layout.
+  const onLiveLoad = useCallback(() => {
+    const img = liveRef.current
+    if (!img?.naturalWidth || !img.naturalHeight) return
+    const next = img.naturalWidth / img.naturalHeight
+    setLiveAspect((prev) => (prev !== null && Math.abs(prev - next) < 0.01 ? prev : next))
   }, [])
 
   // For the done screen: when this run began, and how each step was finished.
@@ -430,54 +444,60 @@ export function Learn() {
       </TopBar>
 
       <main className="learn-grid" ref={gridRef} style={sideWidth ? { gridTemplateColumns: `minmax(0, 1fr) ${sideWidth}px` } : undefined}>
-        <section className="panel live" aria-label="Live camera">
-          <img ref={liveRef} alt="Live camera" className={showLive ? (cameraLost ? 'lost' : '') : 'hidden'} />
-          {cameraLost && (
-            <p className="live-note" role="status">
-              Camera lost. Keep going with Next.
-            </p>
-          )}
-          {recording && (
-            <span className="rec" title="Frames come from a recorded video, not a live camera">
-              <span className="rec-dot" />
-              Recording
-            </span>
-          )}
-          {!showLive && (
-            <div className="placeholder">
-              <CameraIcon />
-              <p className="placeholder-title">Waiting for camera</p>
-              <p className="placeholder-hint">
-                Open <code>/capture</code> on the phone
+        <section className="live-cell" ref={liveCellRef} aria-label="Live camera">
+          <div className="panel live" style={liveAspect && liveBox ? { width: liveBox.w, height: liveBox.h } : undefined}>
+            <img ref={liveRef} alt="Live camera" onLoad={onLiveLoad} className={showLive ? (cameraLost ? 'lost' : '') : 'hidden'} />
+            {cameraLost && (
+              <p className="live-note" role="status">
+                Camera lost. Keep going with Next.
               </p>
-            </div>
-          )}
+            )}
+            {recording && (
+              <span className="rec" title="Frames come from a recorded video, not a live camera">
+                <span className="rec-dot" />
+                Recording
+              </span>
+            )}
+            {!showLive && (
+              <div className="placeholder">
+                <CameraIcon />
+                <p className="placeholder-title">Waiting for camera</p>
+                <p className="placeholder-hint">
+                  Open <code>/capture</code> on the phone
+                </p>
+              </div>
+            )}
+          </div>
         </section>
 
         <section className="side">
-          {activeMistake && (
-            <div className="mistake-banner" role="alert">
-              <p className="mistake-text">{activeMistake.message}</p>
-              <div className="mistake-actions">
-                {activeMistake.kind === 'behind' ? (
-                  <>
-                    <button type="button" className="ghost small" onClick={() => showStep(activeMistake.looks_like)}>
-                      Show step {activeMistake.looks_like + 1}
-                    </button>
-                    <button type="button" className="ghost small" onClick={dismissMistake}>
-                      I'm fine
-                    </button>
-                  </>
-                ) : (
-                  <button type="button" className="ghost small" onClick={dismissMistake}>
-                    OK
-                  </button>
-                )}
-              </div>
-            </div>
-          )}
           <div className="clip-area" ref={clipAreaRef}>
-            <div className="panel clip" style={clipBox ? { width: clipBox.w, height: clipBox.h } : undefined}>
+            <div
+              className={`panel clip ${isDone ? 'finished' : ''}`}
+              style={clipBox ? (isDone ? { width: clipBox.w, minHeight: clipBox.h } : { width: clipBox.w, height: clipBox.h }) : undefined}
+            >
+              {activeMistake && (
+                <div className="mistake-banner" role="alert">
+                  <WarningIcon />
+                  <p className="mistake-text">{activeMistake.message}</p>
+                  <div className="mistake-actions">
+                    {activeMistake.kind === 'behind' ? (
+                      <>
+                        <button type="button" className="ghost small" onClick={() => showStep(activeMistake.looks_like)}>
+                          Show step {activeMistake.looks_like + 1}
+                        </button>
+                        <button type="button" className="ghost small" onClick={dismissMistake}>
+                          I'm fine
+                        </button>
+                      </>
+                    ) : (
+                      <button type="button" className="ghost small" onClick={dismissMistake}>
+                        OK
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
               <video
                 ref={videoRef}
                 loop
@@ -491,8 +511,6 @@ export function Learn() {
               />
               {isDone && summary && (
                 <div className="finish">
-                  <CheckIcon />
-                  <p className="finish-title">Lesson complete</p>
                   <dl className="finish-stats">
                     {summary.ms > 0 && (
                       <div>
@@ -507,11 +525,11 @@ export function Learn() {
                       </div>
                     )}
                     <div>
-                      <dt>Checked by camera</dt>
+                      <dt>By camera</dt>
                       <dd>{summary.camera}</dd>
                     </div>
                     <div>
-                      <dt>Marked done</dt>
+                      <dt>By hand</dt>
                       <dd>{summary.byHand}</dd>
                     </div>
                     <div>
@@ -523,8 +541,8 @@ export function Learn() {
                     <table className="finish-steps">
                       <thead>
                         <tr>
-                          <th />
                           <th>Step</th>
+                          <th>Checked</th>
                           <th>Expert</th>
                           <th>You</th>
                         </tr>
@@ -532,22 +550,34 @@ export function Learn() {
                       <tbody>
                         {summary.rows.map((r) => (
                           <tr key={r.n}>
-                            <td className="how" title={r.how === 'camera' ? 'Checked by camera' : r.how === 'hand' ? 'Marked done' : 'Not finished in order'}>
-                              {r.how === 'camera' ? <SmallCameraIcon /> : r.how === 'hand' ? <HandIcon /> : null}
-                            </td>
                             <td className="name">
-                              <span className="num">{r.n}</span> {r.title}
+                              <span className="num">{r.n}</span>
+                              {r.title}
+                            </td>
+                            <td className="how">
+                              {r.how === 'camera' ? (
+                                <>
+                                  <SmallCameraIcon />
+                                  Camera
+                                </>
+                              ) : r.how === 'hand' ? (
+                                <>
+                                  <HandIcon />
+                                  By hand
+                                </>
+                              ) : (
+                                <span className="faint" title="Left by a jump or Back, not by a check">
+                                  Not checked
+                                </span>
+                              )}
                             </td>
                             <td className="muted">{formatSecs(r.expertS)}</td>
-                            <td>{r.yourS === null ? '\u2013' : formatSecs(r.yourS)}</td>
+                            <td>{r.yourS === null ? <span className="faint">Skipped</span> : formatSecs(r.yourS)}</td>
                           </tr>
                         ))}
                       </tbody>
                     </table>
                   )}
-                  <button type="button" className="ghost restart" onClick={restart}>
-                    Start over
-                  </button>
                 </div>
               )}
               {!step && (
@@ -558,8 +588,9 @@ export function Learn() {
             </div>
 
             <div className="step-info" ref={infoRef}>
-              <p className="step-count">{step ? (isDone ? 'All steps complete' : `Step ${idx + 1} of ${total}`) : ' '}</p>
-              <h1 className="step-title">{step ? (isDone ? lesson?.title : step.title) : ' '}</h1>
+              <p className="step-count">{step ? (isDone ? `All ${total} steps done` : `Step ${idx + 1} of ${total}`) : ' '}</p>
+              {/* The lesson title is already in the top bar, so the done screen does not repeat it. */}
+              <h1 className="step-title">{step ? (isDone ? 'Lesson complete' : step.title) : ' '}</h1>
             </div>
           </div>
 
@@ -570,7 +601,7 @@ export function Learn() {
                 aria-live="polite"
                 title={badge === 'offline' && offlineReason ? offlineReason : undefined}
               >
-                <span className="badge-dot" />
+                {badge === 'verified' ? <BadgeCheckIcon /> : <span className="badge-dot" />}
                 {BADGE_LABEL[badge]}
               </span>
               <span className="check-meta">
@@ -579,10 +610,18 @@ export function Learn() {
               </span>
             </div>
             <div className="next-wrap">
-              <button className="next" onClick={() => next('button')} disabled={!step || isDone}>
-                Next
-              </button>
-              {!isDone && <span className="next-hint">{voiceOn && listening ? 'or say next' : 'or press \u2192'}</span>}
+              {isDone ? (
+                <button type="button" className="next" onClick={restart}>
+                  Start over
+                </button>
+              ) : (
+                <>
+                  <button type="button" className="next" onClick={() => next('button')} disabled={!step}>
+                    Next
+                  </button>
+                  <span className="next-hint">{voiceOn && listening ? 'or say next' : 'or press \u2192'}</span>
+                </>
+              )}
             </div>
           </div>
         </section>
@@ -635,13 +674,16 @@ const MAX_SIDE = 0.55
 /**
  * Width of the right column so the clip, at its aspect ratio, uses the
  * height left after the title and controls, within MIN_SIDE and MAX_SIDE of
- * the grid width so the live camera keeps a fair share.
+ * the grid width so the live camera keeps a fair share. With a landscape live
+ * camera the clip is also kept no taller than the live panel, so the two line
+ * up as one row instead of leaving the live panel short.
  */
 function useSideWidth(
   gridRef: RefObject<HTMLElement | null>,
   aspect: number,
   infoRef: RefObject<HTMLElement | null>,
   controlsRef: RefObject<HTMLElement | null>,
+  liveAspect: number | null,
 ) {
   const [width, setWidth] = useState<number | null>(null)
   useEffect(() => {
@@ -652,7 +694,9 @@ function useSideWidth(
       const colGap = parseFloat(getComputedStyle(grid).columnGap) || 0
       const room = w - colGap
       const reserved = (infoRef.current?.offsetHeight ?? 0) + CLIP_GAP + SIDE_GAP + (controlsRef.current?.offsetHeight ?? 0)
-      const wanted = (h - reserved) * aspect
+      let wanted = (h - reserved) * aspect
+      // Equal heights: clip width / aspect == live width / liveAspect.
+      if (liveAspect && liveAspect > 1) wanted = Math.min(wanted, (room * aspect) / (aspect + liveAspect))
       if (!room || h <= reserved) return
       setWidth(Math.round(Math.min(room * MAX_SIDE, Math.max(room * MIN_SIDE, wanted))))
     }
@@ -661,7 +705,7 @@ function useSideWidth(
     ro.observe(grid)
     if (infoRef.current) ro.observe(infoRef.current)
     return () => ro.disconnect()
-  }, [gridRef, aspect, infoRef, controlsRef])
+  }, [gridRef, aspect, infoRef, controlsRef, liveAspect])
   return width
 }
 
@@ -696,11 +740,21 @@ function HandIcon() {
   )
 }
 
-function CheckIcon() {
+// Filled check in the Verified badge, so it never reads as the grey Watching dot.
+function BadgeCheckIcon() {
   return (
-    <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <circle cx="12" cy="12" r="9.5" />
-      <path d="m7.8 12.3 2.8 2.8 5.6-5.8" />
+    <svg className="badge-check" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="12" cy="12" r="11" fill="currentColor" />
+      <path d="m7.5 12.4 3 3 6-6.2" fill="none" stroke="#000" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+function WarningIcon() {
+  return (
+    <svg className="mistake-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M10.3 4.2a2 2 0 0 1 3.4 0l7.6 13A2 2 0 0 1 19.6 20H4.4a2 2 0 0 1-1.7-2.8z" />
+      <path d="M12 9.5v4M12 16.8v.2" />
     </svg>
   )
 }
