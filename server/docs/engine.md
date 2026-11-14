@@ -46,6 +46,7 @@ Not a status. A separate `mistake` field in `state` (CONTRACT 7), set when the m
 |---|---|
 | `check_mode` | `mock`, `claude` or `gemini`: who answers the checks |
 | `next_clip` | The next step's clip as a lesson-relative path such as `"clips/03.mp4"`, as soon as this step has one confident yes (and while `verified`); null otherwise and on the last step |
+| `run_id` | The run the Done screen scores (`GET /api/runs/{run_id}/score`): the Databricks run id when `server.databricks` is loaded, else the engine's own id per select; null with no lesson |
 | `progress`, `stage` | From understanding (`HANDOVER_UNDERSTAND=1` and a rubric): 0 to 1, and `{index, count, label}`; null otherwise. Reset on step change |
 
 ## Moving between steps
@@ -122,6 +123,7 @@ Frames stay in memory. The engine never writes them to disk.
 - Up to `HANDOVER_MAX_INFLIGHT` (2) checks at once, each on a different settled frame; answers are debounced in frame order. See [checks.md](checks.md#3-debounce-and-confirm).
 - With `HANDOVER_UNDERSTAND=1` and a rubric entry for the step, an understanding call runs beside each check on the same frame; the debounce sees yes only when both say yes.
 - If the step changed while a check ran, or the step is already verified, its result is thrown away.
+- A viewer that connects as `/ws/ui?frames=0` (a phone that is itself the camera) gets all text messages and no live frames.
 - `state` from check results goes out only when it differs from the last state sent, so two checks giving the same answer send one state. Commands (`select_lesson` and the rest) always get their state.
 
 ## Latency

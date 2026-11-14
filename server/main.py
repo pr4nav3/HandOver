@@ -187,9 +187,10 @@ class UIClient:
     ends and closes the socket with 1011 (CLOSE_STALLED), and the client reconnects.
     """
 
-    def __init__(self, ws: WebSocket, label: str = "-"):
+    def __init__(self, ws: WebSocket, label: str = "-", frames: bool = True):
         self.ws = ws
         self.label = label
+        self.frames = frames  # False (/ws/ui?frames=0): a phone that is itself the camera gets no live frames
         self.queue: collections.deque = collections.deque()
         self.latest_state: Optional[dict] = None
         self.latest_frame: Optional[bytes] = None
@@ -197,6 +198,8 @@ class UIClient:
 
     def push(self, msg: Any) -> None:
         """Queue one message: bytes are a live frame, a dict is JSON text."""
+        if isinstance(msg, bytes) and not self.frames:
+            return
         if isinstance(msg, bytes):
             if self.latest_frame is not None:
                 metrics["frames_replaced_slow_client"] += 1
@@ -316,6 +319,11 @@ def databricks_module() -> Any:
         return None
 
 
+DB_RUN_IDS: dict[str, str] = {}
+"""Hub run id -> the run id server.databricks.start_run returned (the id its events, and so the library's
+scores, are keyed by)."""
+
+
 def databricks_sink(event: dict) -> None:
     """Translates learn events to server.databricks calls. Its functions return at once and never raise.
     Its own run_start and run_end come from start_run and end_run. Every event also carries the hub's
@@ -328,8 +336,11 @@ def databricks_sink(event: dict) -> None:
     fields.update(hub_run_id=event["run_id"], rev=event["rev"], hub_ts=event["ts"])
     if kind == "run_start":
         db.end_run()
-        call_accepting(db.start_run, event["lesson_id"], learner=event.get("learner"), source=event.get("source"),
+        db_run = call_accepting(db.start_run, event["lesson_id"], learner=event.get("learner"), source=event.get("source"),
                        check_mode=event.get("check_mode"))
+        if isinstance(db_run, str) and db_run and event.get("run_id"):
+            DB_RUN_IDS.clear()  # only the newest run matters; keeps this from growing
+            DB_RUN_IDS[event["run_id"]] = db_run
     elif kind in ("run_done", "run_stop"):
         db.emit(kind, **fields)  # run_done totals, or why the run stopped early
         db.end_run()
@@ -614,7 +625,15 @@ class Engine:
             "next_clip": self.next_clip(),
             "progress": self.progress,
             "stage": self.stage,
+            "run_id": self.run_id(),
         }
+
+    def run_id(self) -> Optional[str]:
+        """The run the Done screen scores (GET /api/runs/{run_id}/score): the id databricks.start_run returned,
+        else the engine's own id for this select. None with no run."""
+        if self.run is None:
+            return None
+        return DB_RUN_IDS.get(self.run.run_id, self.run.run_id)
 
     def next_clip(self) -> Optional[str]:
         """The next step's clip (relative path) once this step has one confident yes, so the web can preload it
@@ -1752,7 +1771,7 @@ async def ws_ui(ws: WebSocket) -> None:
         log.warning("viewer refused: limit reached")
         await ws.close(code=CLOSE_TRY_LATER, reason="too many viewers")
         return
-    client = UIClient(ws, label)
+    client = UIClient(ws, label, frames=ws.query_params.get("frames", "1").strip().lower() not in ("0", "false", "no"))
     engine.ui.add(client)
     log.info("ui connected (%d)", len(engine.ui))
     client.push(engine.state())

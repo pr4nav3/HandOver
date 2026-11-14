@@ -368,10 +368,13 @@ Built in `server/main.py` with tests in `server/test_engine.py`. Readers ignore 
 > | `next_clip` | string or null | the next step's clip as a lesson-relative path, exactly like `"clips/03.mp4"`, as soon as this step has one confident yes (and while `verified`); null otherwise and on the last step. Clients preload it |
 > | `progress` | number 0..1 or null | from understanding (`HANDOVER_UNDERSTAND=1` with a rubric); null otherwise; reset on step change |
 > | `stage` | `{"index":int,"count":int,"label":str}` or null | same source and reset as `progress` |
+> | `run_id` | string or null | the current run, for `GET /api/runs/{run_id}/score` on the Done screen: the id `databricks.start_run` returned (the id the event mirror and the library's scores use), else a uuid the engine makes per `select_lesson`. Null with no lesson; kept on the done screen; new on every select |
 >
 > Section 5, advance by camera: `verified` (with `next_clip`) goes out at once, then `go(position + 1, "camera")` after `HANDOVER_VERIFIED_HOLD` (0.8 s). Up to `HANDOVER_MAX_INFLIGHT` (2) checks run at once on different settled frames; debounce is N confident yes answers on N different frames, in frame order. Fast path: one yes at `HANDOVER_FAST_CONF` (0.92) whose `differs` is `nothing` advances alone (`HANDOVER_FAST_PATH=1`). State from check results is sent only when it changed.
 >
 > Section 6: a camera that never sends hello gets `source: "unknown"` (was `"phone"`). `platform` accepts `ios`, `android`, `web`, `macos`, `windows`, `linux`, `replay`; any other string becomes `"other"` and the hello still counts (next and back stay unlocked); a non-string platform makes the hello malformed. Frame rate: "about 2 fps, long side at most 960" (was "about 1 fps, long side 640 to 1280"); the hub accepts frames 0.2 s apart (`HANDOVER_MIN_FRAME_GAP`).
+>
+> Section 7, connecting: `/ws/ui?frames=0` gets every text message but no binary live frames, for a phone that is itself the camera. Absent or any other value: frames as today.
 >
 > Section 7, `select_lesson`: optional `"token"` (a sign-in token). When it resolves, the run is tagged with the learner's user id; otherwise the run is anonymous. Never an error.
 >
@@ -395,4 +398,4 @@ New settings for section 1 (not yet in `server/config.py`): `HANDOVER_MAX_INFLIG
 - Section 9: replay `--no-hello`, `device_id`, reconnect with back-off, stops on 4000.
 - New section 10: learn events and the Databricks adapter.
 - Statuses: built server items moved from NEW to EXISTS.
-- Provenance, latency and learner fields (P27): `check_mode`, `next_clip`, `progress`, `stage`; pipelined confirm and fast path; camera default source `unknown`; more hello platforms; 2 fps; `select_lesson` token; `live` mistakes; ahead never skips by default.
+- Provenance, latency and learner fields (P27): `check_mode`, `next_clip`, `progress`, `stage`, `run_id`; `/ws/ui?frames=0`; pipelined confirm and fast path; camera default source `unknown`; more hello platforms; 2 fps; `select_lesson` token; `live` mistakes; ahead never skips by default.
