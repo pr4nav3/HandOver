@@ -1,0 +1,135 @@
+{
+  "id": "synthetic-fortune-teller-v1",
+  "title": "Fold a fortune teller (synthetic renders)",
+  "video": "norm.mp4",
+  "safety": [],
+  "tools": [],
+  "steps": [
+    {
+      "n": 1,
+      "title": "Lay the square sheet flat",
+      "start": "00:00",
+      "end": "00:03",
+      "clip": "clips/01.mp4",
+      "captions": "captions/01.vtt",
+      "ref_frame": "frames/01.jpg",
+      "ref_time": "00:02",
+      "check_type": "manual",
+      "check_question": "",
+      "prerequisites": [],
+      "common_mistake": "Start with a square sheet, not a rectangle."
+    },
+    {
+      "n": 2,
+      "title": "Fold corner to corner into triangle",
+      "start": "00:03",
+      "end": "00:06",
+      "clip": "clips/02.mp4",
+      "captions": "captions/02.vtt",
+      "ref_frame": "frames/02.jpg",
+      "ref_time": "00:05",
+      "check_type": "camera",
+      "check_question": "Is the paper folded into a single triangle with three corners?",
+      "prerequisites": [
+        1
+      ],
+      "common_mistake": "Line the corners up exactly before creasing."
+    },
+    {
+      "n": 3,
+      "title": "Crease both diagonals, then unfold flat",
+      "start": "00:06",
+      "end": "00:09",
+      "clip": "clips/03.mp4",
+      "captions": "captions/03.vtt",
+      "ref_frame": "frames/03.jpg",
+      "ref_time": "00:08",
+      "check_type": "manual",
+      "check_question": "",
+      "prerequisites": [
+        2
+      ],
+      "common_mistake": "Unfold both diagonals so the sheet lies flat with an X crease."
+    },
+    {
+      "n": 4,
+      "title": "Fold all four corners to center",
+      "start": "00:09",
+      "end": "00:12",
+      "clip": "clips/04.mp4",
+      "captions": "captions/04.vtt",
+      "ref_frame": "frames/04.jpg",
+      "ref_time": "00:11",
+      "check_type": "camera",
+      "check_question": "Is the paper a smaller square with four triangular flaps whose points meet at the center?",
+      "prerequisites": [
+        3
+      ],
+      "common_mistake": "Bring every corner to the exact center."
+    },
+    {
+      "n": 5,
+      "title": "Flip the paper over",
+      "start": "00:12",
+      "end": "00:15",
+      "clip": "clips/05.mp4",
+      "captions": "captions/05.vtt",
+      "ref_frame": "frames/05.jpg",
+      "ref_time": "00:14",
+      "check_type": "camera",
+      "check_question": "Is the side facing up a plain square with no flaps on it, only crease lines?",
+      "prerequisites": [
+        4
+      ],
+      "common_mistake": "Flip it over first."
+    },
+    {
+      "n": 6,
+      "title": "Fold four corners to center again",
+      "start": "00:15",
+      "end": "00:18",
+      "clip": "clips/06.mp4",
+      "captions": "captions/06.vtt",
+      "ref_frame": "frames/06.jpg",
+      "ref_time": "00:17",
+      "check_type": "camera",
+      "check_question": "Is the paper a small square with four triangular flaps whose points meet at the center?",
+      "prerequisites": [
+        5
+      ],
+      "common_mistake": "Fold all four corners to the center again, on this side."
+    },
+    {
+      "n": 7,
+      "title": "Crease in half both ways, unfold",
+      "start": "00:18",
+      "end": "00:21",
+      "clip": "clips/07.mp4",
+      "captions": "captions/07.vtt",
+      "ref_frame": "frames/07.jpg",
+      "ref_time": "00:20",
+      "check_type": "manual",
+      "check_question": "",
+      "prerequisites": [
+        6
+      ],
+      "common_mistake": "Crease both halves firmly, then open it flat again."
+    },
+    {
+      "n": 8,
+      "title": "Flip, then push into four pockets",
+      "start": "00:21",
+      "end": "00:24",
+      "clip": "clips/08.mp4",
+      "captions": "captions/08.vtt",
+      "ref_frame": "frames/08.jpg",
+      "ref_time": "00:23",
+      "check_type": "camera",
+      "check_question": "Does the paper stand up in four separate pointed pockets instead of lying flat?",
+      "prerequisites": [
+        7
+      ],
+      "common_mistake": "Flip it, slide your fingers under the four flaps and push to the center."
+    }
+  ]
+}
