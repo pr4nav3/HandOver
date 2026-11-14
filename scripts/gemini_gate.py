@@ -14,6 +14,7 @@ that runs too. Writes scripts/out/gemini-gate-<timestamp>.md with p50, p90, erro
 
 The live hub gives up on a call after 3 s; here the timeout is raised (default 10 s) so slow calls are
 measured instead of cut off, and the report counts how many would have timed out live.
+Always times Gemini (HANDOVER_CHECK_PROVIDER=gemini is pinned for the child), even when a Claude key exists.
 Refuses without a key (GEMINI_API_KEY, GOOGLE_API_KEY, or the repo .env). The key is never printed.
 --mock runs with HANDOVER_CHECK=mock to test this script; its report is marked as not a real gate.
 """
@@ -111,6 +112,8 @@ def main() -> int:
     a = ap.parse_args()
 
     env = dict(os.environ)
+    # This is the Gemini gate: pin the provider, or auto would time Claude whenever ANTHROPIC_API_KEY is set.
+    env["HANDOVER_CHECK_PROVIDER"] = "gemini"
     if a.mock:
         env["HANDOVER_CHECK"] = "mock"
         env["HANDOVER_MOCK_PASS_SECONDS"] = "0"

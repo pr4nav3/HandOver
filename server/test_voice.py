@@ -233,14 +233,14 @@ def test_write_script_request_and_parse():
     assert max(img.size) == 512 and img.format == "JPEG"
     texts = "\n".join(c["text"] for c in content if c["type"] == "text")
     assert "Common mistake: Do not let the corners overlap." in texts
-    assert "at most 18 words" in texts and "Done when: Is there one white bar" in texts
+    assert "at most 18 words" in texts and "Done when: Does the frame show one white bar" in texts
     assert "Done when: manual" not in texts and "expert's own words" not in texts  # no transcript sent
     assert spend.status().total_calls == before + 1 and voice.last_cost_usd > 0
 
     assert [s.n for s in scripts] == [1, 2, 3, 4, 5]
     assert scripts[0].sentences == ["Lay the blue sheet flat, color side down.", "Smooth it out."]
     assert len(scripts[3].sentences) == 3 and voice._words(scripts[3].narration) <= 18
-    assert scripts[4].sentences == ["Open the finished shape."]
+    assert scripts[4].sentences == ["Pattern 5."]
     assert all(s.seconds == 8.0 for s in scripts)
     for s in scripts:
         assert "\u2014" not in s.narration and "\u2013" not in s.narration
@@ -290,8 +290,8 @@ def test_fallback_scripts():
     steps = steps_demo()
     steps[0]["common_mistake"] = "keep the color side down"
     got = voice.fallback_scripts(steps)
-    assert got[0].sentences == ["Lay the blue sheet flat.", "Keep the color side down."]
-    assert got[1].sentences == ["Fold the sheet in half."]
+    assert got[0].sentences == ["Pattern 1.", "Keep the color side down."]
+    assert got[1].sentences == ["Pattern 2."]
 
 
 # ---------------------------------------------------------------- speech
@@ -474,7 +474,7 @@ def test_cli_dry_run_without_key_uses_titles():
         code = voice.main([str(lesson), "--dry-run"])
     text = out.getvalue()
     assert code == 0, text
-    assert "using the step titles instead" in text and "Lay the blue sheet flat." in text
+    assert "using the step titles instead" in text and "Pattern 1." in text
     assert "voiceover" not in json.loads((lesson / "lesson.json").read_text())
     assert sha(lesson / "clips" / "01.mp4") == before
 

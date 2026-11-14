@@ -12,11 +12,11 @@ scripts/run_server.sh
 
 | Check | Expect |
 |---|---|
-| Log line | `lessons: <path>  check: gemini` (says `mock` if `HANDOVER_CHECK=mock` is set: unset it for the demo) |
+| Log line | `lessons: <path>  check: claude claude-haiku-5-5` or `check: gemini <model>` (says `mock` if `HANDOVER_CHECK=mock` is set: unset it for the demo) |
 | Phone line | `Phone camera page: https://<IP>:8443/capture` (only when certs exist) |
 | Lessons | `curl -s http://localhost:8000/api/lessons` lists both lessons |
 
-Learn screen today: `npm --prefix web run dev`, then `http://localhost:5173`. Serving the web app from the hub at `http://<IP>:8000/` (W1) is in progress.
+Learn screen: the hub serves the built web app at `http://<IP>:8000/` when `web/dist` exists (`npm --prefix web run build`); otherwise `npm --prefix web run dev`, then `http://localhost:5173`.
 
 ## 2. Camera
 
@@ -40,16 +40,17 @@ Open `https://<IP>:8443/capture` in iPhone Safari. The phone and Mac must be on 
 | `--start` | 0 | Start offset in seconds |
 | `--select` | none | Select this lesson first; exits if the hub refuses |
 
-It reconnects every 2 s if the hub drops. Today replay sends no `hello`, so the "Recording" banner does not show yet (in progress, CONTRACT 9). Until then, say out loud that it is a recording.
+It reconnects every 2 s if the hub drops. It sends `hello` with `source: "file"` first, so the web app shows the "Recording" banner.
 
 ## 4. Smoke and watch
 
-Coming in this branch. No smoke or watch script exists yet. Until then:
-
 ```sh
-.venv/bin/python -m server.test_check && .venv/bin/python -m server.test_server
-HANDOVER_CHECK=mock scripts/run_server.sh        # then replay any file against demo-v1
+.venv/bin/python scripts/smoke.py run --lesson demo-v1     # PASS/FAIL table against a running hub
+.venv/bin/python scripts/smoke.py watch                    # one line per state, advance, mistake, error
+.venv/bin/python scripts/e2e_demo.py                       # full web flow in Chrome against a mock hub
 ```
+
+`demo-v1` is a synthetic test pattern (colored bars), not a real lesson.
 
 ## 5. Fallback ladder
 
@@ -65,17 +66,17 @@ flowchart TD
 
 The iPhone app lives in `ios/` (Pranav's lane) and is not in this branch.
 
-## 6. Breaker and Gemini down
+## 6. Breaker and the provider down
 
-The breaker (in progress) turns checks off after 3 errors or timeouts in a row, or any 429 (rate limit), for 30 s, then tries one call. The UI shows "Checks off, use Next". This is expected behavior, not a crash.
+The breaker turns checks off after 3 errors or timeouts in a row, any 429 (rate limit), or a reached Claude budget cap, for 30 s, then tries one call. The UI shows "Checks off, use Next". This is expected behavior, not a crash. `python -m server.spend` shows what Claude has cost today and in total against the $20 per day and $50 total caps.
 
-If Gemini is down or slow:
+If the provider is down or slow:
 
 1. Keep going with Next. Say "the camera check is off, so I'll press Next."
-2. Swap to the second key in `.env`, then restart the hub. The hub reads the key once and keeps it until restart.
+2. Switch provider: set `HANDOVER_CHECK_PROVIDER=gemini` (or `claude`) and restart the hub.
 3. Do not switch to `HANDOVER_CHECK=mock` in front of judges. Mock passes on a timer, not on what the camera sees.
 
-Until the breaker lands, a failing Gemini shows as `last_check: unsure, 0` on every check, and the log says `check failed` or `check timed out`.
+The log says `check failed` or `check timed out` for each failed call.
 
 ## 7. 8 AM rehearsal count
 
@@ -90,7 +91,7 @@ Also log camera-verified steps, manual steps, false passes and false alarms. Res
 
 ## 8. Privacy
 
-Camera frames are held in memory only; the hub has no code that writes them to disk. A test that proves it (M15) is in progress.
+Frames go from the hub to the AI provider (Claude or Gemini, whichever `state.check_mode` names) for each check (with `HANDOVER_UNDERSTAND=1`, also to Claude for the understanding call) and are never written to disk. The test `test_privacy_learn_frames_never_touch_disk` in `server/test_engine.py` runs a full mock session with every file write blocked under the repo and the lessons folder, and fails on any written frame. Learn events (metadata, no images) go to `logs/events.jsonl` and, with credentials, to Databricks.
 
 ## Troubleshooting
 
@@ -102,12 +103,12 @@ Camera frames are held in memory only; the hub has no code that writes them to d
 | Hub exits at start | Port 8000 or 8443 in use (another hub) | `lsof -nP -iTCP:8000 -sTCP:LISTEN`, stop that process |
 | Steps never advance by camera | Manual step, no camera connected, or no lesson selected | Check `status` and `camera_connected` in state; select the lesson |
 | Log: `reference frame missing` | `frames/NN.jpg` gone | Recut the lesson |
-| `last_check` is `unsure`, 0 every time | Gemini failing: key, network, model id | Read the `check failed` log line; see section 6 |
-| Log: `no Gemini key` | No key in env or `.env` | Add `GEMINI_API_KEY` to `.env`, restart |
-| Status stays `checking` | Calls take over 1.5 s | Run `server.check --time`; see the 6 PM gate in [checks.md](checks.md#7-the-6-pm-gate) |
+| `last_check` is `unsure`, 0 every time | Provider failing: key, network, model id, budget | Read the `check failed` log line; see section 6 |
+| Checks off with reason `no_key` | No key for the active provider | Add `ANTHROPIC_API_KEY` or `GEMINI_API_KEY` to `.env`, restart |
+| Checks off with reason `budget` | A Claude cap is reached | `python -m server.spend`; switch to Gemini or raise the cap on purpose |
+| Status stays `checking` | Calls take over 1.5 s | Run `server.check --time`; see [checks.md](checks.md#7-timing-a-provider) |
 | Advances too early | Question too loose, or debounce too low | Tighten `check_question`, raise `HANDOVER_DEBOUNCE_N` |
 | UI shows old clips after a recut | Recut ran from the command line, hub not told | Re-select the lesson, or recut with `POST /api/lessons/<id>/recut` |
-| `common_mistake` gone after a recut | Today's recut drops extra fields | Re-add it; see [teach.md](teach.md#recut-rule) |
 | Replay crashes with `FileNotFoundError: 'ffmpeg'` | Replay looks only on PATH (teach also checks Homebrew) | `export PATH=/opt/homebrew/bin:$PATH` |
 | Replay: `select_lesson failed: lesson not found` | Wrong id | `curl -s http://localhost:8000/api/lessons` |
 | Teach job error: `not ACTIVE after 300 s` | Gemini still processing the upload | Retry; try a shorter take |

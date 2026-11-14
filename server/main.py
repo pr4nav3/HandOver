@@ -26,11 +26,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional
 
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from server import check, config, gate, mistake
+from server import accounts, check, config, gate, mistake, routes_library, understand
 
 for _ext, _type in ((".vtt", "text/vtt"), (".mp4", "video/mp4"), (".js", "text/javascript"),
                     (".mjs", "text/javascript"), (".css", "text/css"), (".svg", "image/svg+xml"),
@@ -105,12 +105,12 @@ CHECKING_SHOW_AFTER = 1.5  # seconds a check must be in flight before the UI is 
 MAX_FRAME_BYTES = 2 * 1024**2  # camera frames over 2 MB are ignored
 ACTIVE_IDLE_SECONDS = 5.0  # an active camera silent this long loses to one that is sending frames
 CLOSE_REPLACED = 4000  # close code when a newer connection says hello with the same device_id
-HELLO_PLATFORMS = ("ios", "web", "replay")
+HELLO_PLATFORMS = ("ios", "android", "web", "macos", "windows", "linux", "replay")  # anything else: "other"
 HELLO_SOURCES = ("glasses", "phone", "browser", "file")
 SEND_TIMEOUT = 5.0  # seconds one websocket send may take before the client counts as stalled
 EVENT_QUEUE_MAX = 64  # advance, mistake and error messages held per client before new ones are dropped
 CLOSE_STALLED = 1011  # close code when a client's sender gave up (a send took over SEND_TIMEOUT)
-WARM_UP_TIMEOUT = 5.0  # seconds for the startup call that opens the pooled Gemini connection
+WARM_UP_TIMEOUT = 5.0  # seconds for the startup call that opens the pooled check-provider connection
 REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 UPLOAD_SUFFIXES = (".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi")  # never playlists (HLS, concat) for ffmpeg
 MOCK_TICK_SECONDS = 1.0  # the mock mistake hook is looked at no more often than this
@@ -144,7 +144,7 @@ def read_lesson(lesson_id: str) -> dict:
 
 
 def redact(text: str) -> str:
-    """The Gemini key and absolute paths out of anything a client or a log line sees."""
+    """API keys and absolute paths out of anything a client or a log line sees."""
     text = check._redact(text)
     for path, label in ((LESSONS, "<lessons>"), (REPO, "<repo>")):
         text = text.replace(str(path), label)
@@ -254,7 +254,7 @@ class Camera(UIClient):
         self.number = number
         self.name = f"Camera {number}"
         self.platform = "other"
-        self.source = "phone"
+        self.source = "unknown"  # never guessed: only a hello says what kind of camera this is
         self.device_id: Optional[str] = None
         self.said_hello = False
         self.connected_at = now
@@ -271,13 +271,21 @@ class Camera(UIClient):
 
 
 def parse_hello(msg: dict) -> Optional[dict]:
-    """The identity fields of a hello, cleaned, or None when it is malformed. Absent fields keep their value."""
+    """The identity fields of a hello, cleaned, or None when it is malformed. Absent fields keep their value.
+    An unknown platform string becomes "other" (a new app still gets next and back); a non-string platform or
+    an unknown source makes the hello malformed."""
     out: dict = {}
-    for key, allowed in (("platform", HELLO_PLATFORMS), ("source", HELLO_SOURCES)):
-        if key in msg:
-            if msg[key] not in allowed:
-                return None
-            out[key] = msg[key]
+    if "platform" in msg:
+        platform = msg["platform"]
+        if not isinstance(platform, str):
+            return None
+        platform = platform.strip().lower()
+        if platform:
+            out["platform"] = platform if platform in HELLO_PLATFORMS else "other"
+    if "source" in msg:
+        if msg["source"] not in HELLO_SOURCES:
+            return None
+        out["source"] = msg["source"]
     for key, limit in (("device_id", 128), ("name", 64)):
         if key in msg:
             if not isinstance(msg[key], str):
@@ -320,7 +328,8 @@ def databricks_sink(event: dict) -> None:
     fields.update(hub_run_id=event["run_id"], rev=event["rev"], hub_ts=event["ts"])
     if kind == "run_start":
         db.end_run()
-        db.start_run(event["lesson_id"])
+        call_accepting(db.start_run, event["lesson_id"], learner=event.get("learner"), source=event.get("source"),
+                       check_mode=event.get("check_mode"))
     elif kind in ("run_done", "run_stop"):
         db.emit(kind, **fields)  # run_done totals, or why the run stopped early
         db.end_run()
@@ -332,6 +341,20 @@ def databricks_sink(event: dict) -> None:
         db.emit("check_offline", **fields)  # reason is null when checks come back on; open tells which
     else:  # step_enter, check (with reason)
         db.emit(kind, **fields)
+
+
+def call_accepting(fn: Callable, *args: Any, **kwargs: Any) -> Any:
+    """fn(*args, **kwargs) with only the keyword arguments fn accepts (all of them when it takes **kwargs), so the
+    hub can pass new fields to server.databricks before its signature has them."""
+    import inspect
+
+    try:
+        params = inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        params = {}
+    if not any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()):
+        kwargs = {k: v for k, v in kwargs.items() if k in params}
+    return fn(*args, **kwargs)
 
 
 def publish_lesson_files(lesson_id: str) -> None:
@@ -358,6 +381,118 @@ def mistake_parallel() -> bool:
     return config.env_bool("HANDOVER_MISTAKE_PARALLEL", True)
 
 
+def _tunable(kind: str, name: str, default: Any, lo: Any = None, hi: Any = None) -> Any:
+    """A HANDOVER_* value through server/config.py once it is registered there; until then the same default
+    and bounds are applied here, so registering it later changes nothing."""
+    try:
+        return config.get(name)
+    except KeyError:
+        pass
+    if kind == "int":
+        return config.env_int(name, default, lo, hi)
+    if kind == "float":
+        return config.env_float(name, default, lo, hi)
+    return config.env_bool(name, default)
+
+
+def max_inflight() -> int:
+    """HANDOVER_MAX_INFLIGHT: checks allowed at once on one step, each on a different settled frame."""
+    return _tunable("int", "HANDOVER_MAX_INFLIGHT", 2, 1, 4)
+
+
+def fast_path() -> bool:
+    """HANDOVER_FAST_PATH: one very confident yes that names no difference advances without a second yes."""
+    return _tunable("bool", "HANDOVER_FAST_PATH", True)
+
+
+def fast_conf() -> float:
+    """HANDOVER_FAST_CONF: confidence a single yes needs for the fast path."""
+    return _tunable("float", "HANDOVER_FAST_CONF", 0.92, 0.5, 1)
+
+
+def ahead_skip() -> bool:
+    """HANDOVER_AHEAD_SKIP: an ahead mistake may skip to step k+2. Off by default: a wrong skip is far worse than
+    a missed catch, so ahead only shows its banner."""
+    return _tunable("bool", "HANDOVER_AHEAD_SKIP", False)
+
+
+AHEAD_SKIP_CONF = 0.9  # with HANDOVER_AHEAD_SKIP=1, the k+1 confirm needs this, plus a yes for step k itself
+
+_mode_cache: tuple = (None, 0.0, "")  # (env key, when, mode)
+
+
+def understanding_on() -> bool:
+    """HANDOVER_UNDERSTAND: run real-time understanding beside the check; advance needs both to say yes."""
+    return bool(config.get("HANDOVER_UNDERSTAND"))
+
+
+def live_mistakes_on() -> bool:
+    """HANDOVER_LIVE_MISTAKES: show advisory live mistakes from understanding."""
+    return bool(config.get("HANDOVER_LIVE_MISTAKES"))
+
+
+def combine(res: check.CheckResult, und: check.CheckResult) -> check.CheckResult:
+    """The verdict the debounce sees when understanding runs: yes only when both say yes (confidence the lower
+    of the two, reason from the check, else from understanding). Otherwise the more cautious answer: no
+    before unsure. Latency is the slower call; errors stay the check's."""
+    ms = max(res.latency_ms, und.latency_ms)
+    if res.done == "yes" and und.done == "yes":
+        return check.CheckResult("yes", min(res.confidence, und.confidence), ms, res.reason or und.reason, res.error)
+    pick = res if res.done == "no" else und if und.done == "no" else res if res.done != "yes" else und
+    return check.CheckResult(pick.done, pick.confidence, ms, res.reason or und.reason, res.error)
+
+
+def check_mode() -> str:
+    """Who answers the live check right now: "mock", "claude" or "gemini". The provenance label in state,
+    events, mistakes and logs. Cached for 2 s because the provider lookup may read <repo>/.env."""
+    global _mode_cache
+    key = tuple(os.environ.get(k) for k in ("HANDOVER_CHECK", "HANDOVER_CHECK_PROVIDER", "ANTHROPIC_API_KEY"))
+    now = time.monotonic()
+    if _mode_cache[0] != key or now - _mode_cache[1] > 2.0:
+        _mode_cache = (key, now, "mock" if check.is_mock() else check.provider())
+    return _mode_cache[2]
+
+
+class FrameDebouncer:
+    """Debounce over results keyed by frame order, so checks running at once can finish in any order.
+
+    Advances when the newest n results by frame (each from a different frame) are confident yes answers. A late
+    answer for an older frame never outweighs a newer one. Fast path: a single yes at fast_conf or more that
+    named no difference (reason None) on the newest frame answered so far advances alone. n and min_conf are
+    the HANDOVER_DEBOUNCE_N and HANDOVER_MIN_CONF values check.Debouncer reads.
+    """
+
+    def __init__(self) -> None:
+        base = check.Debouncer()
+        self.n, self.min_conf = base.n, base.min_conf
+        self.results: dict[int, bool] = {}  # frame seq -> confident yes
+
+    def feed(self, seq: int, done: str, confidence: float, reason: Optional[str] = None) -> bool:
+        """Record the answer for frame `seq`. True when the step should advance (and resets)."""
+        passed = done == "yes" and confidence >= self.min_conf
+        self.results[seq] = passed
+        newest = sorted(self.results)[-self.n:]
+        fast = (passed and reason is None and seq == newest[-1] and fast_path()
+                and confidence >= max(fast_conf(), self.min_conf))
+        if fast or (len(newest) == self.n and all(self.results[s] for s in newest)):
+            self.reset()
+            return True
+        return False
+
+    @property
+    def count(self) -> int:
+        """Confident yes answers in a row, counting back from the newest frame answered."""
+        out = 0
+        for seq in sorted(self.results, reverse=True):
+            if not self.results[seq]:
+                break
+            out += 1
+        return out
+
+    def reset(self) -> None:
+        self.results.clear()
+
+
 @dataclass
 class RunStats:
     """One pass through a lesson, from select_lesson to done, for the run events."""
@@ -380,6 +515,7 @@ class CheckJob:
     frame: bytes
     version: int
     prev_ref: Optional[bytes] = None
+    seq: int = 0  # frame number, so answers from checks running at once are put back in frame order
 
 
 class Engine:
@@ -398,11 +534,17 @@ class Engine:
         self.mistake: Optional[dict] = None  # contract 7.2 fields minus "type"
         self.version = 0  # bumps on every lesson or step change
         self.step_started = time.monotonic()
-        self.debouncer = check.Debouncer()
+        self.debouncer = FrameDebouncer()
         self.gate = gate.MotionGate()
         self.breaker = check.Breaker()
         self.watch = mistake.MistakeWatch()
+        self.rubric: Optional[dict] = None  # understand.load_rubric for the lesson; None when missing or stale
+        self.key_cache: dict[tuple, list[bytes]] = {}  # (lesson_id, n) -> START, MID, DONE keyframes
+        self.tracker = understand.MistakeTracker()  # live mistakes (HANDOVER_LIVE_MISTAKES)
+        self.progress: Optional[float] = None  # from understanding, 0..1
+        self.stage: Optional[dict] = None  # from understanding, {"index", "count", "label"}
         self.offline_seen: tuple = (False, None)  # (check_offline, reason) last sent to clients
+        self.last_broadcast: Optional[dict] = None  # the last state broadcast, see broadcast_state
         self.run: Optional[RunStats] = None
         self.failed_sinks: set[int] = set()
         self.started = time.monotonic()
@@ -416,7 +558,8 @@ class Engine:
         self.gated_frame: Optional[bytes] = None  # newest frame the motion gate has seen
         self.gated_seq = 0
         self.frame_wanted = False  # the motion gate's answer for gated_frame
-        self.inflight: Optional[asyncio.Task] = None  # the one running check
+        self.inflight: set[asyncio.Task] = set()  # running checks, at most max_inflight(), on different frames
+        self.spare_slots = 0  # extra checks a gate-triggered check may still start on the next settled frames
         self.mistake_task: Optional[asyncio.Task] = None  # the one running mistake compare (or mock confirm)
         self.mock_tick_at = 0.0  # last time the mock mistake hook was looked at
         self.frame_event = asyncio.Event()
@@ -447,7 +590,7 @@ class Engine:
         return "watching"
 
     def offline(self) -> tuple[bool, Optional[str]]:
-        """(check_offline, check_offline_reason). Mock mode never uses Gemini, so it is never offline."""
+        """(check_offline, check_offline_reason). Mock mode never calls a model, so it is never offline."""
         if check.is_mock() or not self.breaker.offline:
             return False, None
         return True, self.breaker.reason
@@ -467,7 +610,23 @@ class Engine:
             "check_offline": offline,
             "check_offline_reason": reason,
             "mistake": self.mistake,
+            "check_mode": check_mode(),
+            "next_clip": self.next_clip(),
+            "progress": self.progress,
+            "stage": self.stage,
         }
+
+    def next_clip(self) -> Optional[str]:
+        """The next step's clip (relative path) once this step has one confident yes, so the web can preload it
+        before the advance. None otherwise, and on the last step."""
+        if self.done or not (self.verified or self.debouncer.count > 0):
+            return None
+        steps = self.steps
+        k = self.step + 1
+        if not 0 < k < len(steps):
+            return None
+        clip = steps[k].get("clip") or f"clips/{k + 1:02d}.mp4"
+        return clip if isinstance(clip, str) else None
 
     def broadcast(self, msg: Any) -> None:
         """To every UI client; text messages also go to every camera that said hello."""
@@ -479,7 +638,19 @@ class Engine:
                     cam.push(msg)
 
     def broadcast_state(self) -> None:
-        self.broadcast(self.state())
+        """Always sends: commands such as select_lesson get their state even when nothing changed."""
+        self.last_broadcast = self.state()
+        self.broadcast(self.last_broadcast)
+
+    def broadcast_state_if_changed(self) -> None:
+        """For check results: sends state only when it differs from the last one broadcast, so two checks
+        running at once that give the same answer produce one state, not two."""
+        st = self.state()
+        if st == self.last_broadcast:
+            metrics["states_unchanged_skipped"] += 1
+            return
+        self.last_broadcast = st
+        self.broadcast(st)
 
     def sync_offline(self) -> bool:
         """Records the breaker state; True when it changed since clients last heard it."""
@@ -490,7 +661,7 @@ class Engine:
         return changed
 
     def open_breaker_if_no_key(self) -> None:
-        """In gemini mode without a key, show "Checks off" from the start instead of after the first frame."""
+        """In claude or gemini mode without a key, show "Checks off" from the start instead of after the first frame."""
         has_key = getattr(check, "has_key", None)  # public key probe requested from check.py
         if check.is_mock() or has_key is None or has_key():
             return
@@ -530,7 +701,7 @@ class Engine:
         offline, reason = self.offline()
         return {"uptime_s": round(time.monotonic() - self.started, 1), "lesson_id": self.lesson_id,
                 "step": self.step, "total": len(self.steps), "status": self.status(), "cameras": self.cameras,
-                "ui_clients": len(self.ui), "check_mode": "mock" if check.is_mock() else "gemini",
+                "ui_clients": len(self.ui), "check_mode": check_mode(),
                 "check_offline": offline, "check_offline_reason": reason, "gate": self.gate.stats,
                 "counters": dict(metrics)}
 
@@ -539,25 +710,63 @@ class Engine:
     def _enter_step(self) -> None:
         self.version += 1
         self.debouncer.reset()
+        self.spare_slots = 0
         self.gate.reset()
         self.watch.reset()
         self.checking = False
         self.verified = False
         self.last_check = None
         self.mistake = None
+        self.progress = None
+        self.stage = None
+        self.tracker.start_step(self.step, self.understand_entry(self.step))
         self.step_started = time.monotonic()
         self.checked_seq = self.frame_seq  # never judge a new step with a frame taken before it began
 
-    def select(self, lesson_id: str) -> None:
+    def load_rubric(self) -> None:
+        """The lesson's rubric.json when understanding is on; None when missing or stale (after a recut)."""
+        self.key_cache.clear()
+        self.rubric = None
+        if self.lesson_id and self.lesson is not None and understanding_on():
+            self.rubric = understand.load_rubric(LESSONS / self.lesson_id, self.lesson)
+
+    def understand_entry(self, index: int) -> Optional[dict]:
+        """Rubric entry of step `index` (0-based) when understanding is on, else None."""
+        if self.rubric is None or not understanding_on() or not 0 <= index < len(self.steps):
+            return None
+        n = self.steps[index].get("n", index + 1)
+        return understand.step_entry(self.rubric, n)
+
+    def keyframes(self, entry: dict) -> Optional[list[bytes]]:
+        """START, MID, DONE keyframes of a rubric entry, cached like ref_bytes; None when a file is missing."""
+        key = (self.lesson_id, entry.get("n"))
+        if key not in self.key_cache:
+            try:
+                frames = understand.read_keyframes(LESSONS / str(self.lesson_id), entry)
+            except OSError:
+                if key not in self.missing_ref_logged:
+                    log.warning("understanding keyframes missing for step %s", entry.get("n"))
+                    self.missing_ref_logged.add(key)
+                return None
+            if not frames:
+                return None
+            self.key_cache[key] = frames
+        return self.key_cache[key]
+
+    def select(self, lesson_id: str, learner: Optional[str] = None) -> None:
+        """Load a lesson at step 0 and start a run. learner: the signed-in user's id, or None (anonymous)."""
         lesson = read_lesson(lesson_id)
         self.lesson_id, self.lesson = lesson_id, lesson
         self.refresh_rev()
         self.step, self.done = 0, False
         self.ref_cache.clear()
+        self.load_rubric()
         self._enter_step()
         self.run = RunStats(uuid.uuid4().hex, time.monotonic())
         log.info("selected lesson %s (%d steps)", lesson_id, len(self.steps))
-        self.emit("run_start", total=len(self.steps))
+        # source and check_mode let dashboards leave out mock and replay runs; learner tags per-user progress
+        self.emit("run_start", total=len(self.steps), learner=learner,
+                  source=self.active.source if self.active else None, check_mode=check_mode())
         self._emit_step_enter()
         self.broadcast_state()
 
@@ -569,6 +778,7 @@ class Engine:
             self.lesson = read_lesson(lesson_id)
         self.refresh_rev()
         self.ref_cache.clear()
+        self.load_rubric()
         if self.step >= len(self.steps):
             self.step = max(0, len(self.steps) - 1)
         self._enter_step()
@@ -643,6 +853,7 @@ class Engine:
         return len(self.steps) if self.done else self.step
 
     def dismiss_mistake(self) -> None:
+        self.tracker.reset()
         if self.mistake is not None:
             self.mistake = None
             self.broadcast_state()
@@ -787,14 +998,15 @@ class Engine:
                 try:
                     await self._gate_newest()
                     self._mock_tick()
-                    if self.inflight is None or self.inflight.done():
+                    self.inflight = {t for t in self.inflight if not t.done()}
+                    if len(self.inflight) < max_inflight():
                         job = self._next_job()
                         if job is not None:
-                            self.inflight = asyncio.create_task(self._check_task(job))
+                            self.inflight.add(asyncio.create_task(self._check_task(job)))
                 except Exception:  # one bad frame or lesson must not stop checking for the session
                     log.exception("check loop iteration failed")
         finally:
-            for task in (self.inflight, self.mistake_task):
+            for task in (*self.inflight, self.mistake_task):
                 if task is not None:
                     task.cancel()
 
@@ -822,9 +1034,16 @@ class Engine:
         # Fast confirm: after a yes, the next still frame is checked at once, even though the gate sees no
         # change since the last check; otherwise the confirming yes would wait for the 6 s heartbeat.
         confirming = self.debouncer.count > 0 and self.gate.settled
+        # Pipelined confirm: while a gate-triggered check runs, the next settled frame starts the confirming
+        # check right away instead of after the first answer. At most max_inflight() - 1 extra checks per gate
+        # trigger (change or heartbeat); a still scene that keeps answering no gets no more than that.
+        running = sum(1 for t in self.inflight if not t.done())
+        pipelined = running > 0 and self.spare_slots > 0 and self.gate.settled
+        if running >= self.debouncer.n - self.debouncer.count:
+            confirming = pipelined = False  # the checks already running can finish the debounce; no extra call
         if frame is None or self.gated_seq <= self.checked_seq or self.cameras == 0:
             return None
-        if not (self.frame_wanted or confirming):
+        if not (self.frame_wanted or confirming or pipelined):
             return None
         ref = self.ref_bytes(self.step)
         if ref is None:
@@ -835,44 +1054,102 @@ class Engine:
             self.broadcast_state()
         if not allowed:
             return None
+        if self.frame_wanted:
+            self.spare_slots = max_inflight() - 1
+        elif pipelined and not confirming:
+            self.spare_slots -= 1
         self.gate.mark_checked(now)
         self.checked_seq = self.gated_seq
         question = cur.get("check_question") or "Is this step finished?"
         prev_ref = self.ref_bytes(self.step - 1) if self.step > 0 else None
-        return CheckJob(self.step, question, ref, frame, self.version, prev_ref)
+        return CheckJob(self.step, question, ref, frame, self.version, prev_ref, self.gated_seq)
 
     async def _run_check(self, job: CheckJob) -> None:
         # Checks run back to back, so status stays "watching" unless one is slow; flipping to "checking"
         # for every frame made the UI flap twice a second.
-        prev = self._check_signature()
         show = asyncio.get_running_loop().call_later(CHECKING_SHOW_AFTER, self._show_checking, job.version)
+        entry = self.understand_entry(job.index)
+        keys = self.keyframes(entry) if entry is not None else None
+        und: Optional[understand.Understanding] = None
         try:
-            res = await check.check_frame(job.ref, job.frame, job.question, step_started_at=self.step_started,
-                                          prev_ref=job.prev_ref)
-        except Exception:  # check_frame should never raise; keep the loop alive regardless
-            log.exception("check crashed")
-            res = check.CheckResult("unsure", 0.0, 0, error="error")
+            if keys:  # understanding on and a rubric entry: both calls on the same frame, at once
+                res, und = await asyncio.gather(
+                    self._safe_check(job),
+                    self._safe_understand(entry, keys, job))
+            else:
+                res = await self._safe_check(job)
         finally:
             show.cancel()
         self.breaker.record(res, time.monotonic())
+        if und is not None:
+            self.breaker.record(und, time.monotonic())
         offline_changed = self.sync_offline()
         self._record_check(job, res)
-        if job.version != self.version:
+        if und is not None:
+            res = combine(res, und)
+        if job.version != self.version or self.verified:
             if offline_changed:
                 self.broadcast_state()
-            return  # step changed while the check was running; the stale result is ignored
+            return  # step changed (or already verified) while the check was running; the result is ignored
         shown = self.checking
         self.checking = False
         self.last_check = res.as_dict()
         cleared = res.done == "yes" and self.mistake is not None
         if cleared:
             self.mistake = None
-        if self.debouncer.feed(res.done, res.confidence):
+        if und is not None:
+            cleared = self._apply_understanding(und) or cleared
+        if self.debouncer.feed(job.seq, res.done, res.confidence, res.reason):
             await self._verify_and_advance(job.version)
             return
-        if shown or cleared or offline_changed or self._check_signature() != prev:
-            self.broadcast_state()  # only when the answer changed, not on every identical result
+        # Compared with what clients last got, not with the moment this check started: with checks running at
+        # once, an older start would make every answer look new.
+        if shown or cleared or offline_changed or self._check_signature() != self._signature_of(self.last_broadcast):
+            self.broadcast_state_if_changed()  # only when the answer changed, not on every identical result
         await self._after_result(job, res.done)
+
+    async def _safe_check(self, job: CheckJob) -> check.CheckResult:
+        try:
+            return await check.check_frame(job.ref, job.frame, job.question, step_started_at=self.step_started,
+                                           prev_ref=job.prev_ref)
+        except Exception:  # check_frame should never raise; keep the loop alive regardless
+            log.exception("check crashed")
+            return check.CheckResult("unsure", 0.0, 0, error="error")
+
+    async def _safe_understand(self, entry: dict, keys: list[bytes], job: CheckJob) -> "understand.Understanding":
+        try:
+            return await understand.understand_frame(entry, keys, job.frame, job.prev_ref,
+                                                     step_started_at=self.step_started)
+        except Exception:  # understand_frame should never raise either
+            log.exception("understanding crashed")
+            return understand.Understanding("unsure", 0.0, 0, error="error")
+
+    def _apply_understanding(self, und: "understand.Understanding") -> bool:
+        """progress, stage and (with HANDOVER_LIVE_MISTAKES) live mistakes from one understanding result.
+        True when state.mistake changed. A live mistake is advisory and never moves the step."""
+        if und.error is None:
+            metrics["understand_results"] += 1
+            stages = (self.understand_entry(self.step) or {}).get("stages") or []
+            self.progress = round(max(0.0, min(1.0, und.progress)), 3)
+            if 0 <= und.stage < len(stages):
+                self.stage = {"index": und.stage, "count": len(stages), "label": stages[und.stage].get("label") or ""}
+            else:
+                self.stage = None
+        if not live_mistakes_on():
+            return False
+        self.tracker.source = check_mode()
+        msg = self.tracker.feed(und, time.monotonic())
+        if msg is not None:
+            self.mistake = {k: v for k, v in msg.items() if k != "type"}
+            metrics["live_mistakes"] += 1
+            self.emit("mistake", step=msg["step"], mistake_kind="live", label=msg["label"],
+                      confidence=msg["confidence"], source=msg["source"])
+            self.broadcast(msg)
+            return True
+        if self.mistake is not None and self.mistake.get("kind") == "live" and self.tracker.active is None:
+            self.mistake = None
+            return True
+        return False
 
     def _record_check(self, job: CheckJob, res: check.CheckResult) -> None:
         metrics["checks"] += 1
@@ -880,13 +1157,16 @@ class Engine:
             metrics[f"check_errors_{res.error}"] += 1
         log.debug("check step %d: %s %.2f %d ms, gate %s", job.index, res.done, res.confidence, res.latency_ms,
                   self.gate.stats)
-        model = "mock" if check.is_mock() else str(config.get("HANDOVER_CHECK_MODEL"))
+        model = "mock" if check.is_mock() else check.active_model()
         self.emit("check", step=job.index, done=res.done, confidence=round(res.confidence, 3),
                   latency_ms=res.latency_ms, reason=res.reason, model=model, gated=self.gate.enabled,
                   error_kind=res.error)
 
     async def _verify_and_advance(self, version: int) -> None:
+        """verified (with next_clip) goes out at once, so the badge and the preload start now; the step moves
+        after VERIFIED_HOLD."""
         self.verified = True
+        self.checking = False
         self.broadcast_state()
         await asyncio.sleep(VERIFIED_HOLD)
         if version == self.version:
@@ -899,14 +1179,24 @@ class Engine:
 
     def _check_signature(self) -> tuple:
         lc = self.last_check or {}
-        return self.status(), lc.get("done"), lc.get("confidence"), lc.get("reason")
+        return (self.status(), lc.get("done"), lc.get("confidence"), lc.get("reason"), self.next_clip(),
+                self.progress, self.stage)
+
+    @staticmethod
+    def _signature_of(st: Optional[dict]) -> tuple:
+        """_check_signature of a state message already sent (None: nothing sent yet)."""
+        if st is None:
+            return (None,)
+        lc = st.get("last_check") or {}
+        return (st.get("status"), lc.get("done"), lc.get("confidence"), lc.get("reason"), st.get("next_clip"),
+                st.get("progress"), st.get("stage"))
 
     # ---- mistake check (M9)
 
     async def _after_result(self, job: CheckJob, done: str) -> None:
         """Feed the mistake policy after a check that did not pass. A due compare runs as its own task (one at a
         time) so it never delays normal checks, or inline when HANDOVER_MISTAKE_PARALLEL=0.
-        Mock mode never calls Gemini for this; its HANDOVER_MOCK_MISTAKE hook runs in _mock_tick instead."""
+        Mock mode never calls a model for this; its HANDOVER_MOCK_MISTAKE hook runs in _mock_tick instead."""
         if check.is_mock():
             return
         if not self.watch.on_result(job.index, done, time.monotonic()):
@@ -950,20 +1240,24 @@ class Engine:
         self.mistake_task = asyncio.create_task(self._background(self._confirm_and_raise(job, found), "mock confirm"))
 
     async def _confirm_and_raise(self, job: CheckJob, found: dict) -> None:
-        if await self._confirm_ahead(job) and job.version == self.version:
-            self._raise_mistake(found)
+        verdict = await self._confirm_ahead(job)
+        if verdict is not None and job.version == self.version:
+            self._raise_mistake(found, skip=verdict == "skip")
 
     async def _compare_and_raise(self, job: CheckJob) -> None:
         match = await self._compare(job)
         if match is None or job.version != self.version:
             return
-        found = self.watch.decide(job.index, len(self.steps), match.step, match.confidence, self.steps, "gemini")
+        found = self.watch.decide(job.index, len(self.steps), match.step, match.confidence, self.steps, check_mode())
         if found is None:
             return
-        if mistake.needs_confirmation(found) and not await self._confirm_ahead(job):
-            return
+        verdict: Optional[str] = "show"
+        if mistake.needs_confirmation(found):
+            verdict = await self._confirm_ahead(job)
+            if verdict is None:
+                return
         if job.version == self.version:
-            self._raise_mistake(found)
+            self._raise_mistake(found, skip=verdict == "skip")
 
     async def _compare(self, job: CheckJob) -> Optional[check.MatchResult]:
         """One multiple-choice call over references k-1, k, k+1 (those that exist). None when it cannot run."""
@@ -974,26 +1268,44 @@ class Engine:
                 refs.append((i, ref))
         if len(refs) < 2 or not self._breaker_allows():
             return None
-        match = await check.compare_refs(job.frame, refs, job.question)
+        match = await check.compare_refs(job.frame, refs, None)  # neutral question: the step's own would bias it
         self._breaker_record(match)
         return None if match.error else match
 
-    async def _confirm_ahead(self, job: CheckJob) -> bool:
-        """An ahead match counts only if a normal check of step k+1 says yes with enough confidence."""
+    async def _confirm_ahead(self, job: CheckJob) -> Optional[str]:
+        """What an ahead match may do: None (nothing), "show" (the banner only) or "skip" (banner, then k+2).
+
+        The banner needs a normal check of step k+1 to say yes at AHEAD_CONFIRM_CONF. The skip also needs
+        HANDOVER_AHEAD_SKIP=1, that check at AHEAD_SKIP_CONF, and a normal check of step k itself saying yes on
+        the same frame, because the compare often calls a skipped step "ahead" (accuracy run: 15 of 23)."""
         k1 = job.index + 1
         if k1 >= len(self.steps):
-            return False
-        nxt = self.steps[k1]
+            return None
         ref = self.ref_bytes(k1)
         if ref is None or not self._breaker_allows():
-            return False
-        question = nxt.get("check_question") or "Is this step finished?"
-        # Mock: the HANDOVER_MOCK_MISTAKE hook stands in for Gemini's match, so its confirming check is told the
-        # step finished long ago; with the real step timer it would repeat the "no" that triggered the hook.
+            return None
+        question = self.steps[k1].get("check_question") or "Is this step finished?"
+        # Mock: the HANDOVER_MOCK_MISTAKE hook stands in for the model's match, so its confirming check is told
+        # the step finished long ago; with the real step timer it would repeat the "no" that triggered the hook.
         started = 0.0 if check.is_mock() else self.step_started
-        res = await check.check_frame(ref, job.frame, question, step_started_at=started, prev_ref=job.ref)
-        self._breaker_record(res)
-        return res.done == "yes" and res.confidence >= mistake.AHEAD_CONFIRM_CONF
+        skip = ahead_skip()
+        checks = [check.check_frame(ref, job.frame, question, step_started_at=started, prev_ref=job.ref)]
+        if skip:
+            own_q = self.steps[job.index].get("check_question") or "Is this step finished?"
+            prev = self.ref_bytes(job.index - 1) if job.index > 0 else None
+            checks.append(check.check_frame(job.ref, job.frame, own_q, step_started_at=started, prev_ref=prev))
+        results = await asyncio.gather(*checks)
+        for res in results:
+            self._breaker_record(res)
+        nxt = results[0]
+        if nxt.done != "yes" or nxt.confidence < mistake.AHEAD_CONFIRM_CONF:
+            return None
+        if skip:
+            own = results[1]
+            if (nxt.confidence >= AHEAD_SKIP_CONF and own.done == "yes"
+                    and own.confidence >= self.debouncer.min_conf):
+                return "skip"
+        return "show"
 
     def _breaker_allows(self) -> bool:
         allowed = self.breaker.allow(time.monotonic())
@@ -1006,9 +1318,9 @@ class Engine:
         if self.sync_offline():
             self.broadcast_state()
 
-    def _raise_mistake(self, found: dict) -> None:
-        """Send the mistake once and show it in state.mistake. Behind stays until cleared; ahead (already
-        confirmed) skips to k+2 right after."""
+    def _raise_mistake(self, found: dict, skip: bool = False) -> None:
+        """Send the mistake once and show it in state.mistake. Behind, and ahead without skip, stay until
+        cleared and never move the step. An ahead with skip (see _confirm_ahead) goes to k+2 right after."""
         k = found["step"]
         if k != self.step or self.done:
             return
@@ -1023,8 +1335,8 @@ class Engine:
             return
         self.mistake = {key: value for key, value in found.items() if key != "type"}
         self.broadcast(found)
-        self.broadcast_state()  # state.mistake holds it while shown; an ahead then skips to k+2, which clears it
-        if ahead:
+        self.broadcast_state()  # state.mistake holds it while shown; a skip to k+2 clears it
+        if ahead and skip:
             self.go(k + 2, "camera")
 
     async def ui_frame_loop(self) -> None:
@@ -1054,15 +1366,15 @@ engine = Engine()
 
 
 async def warm_up() -> None:
-    """Open the pooled Gemini connection at startup so the first real check is not slow. Skipped in mock mode,
-    without a key, or until check.py offers a public warm_up; never fails startup."""
+    """Open the pooled connection to the check provider at startup so the first real check is not slow. Skipped
+    in mock mode, without a key, or until check.py offers a public warm_up; never fails startup."""
     warm = getattr(check, "warm_up", None)
     if check.is_mock() or warm is None:
         return
     try:
         await asyncio.wait_for(warm(), WARM_UP_TIMEOUT)
     except Exception as e:
-        log.warning("gemini warm-up skipped: %s", check._redact(f"{type(e).__name__}: {e}"))
+        log.warning("check warm-up skipped: %s", check._redact(f"{type(e).__name__}: {e}"))
 
 
 @contextlib.asynccontextmanager
@@ -1072,7 +1384,7 @@ async def lifespan(app: FastAPI):
     engine.open_breaker_if_no_key()
     if databricks_module() is not None and databricks_sink not in EVENT_SINKS:
         EVENT_SINKS.append(databricks_sink)
-    log.info("lessons: %s  check: %s", LESSONS, "mock" if check.is_mock() else "gemini")
+    log.info("lessons: %s  check: %s", LESSONS, check_mode() if check.is_mock() else f"{check_mode()} {check.active_model()}")
     yield
     engine.stop_run("shutdown")
     for t in tasks:
@@ -1262,7 +1574,7 @@ def save_upload(file: UploadFile, dest: Path) -> bool:
     return True
 
 
-@app.post("/api/lesson")
+@app.post("/api/lesson", dependencies=[Depends(accounts.mutation_guard)])
 async def upload_lesson(file: UploadFile = File(...), title: str = Form(""), id: Optional[str] = Form(None)) -> dict:
     title = title.strip() or "Untitled lesson"
     if file.size is not None and file.size > MAX_UPLOAD_BYTES:
@@ -1319,7 +1631,7 @@ async def read_recut_body(request: Request) -> Optional[dict]:
     return new
 
 
-@app.post("/api/lessons/{lesson_id}/recut")
+@app.post("/api/lessons/{lesson_id}/recut", dependencies=[Depends(accounts.mutation_guard)])
 async def recut(lesson_id: str, request: Request) -> Any:
     """Re-cut from lesson.json. An optional JSON body (a full lesson object) is saved first."""
     d = lesson_dir(lesson_id)
@@ -1329,8 +1641,11 @@ async def recut(lesson_id: str, request: Request) -> Any:
         raise HTTPException(409, "recut already running")
     async with lesson_write_lock:
         original = (d / "lesson.json").read_text(encoding="utf-8")
+        if new is None and "voiceover" in read_lesson(lesson_id):
+            new = read_lesson(lesson_id)
         if new is not None:
             new["id"] = lesson_id
+            new.pop("voiceover", None)  # the recut clips carry the original audio, not the voiceover
             tmp = d / "lesson.json.tmp"
             tmp.write_text(json.dumps(new, indent=2), encoding="utf-8")
             tmp.replace(d / "lesson.json")
@@ -1352,7 +1667,7 @@ async def recut(lesson_id: str, request: Request) -> Any:
     return result
 
 
-@app.delete("/api/lessons/{lesson_id}")
+@app.delete("/api/lessons/{lesson_id}", dependencies=[Depends(accounts.mutation_guard)])
 async def delete_lesson(lesson_id: str) -> dict:
     """Remove a lesson folder. A folder without lesson.json (a teach job still building) is not a lesson: 404."""
     d = lesson_dir(lesson_id)
@@ -1379,6 +1694,18 @@ class LessonFiles(StaticFiles):
         resp.headers["Cache-Control"] = "no-cache"
         return resp
 
+
+def _job_snapshot(job: str) -> Optional[dict]:
+    with jobs_lock:
+        return dict(jobs[job]) if job in jobs else None
+
+
+# Accounts, course library, editor and scoring routes. A setter, not an import of main, because
+# `python -m server.main` runs this file as __main__.
+app.include_router(routes_library.router)
+routes_library.configure(lock=lesson_write_lock, on_lesson_changed=lambda lesson_id: engine.reload_if_active(lesson_id),
+                         upload=upload_lesson, job_status=_job_snapshot,
+                         publish=lambda d, lesson_id: publish_lesson_files(lesson_id))
 
 app.mount("/lessons", LessonFiles(directory=LESSONS), name="lessons")
 
@@ -1485,6 +1812,19 @@ def navigate(client: UIClient, msg: dict) -> None:
         engine.go(engine.position() - 1, "button")
 
 
+def learner_id(token: Any) -> Optional[str]:
+    """The user id behind an optional select_lesson token, or None (anonymous, or a token that does not resolve).
+    Anonymous learning is always allowed, so a bad token is not an error here."""
+    if not isinstance(token, str) or not token.strip():
+        return None
+    try:
+        user = accounts.resolve_token(token.strip())
+    except Exception:  # an unreadable token store must not block learning
+        log.warning("learner token lookup failed", exc_info=True)
+        return None
+    return str(user["id"]) if user and user.get("id") else None
+
+
 def handle_ui_message(client: UIClient, text: str) -> None:
     msg = parse_message(text)
     if msg is None:
@@ -1492,7 +1832,7 @@ def handle_ui_message(client: UIClient, text: str) -> None:
     kind = msg.get("type")
     if kind == "select_lesson":
         try:
-            engine.select(str(msg.get("id", "")))
+            engine.select(str(msg.get("id", "")), learner=learner_id(msg.get("token")))
         except HTTPException as e:
             client.push({"type": "error", "message": e.detail})
     elif engine.lesson is None:

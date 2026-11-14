@@ -1,6 +1,6 @@
 """Score a lesson's camera check questions before a learner meets them.
 
-    .venv/bin/python scripts/eval_checks.py lessons/demo-v1 [--n 1] [--next] [--mock]
+    .venv/bin/python scripts/eval_checks.py lessons/demo-v1 [--n 1] [--next] [--mock] [--provider P]
 
 For each camera step k it asks the real check (server.check.check_frame):
   own   reference k against itself          expect yes
@@ -15,7 +15,11 @@ rate; a step with no answered probe is "not scored (errors)", and the run exits
 1 when every call errored.
 Prints a table and writes markdown to scripts/out/eval-<id>-<timestamp>.md.
 
-Needs a Gemini key (GEMINI_API_KEY, GOOGLE_API_KEY, or the repo .env); the key
+--provider picks who answers: current (default: whatever the hub would use,
+HANDOVER_CHECK_PROVIDER or auto, which is Claude when ANTHROPIC_API_KEY is
+found, else Gemini), claude, or gemini. The report names the provider and model
+that actually ran. Needs that provider's key (ANTHROPIC_API_KEY, or
+GEMINI_API_KEY / GOOGLE_API_KEY, in the environment or the repo .env); the key
 is never printed. --mock runs offline: identical images say yes, others no.
 """
 
@@ -38,7 +42,8 @@ sys.path.insert(0, str(SCRIPTS))
 from lesson_lint import resolve  # noqa: E402
 
 KEY_NAMES = ("GEMINI_API_KEY", "GOOGLE_API_KEY")
-DEFAULT_MODEL_LABEL = "gemini (server.check default)"
+CLAUDE_KEY_NAMES = ("ANTHROPIC_API_KEY",)
+PROVIDERS = ("current", "claude", "gemini")
 ANSWERS = ("yes", "no", "unsure")
 
 
@@ -110,10 +115,11 @@ class StepScore:
 
 # ---------------------------------------------------------------- key
 
-def has_key(environ: dict | None = None, env_file: Path | None = None) -> bool:
-    """True when a Gemini key is set in the environment or the .env file. Never returns or prints the key."""
+def has_key(environ: dict | None = None, env_file: Path | None = None, names: tuple = KEY_NAMES) -> bool:
+    """True when a key (Gemini by default) is set in the environment or the .env file. Never returns or prints
+    the key."""
     environ = os.environ if environ is None else environ
-    if any(environ.get(k, "").strip() for k in KEY_NAMES):
+    if any(environ.get(k, "").strip() for k in names):
         return True
     env_file = REPO / ".env" if env_file is None else env_file
     if not env_file.is_file():
@@ -123,7 +129,7 @@ def has_key(environ: dict | None = None, env_file: Path | None = None) -> bool:
         if "=" not in line or line.startswith("#"):
             continue
         k, v = line.split("=", 1)
-        if k.strip().removeprefix("export ").strip() in KEY_NAMES and v.strip().strip("\"'"):
+        if k.strip().removeprefix("export ").strip() in names and v.strip().strip("\"'"):
             return True
     return False
 
@@ -137,10 +143,27 @@ async def mock_check(ref: bytes, live: bytes, question: str) -> Probe:
     return Probe("", "no", 0.85, 0)
 
 
-def gemini_checker():
-    """Wrap server.check.check_frame (positional ref, live, question) into a Probe."""
+def resolve_provider(choice: str) -> str:
+    """claude or gemini: the provider the real check will use in this process. Pins HANDOVER_CHECK_PROVIDER
+    for --provider claude or gemini; current leaves it as the hub would see it."""
     os.environ.pop("HANDOVER_CHECK", None)  # this process always uses the real check
+    if choice in ("claude", "gemini"):
+        os.environ["HANDOVER_CHECK_PROVIDER"] = choice
     sys.path.insert(0, str(REPO))
+    from server import check
+
+    return check.provider()
+
+
+def provider_label() -> str:
+    """The provider and model server.check will call, for example "claude claude-haiku-5-5"."""
+    from server import check
+
+    return f"{check.provider()} {check.active_model()}"
+
+
+def real_checker():
+    """Wrap server.check.check_frame (positional ref, live, question) into a Probe. Call resolve_provider first."""
     from server.check import check_frame
 
     async def run(ref: bytes, live: bytes, question: str) -> Probe:
@@ -286,8 +309,10 @@ def main(argv: list[str] | None = None, checker=None) -> int:
     ap.add_argument("lesson", help="lesson folder, for example lessons/demo-v1")
     ap.add_argument("--n", type=int, default=1, help="probes per image pair (default 1)")
     ap.add_argument("--next", action="store_true", help="also probe reference k against k+1 (reported separately)")
-    ap.add_argument("--mock", action="store_true", help="offline: no Gemini, identical images say yes")
-    ap.add_argument("--pause", type=float, default=None, help="seconds between Gemini calls (default 1, mock 0)")
+    ap.add_argument("--mock", action="store_true", help="offline: no model, identical images say yes")
+    ap.add_argument("--provider", choices=PROVIDERS, default="current",
+                    help="who answers: current (default, what the hub would use), claude, or gemini")
+    ap.add_argument("--pause", type=float, default=None, help="seconds between model calls (default 1, mock 0)")
     ap.add_argument("--out", default=str(SCRIPTS / "out"), help="folder for the markdown report")
     a = ap.parse_args(argv)
     if a.n < 1:
@@ -309,12 +334,14 @@ def main(argv: list[str] | None = None, checker=None) -> int:
     elif a.mock:
         checker, mode = mock_check, "mock (offline)"
     else:
-        if not has_key():
-            print("eval_checks: no Gemini key found. Set GEMINI_API_KEY or add it to .env, "
+        prov = resolve_provider(a.provider)
+        names = CLAUDE_KEY_NAMES if prov == "claude" else KEY_NAMES
+        if not has_key(names=names):
+            print(f"eval_checks: no {prov} key found. Set {' or '.join(names)} or add it to .env, "
                   "or run with --mock for an offline dry run.", file=sys.stderr)
             return 2
-        checker = gemini_checker()
-        mode = os.environ.get("HANDOVER_CHECK_MODEL") or DEFAULT_MODEL_LABEL
+        checker = real_checker()
+        mode = provider_label()
     pause = a.pause if a.pause is not None else (0.0 if a.mock or mode.startswith("injected") else 1.0)
     min_conf = float(os.environ.get("HANDOVER_MIN_CONF", "0.8"))
 
