@@ -22,11 +22,13 @@
 //   /mock/error?m=text            send {"type":"error"} to UI clients
 //   /mock/recut                   bump rev as if the lesson was re-cut
 //   /mock/restart                 forget the lesson and jobs, drop UI sockets (server restart)
-//   /mock/mistake?kind=behind     send a mistake for the current step now (kind behind or ahead)
+//   /mock/mistake?kind=behind     send a mistake for the current step now (kind behind, ahead or live; optional label=)
 //   /mock/offline?r=rate_limited  checks off with a reason; r= (empty) turns checks back on
 //   /mock/source?s=file           change the camera source
 //   /mock/check_mode?m=mock       set state.check_mode; m= (empty) omits it
 //   /mock/camera_stats            frames and bytes received on /ws/camera; ?reset=1 clears them
+//   /mock/strip_paths?on=1        serve lesson.json without clip, captions and ref_frame (contract defaults apply)
+//   /mock/upload_fail?m=text      the next POST /api/lesson fails with 413 {"detail": text}
 //
 // /capture serves the real server/static/capture.html, so its sending can be
 // measured here; /ws/camera counts the frames and otherwise ignores them.
@@ -127,6 +129,8 @@ const state = {
 }
 let cameraSource = process.env.MOCK_SOURCE || 'phone'
 let checkMode = process.env.MOCK_CHECK_MODE || ''
+let stripPaths = false
+let uploadFail = ''
 const NEXT_CLIP = process.env.MOCK_NEXT_CLIP !== '0'
 const cameraInfo = () =>
   state.camera_connected
@@ -159,12 +163,14 @@ function baseStatus() {
 }
 
 // Like the hub: send `mistake` once, keep it in state until step change or dismiss.
-function sendMistake(kind) {
+function sendMistake(kind, label = null) {
   const s = state.step
   const list = steps()
-  const looks_like = kind === 'ahead' ? Math.min(s + 1, list.length - 1) : Math.max(0, s - 1)
-  const message = kind === 'ahead' ? "You're ahead." : list[s]?.common_mistake || `This still looks like step ${looks_like + 1}.`
-  const m = { step: s, kind, looks_like, message, confidence: 0.86, source: 'mock' }
+  // A live mistake is about this step, so it names no other step.
+  const looks_like = kind === 'live' ? null : kind === 'ahead' ? Math.min(s + 1, list.length - 1) : Math.max(0, s - 1)
+  const message =
+    kind === 'ahead' ? "You're ahead." : kind === 'live' ? 'Check the fold before you go on.' : list[s]?.common_mistake || `This still looks like step ${looks_like + 1}.`
+  const m = { step: s, kind, looks_like, ...(label ? { label } : {}), message, confidence: 0.86, source: 'mock' }
   state.mistake = m
   broadcast({ type: 'mistake', ...m })
   broadcast(stateMsg())
@@ -272,11 +278,17 @@ const server = createServer((req, res) => {
   let m = /^\/api\/lessons\/([^/]+)$/.exec(path)
   if (m && req.method === 'GET') {
     const l = readLesson(m[1])
-    return l ? sendJson(res, 200, l) : sendJson(res, 404, { detail: 'Not found' })
+    if (l && stripPaths) l.steps = l.steps.map(({ clip, captions, ref_frame, ...rest }) => rest)
+    return l ? sendJson(res, 200, l) : sendJson(res, 404, { detail: 'lesson not found' })
   }
   if (path === '/api/lesson' && req.method === 'POST') {
     req.resume()
     req.on('end', () => {
+      if (uploadFail) {
+        const detail = uploadFail
+        uploadFail = ''
+        return sendJson(res, 413, { detail })
+      }
       const job = `job-${Date.now().toString(36)}`
       jobs.set(job, Date.now())
       sendJson(res, 200, { job, id: 'mock-demo' })
@@ -343,7 +355,8 @@ const server = createServer((req, res) => {
     return sendJson(res, 200, stateMsg())
   }
   if (path === '/mock/mistake') {
-    if (state.lesson_id && state.status !== 'done') sendMistake(url.searchParams.get('kind') === 'ahead' ? 'ahead' : 'behind')
+    const kind = url.searchParams.get('kind')
+    if (state.lesson_id && state.status !== 'done') sendMistake(['ahead', 'live'].includes(kind) ? kind : 'behind', url.searchParams.get('label'))
     return sendJson(res, 200, stateMsg())
   }
   if (path === '/mock/offline') {
@@ -357,6 +370,14 @@ const server = createServer((req, res) => {
     cameraSource = url.searchParams.get('s') || 'phone'
     broadcast(stateMsg())
     return sendJson(res, 200, stateMsg())
+  }
+  if (path === '/mock/strip_paths') {
+    stripPaths = url.searchParams.get('on') === '1'
+    return sendJson(res, 200, { stripPaths })
+  }
+  if (path === '/mock/upload_fail') {
+    uploadFail = url.searchParams.get('m') || 'video is larger than 2 GB'
+    return sendJson(res, 200, { uploadFail })
   }
   if (path === '/mock/check_mode') {
     checkMode = url.searchParams.get('m') || ''
