@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import re
 import shutil
@@ -34,6 +35,7 @@ from pydantic import BaseModel, Field, ValidationError, field_validator
 from server import config
 
 REPO = Path(__file__).resolve().parent.parent
+log = logging.getLogger("handover.teach")
 HDR_TRANSFERS = {"smpte2084", "arib-std-b67"}  # PQ and HLG, what iPhones record in HDR
 SDR_TAGS = ["-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709", "-color_range", "tv"]
 SDR_FRAME_TAGS = "setparams=range=tv:color_primaries=bt709:color_trc=bt709:colorspace=bt709"
@@ -496,6 +498,123 @@ def _crease_steps_manual(ex: Extraction) -> Extraction:
     so a camera check cannot judge it. The prompt says so; this enforces it from the step title."""
     steps = [st.model_copy(update={"check_question": "manual"}) if _CREASE_TITLE.search(st.title) else st
              for st in ex.steps]
+    return ex.model_copy(update={"steps": steps})
+
+
+# ---------------------------------------------------------------- color guard (check questions)
+
+# Same list as scripts/lesson_lint.py (test_teach checks they match). A learner's paper or light may differ from the
+# expert's, so check questions must never depend on color.
+COLOR_WORDS = {
+    "red", "orange", "yellow", "green", "blue", "purple", "violet", "pink", "white", "black",
+    "gray", "grey", "brown", "cyan", "magenta", "teal", "beige", "gold", "silver", "navy",
+    "color", "colour", "colored", "coloured",
+}
+_COLOR_RE = "|".join(sorted(COLOR_WORDS, key=len, reverse=True))
+_COLOR_STRIP = re.compile(rf"\b(?:{_COLOR_RE})(?:-colou?red)?\b\s*", re.IGNORECASE)
+REPHRASE_PROMPT = """Rewrite each yes/no check question below so it asks about shape, outline, layers, flaps or which
+side faces up, never color. Keep each one a yes/no question about the same finished state of the step, one
+sentence ending in "?". Return every question by its number."""
+
+
+class _Rephrased(BaseModel):
+    n: int
+    question: str
+
+
+class _RephraseAnswer(BaseModel):
+    questions: list[_Rephrased]
+
+
+def color_words(text: str) -> list[str]:
+    return sorted({w for w in re.findall(r"[A-Za-z']+", (text or "").lower()) if w in COLOR_WORDS})
+
+
+def strip_colors(question: str) -> str:
+    """Last resort: drops color words ("Is the blue side up?" becomes "Is the side up?"). Clumsy but color free.
+    Returns "manual" when too little is left to be a real question (fewer than 4 words)."""
+    q = _COLOR_STRIP.sub("", question)
+    q = re.sub(r"\s+([?,.!])", r"\1", re.sub(r"\s{2,}", " ", q)).strip(" ,")
+    if len(re.findall(r"[A-Za-z']+", q)) < 4:
+        return "manual"
+    return q[:1].upper() + q[1:]
+
+
+def _rephrase_schema() -> dict:
+    schema = _RephraseAnswer.model_json_schema()
+    for node in [schema, *schema.get("$defs", {}).values()]:
+        if "properties" in node:
+            node["required"] = list(node["properties"])
+            node["additionalProperties"] = False
+    return schema
+
+
+def _rephrase_request(bad: dict[int, Step]) -> str:
+    lines = [f"{n}. (step: {st.title}) {st.check_question}" for n, st in bad.items()]
+    return REPHRASE_PROMPT + "\n\n" + "\n".join(lines)
+
+
+def _rephrase_claude(bad: dict[int, Step]) -> dict[int, str]:
+    import anthropic
+
+    key = _anthropic_key()
+    if not key:
+        raise RuntimeError("no Anthropic key")
+    spend = _spend()
+    if not spend.allow():
+        raise RuntimeError("the Claude spending limit is reached")
+    model = _claude_model()
+    response = anthropic.Anthropic(api_key=key).messages.create(
+        model=model, max_tokens=1024,
+        messages=[{"role": "user", "content": _rephrase_request(bad)}],
+        output_config={"format": {"type": "json_schema", "schema": _rephrase_schema()}},
+    )
+    spend.record(model, response.usage)
+    text = next((b.text for b in response.content if getattr(b, "type", "") == "text"), "")
+    return {q.n: q.question for q in _RephraseAnswer.model_validate_json(text).questions}
+
+
+def _rephrase_gemini(bad: dict[int, Step]) -> dict[int, str]:
+    from google import genai
+    from google.genai import types
+
+    client = genai.Client(api_key=_api_key(), http_options=types.HttpOptions(api_version="v1beta", timeout=60_000))
+    resp = client.models.generate_content(
+        model=_model(), contents=_rephrase_request(bad),
+        config=types.GenerateContentConfig(response_mime_type="application/json",
+                                           response_json_schema=_rephrase_schema(), max_output_tokens=1024))
+    return {q.n: q.question for q in _RephraseAnswer.model_validate_json(resp.text or "").questions}
+
+
+def guard_colors(ex: Extraction, provider: str, progress: Progress = noop) -> Extraction:
+    """New model extractions only: no camera check_question may name a color. Offending questions go to the same
+    provider and model in ONE batched rephrase call; a rephrase that still names a color, a failed call, or
+    HANDOVER_NO_NETWORK=1 falls back to stripping the color words. Every fallback is logged."""
+    bad = {n: st for n, st in enumerate(ex.steps, start=1)
+           if not _is_manual(st.check_question) and color_words(st.check_question)}
+    if not bad:
+        return ex
+    progress("extracting", f"Check questions name a color on steps {', '.join(map(str, bad))}; rephrasing")
+    new: dict[int, str] = {}
+    if config.get("HANDOVER_NO_NETWORK"):
+        progress("extracting", "HANDOVER_NO_NETWORK=1: removing the color words instead of rephrasing")
+    else:
+        try:
+            new = (_rephrase_claude if provider == "claude" else _rephrase_gemini)(bad)
+        except Exception as e:
+            reason = scrub(f"{type(e).__name__}: {e}".splitlines()[0][:160])
+            progress("extracting", f"Rephrase call failed ({reason}); removing the color words instead")
+            log.warning("color rephrase failed: %s", reason)
+    steps = list(ex.steps)
+    for n, st in bad.items():
+        q = " ".join(str(new.get(n) or "").split())
+        if not q or color_words(q):
+            q = strip_colors(st.check_question)
+            log.warning("step %d: color words stripped from the check question: %r -> %r", n, st.check_question, q)
+            what = "made manual (too little left without color words)" if q == "manual" \
+                else "removed color words from the check question"
+            progress("extracting", f"Step {n}: {what}")
+        steps[n - 1] = st.model_copy(update={"check_question": q})
     return ex.model_copy(update={"steps": steps})
 
 
@@ -1324,6 +1443,8 @@ def build(srcs: list[Path], lesson_id: str, title: str, progress: Progress = noo
             extraction = _gemini_transcript_mode(extract(norm, progress), norm, progress)
         extraction = _clean_extraction(extraction, duration)
         extraction = _first_step_manual(_crease_steps_manual(_contiguous(_split_flips(extraction))))
+        if provider in ("claude", "gemini"):
+            extraction = guard_colors(extraction, provider, progress)
 
     progress("cutting", f"Cutting {len(extraction.steps)} step clips")
     lesson = cut(lesson_dir, extraction, lesson_id, title, progress=progress)

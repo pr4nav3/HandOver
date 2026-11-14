@@ -904,6 +904,126 @@ def test_merged_flip_is_split_at_the_narration():
     assert teach._split_flips(late) == late  # no second flip step when the model's flip starts late
 
 
+# ---------------------------------------------------------------- color guard
+
+def _colored_extraction():
+    return teach.Extraction(transcript=[], steps=[
+        teach.Step(start="00:00", end="00:08", title="Lay it flat", check_question="manual", prerequisites=[]),
+        teach.Step(start="00:08", end="00:16", title="Fold in half", check_question="Is it a big triangle?",
+                   prerequisites=[1]),
+        teach.Step(start="00:16", end="00:24", title="Flip it over", prerequisites=[2],
+                   check_question="Is the plain blue side facing up as a diamond?"),
+        teach.Step(start="00:24", end="00:32", title="Fold the corners", check_question="Is it green-colored?",
+                   prerequisites=[3]),
+    ])
+
+
+def test_color_words_match_the_lint_list():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("lesson_lint_copy", teach.REPO / "scripts" / "lesson_lint.py")
+    lint = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(lint)
+    assert teach.COLOR_WORDS == lint.COLOR_WORDS
+    assert teach.strip_colors("Is the plain blue side facing up as a diamond?") == \
+        "Is the plain side facing up as a diamond?"
+    assert teach.strip_colors("Is it green-colored?") == "manual"  # too little left to ask
+    assert teach.strip_colors("Are there four flaps?") == "Are there four flaps?"
+
+
+def test_color_guard_offline_strips_without_a_call():
+    lines = []
+    with _env(HANDOVER_NO_NETWORK="1", ANTHROPIC_API_KEY="sk-ant-fake"), _fake_claude(_FakeSpend()) as log:
+        out = teach.guard_colors(_colored_extraction(), "claude", lambda st, m: lines.append(m))
+    assert log["requests"] == []
+    qs = [s.check_question for s in out.steps]
+    assert qs == ["manual", "Is it a big triangle?", "Is the plain side facing up as a diamond?", "manual"], qs
+    assert any("HANDOVER_NO_NETWORK=1" in m for m in lines)
+    assert teach.guard_colors(teach.Extraction(transcript=[], steps=out.steps), "claude").steps == out.steps
+
+
+def test_color_guard_rephrases_once_with_claude():
+    spend = _FakeSpend()
+    answer = {"questions": [{"n": 3, "question": "Is the smooth side facing up, shaped like a diamond?"},
+                            {"n": 4, "question": "Is it still red?"}]}  # step 4 comes back with a color again
+    lines = []
+    with _env(HANDOVER_NO_NETWORK=None, ANTHROPIC_API_KEY="sk-ant-fake"), \
+            _fake_claude(spend, answer=answer) as log:
+        out = teach.guard_colors(_colored_extraction(), "claude", lambda st, m: lines.append(m))
+    (req,) = log["requests"]  # one batched call for both offending questions
+    text = req["messages"][0]["content"]
+    assert "3. (step: Flip it over) Is the plain blue side" in text and "4. (step: Fold the corners)" in text
+    assert "big triangle" not in text and "never color" in text
+    assert req["output_config"]["format"]["type"] == "json_schema" and not {"temperature", "top_p"} & set(req)
+    assert spend.calls[0] == "allow" and spend.calls[1] == "create" and spend.calls[2][0] == "record"
+    qs = [s.check_question for s in out.steps]
+    assert qs[2] == "Is the smooth side facing up, shaped like a diamond?" and qs[3] == "manual", qs
+    assert any("Step 4: made manual" in m for m in lines)
+
+
+def test_color_guard_falls_back_when_the_call_fails_or_budget_is_out():
+    for spend, provider in ((_FakeSpend(allow=False), "claude"), (_FakeSpend(), "claude")):
+        lines = []
+        with _env(HANDOVER_NO_NETWORK=None, ANTHROPIC_API_KEY="sk-ant-fake"), _fake_claude(spend) as log:
+            if spend.allowed:  # make the call itself fail
+                import anthropic
+
+                class Boom:
+                    def __init__(self, api_key):
+                        self.messages = self
+
+                    def create(self, **kw):
+                        raise RuntimeError("network down")
+
+                anthropic.Anthropic = Boom
+            out = teach.guard_colors(_colored_extraction(), provider, lambda st, m: lines.append(m))
+        assert out.steps[2].check_question == "Is the plain side facing up as a diamond?"
+        assert any("Rephrase call failed" in m for m in lines), lines
+        assert log["requests"] == []
+
+
+def test_color_guard_runs_in_the_claude_build():
+    answer = {"steps": [
+        {"start": "00:00", "end": "00:01.5", "title": "Lay it flat", "check_question": "Is it flat?",
+         "prerequisites": [], "ref_time": "", "common_mistake": ""},
+        {"start": "00:01.5", "end": "00:03", "title": "Turn the sheet", "prerequisites": [1], "ref_time": "",
+         "check_question": "Is the blue side facing up now?", "common_mistake": ""}], "safety": [], "tools": []}
+    with _no_env_file(), _env(**{**NO_KEYS, "ANTHROPIC_API_KEY": "sk-ant-fake", "HANDOVER_NO_NETWORK": "1"}), \
+            _fake_claude(_FakeSpend(), answer=answer) as log:
+        lesson = teach.process_upload(_claude_src(), "color-guard", "Color guard")
+    assert len(log["requests"]) == 1  # the extraction only; offline, no rephrase call
+    assert lesson["steps"][1]["check_question"] == "Is the side facing up now?"
+    assert not any(teach.color_words(s["check_question"]) for s in lesson["steps"])
+
+
+def test_color_guard_rephrases_with_gemini():
+    from google import genai
+
+    seen = {}
+
+    class Models:
+        def generate_content(self, model, contents, config):
+            seen.update(model=model, contents=contents)
+            return type("R", (), {"text": json.dumps({"questions": [
+                {"n": 3, "question": "Is the smooth side up as a diamond?"},
+                {"n": 4, "question": "Are four flaps folded to the center?"}]})})()
+
+    class Client:
+        def __init__(self, api_key, http_options):
+            self.models = Models()
+
+    real = genai.Client
+    genai.Client = Client
+    try:
+        with _env(HANDOVER_NO_NETWORK=None, GEMINI_API_KEY="AIza-test-not-real"):
+            out = teach.guard_colors(_colored_extraction(), "gemini")
+    finally:
+        genai.Client = real
+    assert seen["model"] == teach._model() and "Is it green-colored?" in seen["contents"]
+    assert [s.check_question for s in out.steps][2:] == ["Is the smooth side up as a diamond?",
+                                                        "Are four flaps folded to the center?"]
+
+
 def test_transcript_reaches_claude_and_captions():
     lines = []
     with _no_env_file(), _env(**{**NO_KEYS, "ANTHROPIC_API_KEY": "sk-ant-fake", "HANDOVER_TRANSCRIBE": None}), \
