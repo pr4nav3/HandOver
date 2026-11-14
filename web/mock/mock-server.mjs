@@ -8,6 +8,9 @@
 //   PORT        default 8000
 //   MOCK_AUTO   1 (default) auto-advances steps; 0 waits for next/back or /mock calls
 //   MOCK_CAMERA 1 (default) sends fake frames; 0 starts with no camera
+//   MOCK_SOURCE camera source in state.camera: phone (default), glasses, browser, file (shows "Recording")
+//   MOCK_OFFLINE no_key | rate_limited | errors: start with checks off
+//   MOCK_MISTAKE behind:<0-based step> or ahead:<0-based step>: after 4 s on that step send `mistake`
 //
 // Test hooks (plain GET so curl and Playwright can drive it):
 //   /mock/advance?reason=camera   advance one step as if the check passed
@@ -17,6 +20,9 @@
 //   /mock/error?m=text            send {"type":"error"} to UI clients
 //   /mock/recut                   bump rev as if the lesson was re-cut
 //   /mock/restart                 forget the lesson and jobs, drop UI sockets (server restart)
+//   /mock/mistake?kind=behind     send a mistake for the current step now (kind behind or ahead)
+//   /mock/offline?r=rate_limited  checks off with a reason; r= (empty) turns checks back on
+//   /mock/source?s=file           change the camera source
 
 import { createServer } from 'node:http'
 import { createReadStream, existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
@@ -95,12 +101,22 @@ const state = {
   status: 'watching',
   camera_connected: process.env.MOCK_CAMERA !== '0',
   last_check: null,
+  check_offline: !!process.env.MOCK_OFFLINE,
+  check_offline_reason: process.env.MOCK_OFFLINE || null,
+  mistake: null,
 }
+let cameraSource = process.env.MOCK_SOURCE || 'phone'
+const cameraInfo = () =>
+  state.camera_connected
+    ? { name: cameraSource === 'file' ? 'Replay: skipped-flip.mp4' : 'Mock iPhone', platform: cameraSource === 'file' ? 'replay' : 'ios', source: cameraSource }
+    : null
+const [plantKind, plantStep] = (process.env.MOCK_MISTAKE || '').split(':')
+let plantedOn = -1
 let stepSince = Date.now()
 const clients = new Set()
 
 const steps = () => readLesson(state.lesson_id)?.steps ?? []
-const stateMsg = () => ({ type: 'state', ...state, total: steps().length, rev: lessonRev(state.lesson_id) })
+const stateMsg = () => ({ type: 'state', ...state, camera: cameraInfo(), total: steps().length, rev: lessonRev(state.lesson_id) })
 
 function broadcast(msg) {
   const text = JSON.stringify(msg)
@@ -110,6 +126,18 @@ function broadcast(msg) {
 function baseStatus() {
   const s = steps()[state.step]
   return s?.check_type === 'manual' ? 'manual' : 'watching'
+}
+
+// Like the hub: send `mistake` once, keep it in state until step change or dismiss.
+function sendMistake(kind) {
+  const s = state.step
+  const list = steps()
+  const looks_like = kind === 'ahead' ? Math.min(s + 1, list.length - 1) : Math.max(0, s - 1)
+  const message = kind === 'ahead' ? "You're ahead." : list[s]?.common_mistake || `This still looks like step ${looks_like + 1}.`
+  const m = { step: s, kind, looks_like, message, confidence: 0.86, source: 'mock' }
+  state.mistake = m
+  broadcast({ type: 'mistake', ...m })
+  broadcast(stateMsg())
 }
 
 function setStatus(status) {
@@ -126,6 +154,7 @@ function goTo(to, reason) {
     if (state.status === 'done') return
     state.step = total - 1
     state.status = 'done'
+    state.mistake = null
     if (reason) broadcast({ type: 'advance', from, to: total, reason })
     broadcast(stateMsg())
     return
@@ -133,6 +162,8 @@ function goTo(to, reason) {
   state.step = Math.max(0, to)
   state.status = baseStatus()
   state.last_check = null
+  state.mistake = null
+  if (state.step !== plantedOn) plantedOn = -1
   stepSince = Date.now()
   if (reason) broadcast({ type: 'advance', from, to: state.step, reason })
   broadcast(stateMsg())
@@ -147,6 +178,8 @@ function selectLesson(id, ws) {
   state.step = 0
   state.status = baseStatus()
   state.last_check = null
+  state.mistake = null
+  plantedOn = -1
   stepSince = Date.now()
   broadcast(stateMsg())
 }
@@ -163,9 +196,18 @@ setInterval(() => {
     if (t > 9000) goTo(state.step + 1, 'timer')
     return
   }
-  if (t > 3500 && state.status === 'watching') setStatus('checking')
+  if (plantKind && Number(plantStep) === state.step && plantedOn !== state.step && t > 4000) {
+    plantedOn = state.step
+    sendMistake(plantKind)
+  }
+  // Checks off, or a mistake on screen: wait for Next (or a dismiss).
+  if (state.check_offline || state.mistake) return
+  if (t > 3500 && state.status === 'watching') {
+    state.last_check = { done: 'no', confidence: 0.85, latency_ms: 910, reason: 'seams still facing up' }
+    setStatus('checking')
+  }
   if (t > 7000 && state.status === 'checking') {
-    state.last_check = { done: 'yes', confidence: 0.92, latency_ms: 640 }
+    state.last_check = { done: 'yes', confidence: 0.92, latency_ms: 640, reason: null }
     goTo(state.step + 1, 'camera')
   }
 }, 250)
@@ -266,6 +308,22 @@ const server = createServer((req, res) => {
     clients.clear()
     return sendJson(res, 200, stateMsg())
   }
+  if (path === '/mock/mistake') {
+    if (state.lesson_id && state.status !== 'done') sendMistake(url.searchParams.get('kind') === 'ahead' ? 'ahead' : 'behind')
+    return sendJson(res, 200, stateMsg())
+  }
+  if (path === '/mock/offline') {
+    const r = url.searchParams.get('r') || ''
+    state.check_offline = !!r
+    state.check_offline_reason = r || null
+    broadcast(stateMsg())
+    return sendJson(res, 200, stateMsg())
+  }
+  if (path === '/mock/source') {
+    cameraSource = url.searchParams.get('s') || 'phone'
+    broadcast(stateMsg())
+    return sendJson(res, 200, stateMsg())
+  }
   if (path === '/mock/goto') {
     goTo(Number(url.searchParams.get('step') || 0), null)
     return sendJson(res, 200, stateMsg())
@@ -308,6 +366,10 @@ wss.on('connection', (ws) => {
     else if (msg.type === 'next' && state.status !== 'done') goTo(state.step + 1, msg.reason || 'button')
     else if (msg.type === 'back') goTo(state.status === 'done' ? state.step : state.step - 1, null) // back from done returns to the last step
     else if (msg.type === 'goto') goTo(Number(msg.step) || 0, null)
+    else if (msg.type === 'dismiss_mistake') {
+      state.mistake = null
+      broadcast(stateMsg())
+    }
   })
 })
 

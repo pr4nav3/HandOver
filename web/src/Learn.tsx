@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { RefObject } from 'react'
-import { getLesson, lessonUrl, listLessons } from './api'
-import type { AdvanceMsg, Lesson, LessonSummary, StateMsg } from './api'
+import { getLesson, lessonUrl, listLessons, toSeconds } from './api'
+import type { AdvanceMsg, CheckOfflineReason, Lesson, LessonSummary, Mistake, MistakeMsg, StateMsg } from './api'
 import { playChime, unlockAudio } from './chime'
 import { TopBar } from './TopBar'
 import { useFitBox } from './useFitBox'
@@ -10,13 +10,40 @@ import { useVoice, voiceSupported } from './useVoice'
 
 // Checking shows as Watching: the server flips between the two often, and
 // one visual state keeps the badge calm.
-type Badge = 'watching' | 'verified' | 'manual' | 'done'
+type Badge = 'watching' | 'verified' | 'manual' | 'done' | 'offline'
 
 const BADGE_LABEL: Record<Badge, string> = {
   watching: 'Watching',
   verified: 'Verified',
   manual: 'Manual step',
   done: 'Done',
+  offline: 'Checks off, use Next',
+}
+
+const OFFLINE_REASON: Record<CheckOfflineReason, string> = {
+  no_key: 'No Gemini key',
+  rate_limited: 'Rate limited',
+  errors: 'Check errors',
+}
+
+// A check reason is shown only when the model was at least this sure (CONTRACT.md 7).
+const REASON_MIN_CONF = 0.7
+
+interface StepRow {
+  n: number
+  title: string
+  expertS: number
+  yourS: number | null
+  how: 'camera' | 'hand' | null
+}
+
+interface Summary {
+  ms: number
+  expertS: number
+  camera: number
+  byHand: number
+  mistakes: number
+  rows: StepRow[]
 }
 
 export function Learn() {
@@ -26,6 +53,12 @@ export function Learn() {
   const [state, setState] = useState<StateMsg | null>(null)
   const [lesson, setLesson] = useState<Lesson | null>(null)
   const [hasFrame, setHasFrame] = useState(false)
+  // True after the camera drops, until its next frame: the last frame stays, dimmed.
+  const [stale, setStale] = useState(false)
+  // The mistake on screen, from a `mistake` message or state.mistake.
+  const [mistake, setMistake] = useState<Mistake | null>(null)
+  const startedRef = useRef(false)
+  startedRef.current = started
   const [flashVerified, setFlashVerified] = useState(false)
   // Voice is off until the learner turns it on (quiet rooms only, see docs/SCOPE.md).
   const [voiceOn, setVoiceOn] = useState(false)
@@ -56,14 +89,27 @@ export function Learn() {
     if (frameUrl.current) URL.revokeObjectURL(frameUrl.current)
     frameUrl.current = url
     setHasFrame(true)
+    setStale(false)
   }, [])
 
   // For the done screen: when this run began, and how each step was finished.
   const runStart = useRef(0)
   const advancedBy = useRef(new Map<number, AdvanceMsg['reason']>())
+  // Time spent on each step (summed if revisited), counted from state changes
+  // so next, back, goto and camera advances are all covered.
+  const spentMs = useRef(new Map<number, number>())
+  const lastPos = useRef(0)
+  const lastPosAt = useRef(0)
+  const mistakeCount = useRef(0)
   const resetRun = () => {
-    runStart.current = performance.now()
+    const now = performance.now()
+    runStart.current = now
     advancedBy.current = new Map()
+    spentMs.current = new Map()
+    lastPos.current = 0
+    lastPosAt.current = now
+    mistakeCount.current = 0
+    setMistake(null)
     // A Verified flash from the previous run should not carry into the new one.
     window.clearTimeout(flashTimer.current)
     setFlashVerified(false)
@@ -98,6 +144,19 @@ export function Learn() {
 
   const onState = useCallback((msg: StateMsg) => {
     setState(msg)
+    // Per-step time: charge the time since the last change to the step we left.
+    const pos = msg.status === 'done' ? msg.total : msg.step
+    if (runStart.current && pos !== lastPos.current) {
+      const now = performance.now()
+      if (lastPos.current < msg.total) {
+        const spent = spentMs.current
+        spent.set(lastPos.current, (spent.get(lastPos.current) ?? 0) + now - lastPosAt.current)
+      }
+      lastPos.current = pos
+      lastPosAt.current = now
+    }
+    // Older servers omit `mistake`; only an explicit value replaces ours.
+    if (msg.mistake !== undefined) setMistake(msg.mistake)
     if (msg.lesson_id !== null) setResuming(false)
     else if (resumeId.current && !resentThisConnection.current) {
       resentThisConnection.current = true
@@ -108,11 +167,23 @@ export function Learn() {
     } else setResuming(false)
   }, [])
 
+  // The catch: show the banner and say the message once.
+  const onMistake = useCallback((msg: MistakeMsg) => {
+    const { type: _type, ...m } = msg
+    setMistake(m)
+    if (!startedRef.current) return
+    mistakeCount.current += 1
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel()
+      window.speechSynthesis.speak(new SpeechSynthesisUtterance(m.message))
+    }
+  }, [])
+
   const onOpen = useCallback(() => {
     resentThisConnection.current = false
   }, [])
 
-  const { down, send } = useUiSocket({ onFrame, onState, onAdvance, onError, onOpen })
+  const { down, send } = useUiSocket({ onFrame, onState, onAdvance, onError, onMistake, onOpen })
   sendRef.current = send
 
   useEffect(
@@ -156,7 +227,7 @@ export function Learn() {
   }, [lessonId, rev])
 
   useEffect(() => {
-    if (state && !state.camera_connected) setHasFrame(false)
+    if (state && !state.camera_connected) setStale(true)
   }, [state?.camera_connected])
 
   const steps = lesson?.steps ?? []
@@ -256,8 +327,19 @@ export function Learn() {
     send({ type: 'goto', step: 0 })
   }
 
+  // A mistake belongs to one step; it never outlives that step or the lesson.
+  const activeMistake = mistake && !isDone && mistake.step === state?.step ? mistake : null
+  const dismissMistake = () => {
+    setMistake(null)
+    send({ type: 'dismiss_mistake' })
+  }
+  const showStep = (to: number) => {
+    setMistake(null)
+    send({ type: 'goto', step: to })
+  }
+
   // Freeze the summary the moment the lesson finishes.
-  const [summary, setSummary] = useState<{ ms: number; camera: number; byHand: number } | null>(null)
+  const [summary, setSummary] = useState<Summary | null>(null)
   useEffect(() => {
     if (!isDone) {
       setSummary(null)
@@ -265,16 +347,52 @@ export function Learn() {
     }
     const reasons = [...advancedBy.current.values()]
     const camera = reasons.filter((r) => r === 'camera').length
-    setSummary({ ms: runStart.current ? performance.now() - runStart.current : 0, camera, byHand: reasons.length - camera })
+    const rows: StepRow[] = steps.map((s, i) => {
+      const spent = spentMs.current.get(i)
+      const by = advancedBy.current.get(i)
+      return {
+        n: s.n || i + 1,
+        title: s.title,
+        expertS: Math.max(0, toSeconds(s.end) - toSeconds(s.start)),
+        yourS: spent === undefined ? null : spent / 1000,
+        how: by === undefined ? null : by === 'camera' ? 'camera' : 'hand',
+      }
+    })
+    setSummary({
+      ms: runStart.current ? performance.now() - runStart.current : 0,
+      expertS: rows.reduce((a, r) => a + r.expertS, 0),
+      camera,
+      byHand: reasons.length - camera,
+      mistakes: mistakeCount.current,
+      rows,
+    })
   }, [isDone])
 
+  const offline = !!state?.check_offline
+  const offlineReason = state?.check_offline_reason ? OFFLINE_REASON[state.check_offline_reason] : ''
   let badge: Badge = 'watching'
   if (isDone) badge = 'done'
   else if (flashVerified || state?.status === 'verified') badge = 'verified'
   else if (state?.status === 'manual' || step?.check_type === 'manual') badge = 'manual'
+  else if (offline) badge = 'offline'
+
+  // Small text beside the badge: why checks are off, or the last check's latency and reason.
+  const cameraStep = !!step && step.check_type !== 'manual' && !isDone
+  const lc = state?.last_check
+  let metaTop = ''
+  let metaBottom = ''
+  if (badge === 'offline') metaTop = offlineReason
+  else if (badge === 'watching' && cameraStep && state?.camera_connected && lc) {
+    metaTop = `last check ${(lc.latency_ms / 1000).toFixed(1)} s`
+    if (lc.reason && lc.done === 'no' && lc.confidence >= REASON_MIN_CONF) metaBottom = lc.reason
+  }
 
   // A frozen frame while the socket is down would mislead, so show the placeholder.
-  const showLive = !down && !!state?.camera_connected && hasFrame
+  // A camera that drops after sending frames leaves its last frame, dimmed.
+  const showLive = !down && hasFrame && (!!state?.camera_connected || stale)
+  const cameraLost = showLive && (stale || !state?.camera_connected)
+  const recording = showLive && !cameraLost && state?.camera?.source === 'file'
+  const cameraName = !down && state?.camera_connected ? state?.camera?.name : undefined
 
   // Before start, or when the server has no lesson (restart, lesson gone) and
   // no resume is in flight, the learner picks one.
@@ -284,12 +402,13 @@ export function Learn() {
     <div className="page learn">
       <div className="progress" role="progressbar" aria-valuemin={0} aria-valuemax={total} aria-valuenow={isDone ? total : idx}>
         {Array.from({ length: Math.max(total, 1) }, (_, i) => {
-          const cls = !total ? 'upcoming' : isDone || i < idx ? 'done' : i === idx ? 'current' : 'upcoming'
+          let cls = !total ? 'upcoming' : isDone || i < idx ? 'done' : i === idx ? 'current' : 'upcoming'
+          if (i === idx && activeMistake?.kind === 'behind') cls = 'mistake'
           return <span key={i} className={`seg ${cls}`} />
         })}
       </div>
 
-      <TopBar route="learn" title={lesson?.title}>
+      <TopBar route="learn" title={lesson?.title} camera={cameraName}>
         {serverError && !down && (
           <span className="note error" role="status">
             {serverError}
@@ -312,7 +431,18 @@ export function Learn() {
 
       <main className="learn-grid" ref={gridRef} style={sideWidth ? { gridTemplateColumns: `minmax(0, 1fr) ${sideWidth}px` } : undefined}>
         <section className="panel live" aria-label="Live camera">
-          <img ref={liveRef} alt="Live camera" className={showLive ? '' : 'hidden'} />
+          <img ref={liveRef} alt="Live camera" className={showLive ? (cameraLost ? 'lost' : '') : 'hidden'} />
+          {cameraLost && (
+            <p className="live-note" role="status">
+              Camera lost. Keep going with Next.
+            </p>
+          )}
+          {recording && (
+            <span className="rec" title="Frames come from a recorded video, not a live camera">
+              <span className="rec-dot" />
+              Recording
+            </span>
+          )}
           {!showLive && (
             <div className="placeholder">
               <CameraIcon />
@@ -325,6 +455,27 @@ export function Learn() {
         </section>
 
         <section className="side">
+          {activeMistake && (
+            <div className="mistake-banner" role="alert">
+              <p className="mistake-text">{activeMistake.message}</p>
+              <div className="mistake-actions">
+                {activeMistake.kind === 'behind' ? (
+                  <>
+                    <button type="button" className="ghost small" onClick={() => showStep(activeMistake.looks_like)}>
+                      Show step {activeMistake.looks_like + 1}
+                    </button>
+                    <button type="button" className="ghost small" onClick={dismissMistake}>
+                      I'm fine
+                    </button>
+                  </>
+                ) : (
+                  <button type="button" className="ghost small" onClick={dismissMistake}>
+                    OK
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
           <div className="clip-area" ref={clipAreaRef}>
             <div className="panel clip" style={clipBox ? { width: clipBox.w, height: clipBox.h } : undefined}>
               <video
@@ -345,8 +496,14 @@ export function Learn() {
                   <dl className="finish-stats">
                     {summary.ms > 0 && (
                       <div>
-                        <dt>Time</dt>
+                        <dt>Your time</dt>
                         <dd>{formatDuration(summary.ms)}</dd>
+                      </div>
+                    )}
+                    {summary.expertS > 0 && (
+                      <div>
+                        <dt>Expert</dt>
+                        <dd className="muted">{formatDuration(summary.expertS * 1000)}</dd>
                       </div>
                     )}
                     <div>
@@ -357,7 +514,37 @@ export function Learn() {
                       <dt>Marked done</dt>
                       <dd>{summary.byHand}</dd>
                     </div>
+                    <div>
+                      <dt>Mistakes caught</dt>
+                      <dd>{summary.mistakes}</dd>
+                    </div>
                   </dl>
+                  {summary.rows.length > 0 && (
+                    <table className="finish-steps">
+                      <thead>
+                        <tr>
+                          <th />
+                          <th>Step</th>
+                          <th>Expert</th>
+                          <th>You</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {summary.rows.map((r) => (
+                          <tr key={r.n}>
+                            <td className="how" title={r.how === 'camera' ? 'Checked by camera' : r.how === 'hand' ? 'Marked done' : 'Not finished in order'}>
+                              {r.how === 'camera' ? <SmallCameraIcon /> : r.how === 'hand' ? <HandIcon /> : null}
+                            </td>
+                            <td className="name">
+                              <span className="num">{r.n}</span> {r.title}
+                            </td>
+                            <td className="muted">{formatSecs(r.expertS)}</td>
+                            <td>{r.yourS === null ? '\u2013' : formatSecs(r.yourS)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
                   <button type="button" className="ghost restart" onClick={restart}>
                     Start over
                   </button>
@@ -377,10 +564,20 @@ export function Learn() {
           </div>
 
           <div className="controls" ref={controlsRef}>
-            <span className={`badge ${badge} ${state?.camera_connected ? 'live' : ''}`} aria-live="polite">
-              <span className="badge-dot" />
-              {BADGE_LABEL[badge]}
-            </span>
+            <div className="badge-wrap">
+              <span
+                className={`badge ${badge} ${state?.camera_connected ? 'live' : ''}`}
+                aria-live="polite"
+                title={badge === 'offline' && offlineReason ? offlineReason : undefined}
+              >
+                <span className="badge-dot" />
+                {BADGE_LABEL[badge]}
+              </span>
+              <span className="check-meta">
+                <span>{metaTop}</span>
+                <span className="check-reason">{metaBottom}</span>
+              </span>
+            </div>
             <div className="next-wrap">
               <button className="next" onClick={() => next('button')} disabled={!step || isDone}>
                 Next
@@ -475,6 +672,28 @@ function formatDuration(ms: number) {
   const m = Math.floor((total % 3600) / 60)
   const sec = String(total % 60).padStart(2, '0')
   return h ? `${h}:${String(m).padStart(2, '0')}:${sec}` : `${m}:${sec}`
+}
+
+/** Seconds as "12 s" under a minute, else "1:05". */
+function formatSecs(s: number) {
+  return s < 59.5 ? `${Math.round(s)} s` : formatDuration(s * 1000)
+}
+
+function SmallCameraIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-label="Camera">
+      <path d="M3 8.5A2.5 2.5 0 0 1 5.5 6h1.3l1.4-2h7.6l1.4 2h1.3A2.5 2.5 0 0 1 21 8.5v9a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z" />
+      <circle cx="12" cy="13" r="3.6" />
+    </svg>
+  )
+}
+
+function HandIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-label="By hand">
+      <path d="M8 13V5.5a1.5 1.5 0 0 1 3 0V12m0-1.5v-6a1.5 1.5 0 0 1 3 0V12m0-5.5a1.5 1.5 0 0 1 3 0V14a7 7 0 0 1-7 7h-.5a6 6 0 0 1-4.9-2.5L3.3 15a1.5 1.5 0 0 1 2.4-1.8L8 15.5" />
+    </svg>
+  )
 }
 
 function CheckIcon() {
