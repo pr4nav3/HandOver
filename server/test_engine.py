@@ -946,6 +946,52 @@ def test_live_mistakes_are_advisory_and_switchable() -> None:
             assert main.engine.step == 0  # never moves the step
 
 
+def test_state_run_id_for_the_done_screen() -> None:
+    """state.run_id: null with no lesson, the engine's id per select, or the id databricks.start_run returned."""
+    import sys
+
+    make_lesson()
+    with patched(main, EVENT_SINKS=[], databricks_module=lambda: None), hub() as c, \
+            c.websocket_connect("/ws/ui") as ui:  # no Databricks: the engine's own id
+        assert recv_json(ui, is_state)["run_id"] is None
+        first = select(ui)["run_id"]
+        assert isinstance(first, str) and first == main.engine.run.run_id
+        ui.send_json({"type": "select_lesson", "id": LESSON})
+        second = recv_json(ui, lambda m: is_state(m) and m["run_id"] != first)["run_id"]
+        assert isinstance(second, str) and second != first
+
+    class Db(FakeDatabricks):
+        def start_run(self, lesson_id: str, learner: str | None = None) -> str:
+            return "db-run-7"
+
+    old = sys.modules.get("server.databricks")
+    sys.modules["server.databricks"] = Db()  # type: ignore[assignment]
+    try:
+        with patched(main, EVENT_SINKS=[main.databricks_sink]), hub() as c, c.websocket_connect("/ws/ui") as ui:
+            assert select(ui)["run_id"] == "db-run-7"
+    finally:
+        if old is None:
+            sys.modules.pop("server.databricks", None)
+        else:
+            sys.modules["server.databricks"] = old
+
+
+def test_ui_frames_0_gets_no_live_frames() -> None:
+    make_lesson()
+    with hub() as c, c.websocket_connect("/ws/ui") as viewer, c.websocket_connect("/ws/ui?frames=0") as phone, \
+            c.websocket_connect("/ws/camera") as cam:
+        select(viewer)
+        assert recv_json(phone, lambda m: is_state(m) and m["lesson_id"] == LESSON)["step"] == 0
+        for i in range(4):
+            cam.send_bytes(jpeg((i * 40, 20, 20)))
+            time.sleep(0.3)
+        assert any(m.get("bytes") for m in drain(viewer, 0.4)), "the normal viewer got no frames"
+        got = drain(phone, 0.4)
+        assert not any(m.get("bytes") for m in got), "frames=0 viewer got a frame"
+        viewer.send_json({"type": "next", "from": 0})
+        assert recv_json(phone, lambda m: m["type"] == "advance")["to"] == 1  # text still arrives
+
+
 # ---------------------------------------------------------------- mistake check (M9)
 
 def test_mistake_behind_gemini_once_then_yes_clears() -> None:
