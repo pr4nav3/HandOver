@@ -1,6 +1,6 @@
 # HandOver contract V2 (hub <-> web <-> apps <-> capture)
 
-Revision 2, 2026-11-14. Owner: Developer 1. Supersedes CONTRACT.md (EXISTS items checked against CONTRACT.md and server/main.py as of this revision, including the parallel session's `rev`, `from`, 3 s timeout, recut swap and Windows signal fixes). Change process: docs/research/architecture.md section 13.
+Revision 3, 2026-11-14 (lead: review fixes, see docs/REVIEW_FIXES.md). Owner: Developer 1. Supersedes CONTRACT.md (EXISTS items checked against CONTRACT.md and server/main.py as of this revision, including the parallel session's `rev`, `from`, 3 s timeout, recut swap and Windows signal fixes). Change process: docs/PLAN.md section 5.
 
 Every item is marked:
 - **EXISTS**: implemented in server/ today. Clients may rely on it now.
@@ -51,17 +51,18 @@ Compatibility rules:
 | `HANDOVER_FFMPEG`, `HANDOVER_FFPROBE` | see 1.2 | binaries | NEW P0 |
 | `HANDOVER_NAME` | computer name | hub display name | NEW P0 |
 | `HANDOVER_OPEN_BROWSER` | 1 | launcher opens the browser | NEW P0 |
-| `HANDOVER_MDNS` | 1 | 0 = do not advertise | NEW P2 (mDNS is cut by SCOPE; build only if time) |
+| `HANDOVER_MDNS` | 1 | 0 = do not advertise | NEW P2, STRETCH (mDNS is cut by SCOPE; build only if time) |
 | `HANDOVER_GATE` | 1 | 0 = no motion gate | NEW P1 |
 | `HANDOVER_BREAKER_SECONDS` | 30 | circuit breaker open time | NEW P1 |
 | `HANDOVER_LOCAL_N` | 3 | consecutive local passes to advance | NEW P1 |
-| `HANDOVER_IMPORT_MAX_MB` | 2048 | import size cap | NEW P0 |
+| `HANDOVER_IMPORT_MAX_MB` | 2048 | import size cap | NEW P1 (S-P, SHOULD) |
+| `HANDOVER_MOCK_MISTAKE` | unset | test only, mock mode only: `behind:<step index>` or `ahead:<step index>` (0-based; behind needs index >= 1). After 4 s on that step the hub sends `mistake` exactly as in section 7.2 with `source: "mock"` (behind: `looks_like` = step - 1; ahead: `looks_like` = step + 1, then the normal ahead jump). Never set in a demo | NEW P1 |
 
 ## 2. Lesson ids
 - Read rule (EXISTS): `^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`. Any other id in a path gives 400 `bad lesson id`.
 - Upload with an explicit `id` (EXISTS): the id is cleaned first (lowercased, runs of anything outside `a-z0-9-` become `-`), then must pass the read rule, else 400 `bad lesson id`. The response returns the cleaned id, which is the folder the pipeline writes. Example: `My_Lesson` -> `my-lesson`.
 - Generated ids are a slug of the title, with `-2`, `-3`... on a clash (EXISTS).
-- Import uses the same cleaning as upload (NEW P0).
+- Import uses the same cleaning as upload (NEW P1, S-P).
 
 ## 3. lesson.json
 
@@ -77,6 +78,8 @@ Folder: `<lessons>/<id>/` with `lesson.json`, `norm.mp4`, `clips/NN.mp4`, `capti
 | `format_version` | int | 1 | NEW P0 |
 | `source_language` | string (BCP 47, e.g. `"en"`) | `"en"` | NEW P2 |
 | `languages` | string[] | `[source_language]` | NEW P2 |
+| `safety` | string[], short safety warnings from the narration (S-S) | `[]` | NEW P2 |
+| `tools` | string[], tools named in the narration (S-S) | `[]` | NEW P2 |
 
 ### 3.2 Step
 | Field | Type | Default if absent | Status |
@@ -94,8 +97,9 @@ Folder: `<lessons>/<id>/` with `lesson.json`, `norm.mp4`, `clips/NN.mp4`, `capti
 | `common_mistake` | string, short, shown and spoken when the learner is behind | `""` | NEW P1 |
 | `mistake_question` | string, yes/no question whose yes means the common mistake is present; added to the mistake prompt | `""` | NEW P1 |
 | `i18n` | object `{ "<lang>": { "title": string, "captions": string, "audio": string or null } }` | `{}` | NEW P2 |
+| `self_test` | object `{"own", "prev", "ok"}`, where `own` and `prev` are each `"yes"`, `"no"` or `"unsure"` and `ok` is a bool: the check run at teach time on this step's own reference (`own`, should be yes) and the previous step's reference (`prev`, should be no) (S-T) | null = not run | NEW P2 |
 
-Recut rule (NEW P0): recut rewrites only `n`, `start`, `end`, `clip`, `captions`, `ref_frame`, `check_type`, `check_question`, `prerequisites` and keeps every other field on each step and at the top level. Today recut drops unknown fields.
+Recut rule (NEW P0): recut rewrites only `n`, `start`, `end`, `clip`, `captions`, `ref_frame`, `check_question`, `prerequisites` and keeps every other field on each step and at the top level, including the stored (or request body) `check_type`. Step 1 is made manual only for new extractions, never by recut. Today recut drops unknown fields.
 
 ## 4. REST
 
@@ -106,7 +110,7 @@ All errors are FastAPI style: HTTP status plus body `{"detail": "<message>"}`. M
 |---|---|---|
 | `GET /` | When the web dist exists: `index.html` of the web app (the app uses hash routes `#/learn`, `#/teach`, so no fallback routing is needed); `/assets/*` served from the dist. Otherwise: `{"app":"HandOver","api":"/api/lessons","capture":"/capture","ui":"http://localhost:5173"}` | EXISTS (JSON), NEW P0 (dist) |
 | `GET /capture` | `server/static/capture.html`, `Cache-Control: no-cache` | EXISTS |
-| `GET /join` | `server/static/join.html`, `Cache-Control: no-cache`. Query `hub` (string, optional) is for the page only | NEW P0 |
+| `GET /join` | `server/static/join.html`, `Cache-Control: no-cache`. Query `hub` (string, optional) is for the page only. 404 `join page not installed` when the file is missing | NEW P0 |
 
 ### 4.2 Hub info and helpers
 `GET /api/info` (NEW P0) -> 200
@@ -158,13 +162,13 @@ All errors are FastAPI style: HTTP status plus body `{"detail": "<message>"}`. M
 | `GET /api/lessons` | | `[{"id": str, "title": str, "steps": int}]` sorted by id. Folders with a bad id, a missing lesson.json or unreadable JSON are skipped | EXISTS |
 | `GET /api/lessons/{id}` | | lesson.json as stored, `Cache-Control: no-cache`. 400 `bad lesson id`, 404 `lesson not found`, 500 `lesson.json unreadable: <reason>` | EXISTS |
 | `POST /api/lesson` | multipart: `file` (video, required), `title` (string, required; blank becomes `Untitled lesson`), `id` (optional, cleaned per section 2) | `{"job": str (12 hex), "id": str}`. 400 `bad lesson id`, 409 `lesson id already exists` (also while a job for that id is running), 413 `video is larger than 2 GB`. Unknown or odd file extensions are saved as `.mp4`. A failed job removes its half-built lesson folder; the upload file is deleted after the job either way | EXISTS |
-| `POST /api/lesson` with `file` repeated | multipart: several `file` parts; the first is the main take, the rest are joined after it in order | same | NEW P1 |
+| `POST /api/lesson` with `file` repeated | multipart: several `file` parts; the first is the main take, the rest are joined after it in order | same | NEW P2 |
 | `GET /api/jobs/{job}` | | `{"status": "queued"|"normalizing"|"extracting"|"cutting"|"translating"|"done"|"error", "message": str, "id": str}`. 404 `job not found`. Jobs live in memory and are lost on restart. Error messages over 400 chars are shortened to start + ` ... ` + tail. `done` message is `ready` | EXISTS (`translating` NEW P2) |
 | `POST /api/lessons/{id}/recut` | optional body: a full lesson object (JSON). Empty body = recut from the stored lesson.json | the new lesson.json. The body's `id` is replaced by the path id. Errors restore the previous lesson.json: 400 `bad lesson id`, 404 `lesson not found`, 400 `body must be JSON`, 400 `body must be a lesson object with steps`, 400 `<timestamp error>` (e.g. `step 2: bad timestamp: 'x'`, `step 2 has no length after clamping (00:10 to 00:10, video 40.0 s)`, `lesson has no steps`). Every timestamp is checked before cutting, and new clips, captions and frames are built in `.recut_tmp/` and swapped in only when all steps succeed, 500 `recut failed: <Type>: <reason>`. If the lesson is active, the engine reloads it, keeps the step (clamped) and broadcasts state | EXISTS |
 | same | lesson with `video: null` | 409 `source video not included; re-cut is unavailable for this lesson` | NEW P0 |
 | `DELETE /api/lessons/{id}` | | `{"deleted": id}`. 404 `lesson not found`. If it is the active lesson, the engine clears the lesson (`lesson_id: null`) and broadcasts state | NEW P1 |
-| `GET /api/lessons/{id}/export` | query `video=0` omits norm.mp4 (default includes it) | 200 `application/zip`, `Content-Disposition: attachment; filename="<id>.handover"`, streamed. Package format: section 8. 400 `bad lesson id`, 404 `lesson not found` | NEW P0 |
-| `POST /api/lessons/import` | multipart `file` (a `.handover` zip), optional `id` (create rule) | `{"id": str, "title": str, "steps": int, "renamed": bool}`. 400 `not a HandOver lesson file`, 400 `unsupported package version <n>`, 400 `unsafe path in package: <name>`, 400 `missing file in package: <path>`, 400 `lesson.json invalid: <reason>`, 400 `bad lesson id`, 413 `package too large`. Never overwrites: a clash gets `-2`, `-3`... and `renamed: true` | NEW P0 |
+| `GET /api/lessons/{id}/export` | query `video=0` omits norm.mp4 (default includes it) | 200 `application/zip`, `Content-Disposition: attachment; filename="<id>.handover"`, streamed. Package format: section 10. 400 `bad lesson id`, 404 `lesson not found` | NEW P1 (S-P, SHOULD) |
+| `POST /api/lessons/import` | multipart `file` (a `.handover` zip), optional `id` (create rule) | `{"id": str, "title": str, "steps": int, "renamed": bool}`. 400 `not a HandOver lesson file`, 400 `unsupported package version <n>`, 400 `unsafe path in package: <name>`, 400 `missing file in package: <path>`, 400 `lesson.json invalid: <reason>`, 400 `bad lesson id`, 413 `package too large`. Never overwrites: a clash gets `-2`, `-3`... and `renamed: true` | NEW P1 (S-P, SHOULD) |
 | `POST /api/lessons/import` with JSON | body `{"url": "http://<host>:<port>/api/lessons/<id>/export"}` (http or https on a private or loopback address only) | same as above. 400 `url not allowed`, 502 `could not download package: <reason>` | NEW P2 |
 | `POST /api/lessons/{id}/translate` | body `{"languages": string[], "speech": bool}` | `{"job": str, "id": str}`; job status `translating` then `done`. 400 `languages required` | NEW P2 |
 
@@ -179,7 +183,7 @@ All errors are FastAPI style: HTTP status plus body `{"detail": "<message>"}`. M
 - `next` -> `go(position + 1)`. `back` -> `go(position - 1)`, reason `button`. From done, back goes to `total - 1` (`from == total`).
 - `goto` accepts only `0 <= step < total` (it cannot set done). Anything else is ignored silently.
 - `select_lesson` always resets to step 0, done false, even for the same lesson.
-- `rev` (EXISTS): lesson.json modification time in ms, 0 with no lesson. Refreshed on select and after a recut. When it changes, clients refetch the lesson and append `?v=<rev>` to every clip, caption and frame URL.
+- `rev` (EXISTS): an increasing int, opaque to clients (compare it, never parse it); 0 with no lesson. Today it is lesson.json modification time in ms, kept strictly increasing for the active lesson. Refreshed on select and after a recut. When it changes, clients refetch the lesson and append `?v=<rev>` to every clip, caption and frame URL. `rev` covers the active lesson only: after recutting a lesson that is not active, the Teach screen bumps its own local counter for `?v=`.
 - Stale command guard (EXISTS): `next` and `back` may carry `from` (the step index the client was showing). The hub ignores the command silently when `from` differs from the current position. On the done screen both `total - 1` and `total` count as current. `from` absent = legacy, always applied. A non-integer `from` (or a boolean) is treated as stale.
 - Every step change resets the debouncer, `last_check` (to null), `checking`, `verified`, the step timer, and ignores frames taken before the step began.
 - Status precedence: `done` (a lesson is loaded and done, or it has no steps) > `manual` (current step's `check_type == "manual"`) > `verified` > `checking` > `watching`. With no lesson: `watching`, `step: 0`, `total: 0`.
@@ -196,12 +200,12 @@ Senders: iOS app, Android app, capture.html, replay.py.
 | Message | Fields | Status |
 |---|---|---|
 | binary | one JPEG (must start with `FF D8`). Other binary is ignored. Recommended about 1 fps, long side 640 to 1280. NEW P1: frames over 2 MB are ignored | EXISTS |
-| `hello` (text JSON, optional, first message; may be sent again any time to update) | `{"type":"hello","device_id":str,"name":str,"platform":"ios"|"android"|"web"|"replay"|"other","source":"glasses"|"phone"|"browser"|"file","model":str|null,"app_version":str|null}` | NEW P0 |
+| `hello` (text JSON, optional, first message; may be sent again any time to update: a repeat hello on an open socket updates `name`, `platform`, `source`, `model` and broadcasts state if this camera is active) | `{"type":"hello","device_id":str,"name":str,"platform":"ios"|"android"|"web"|"replay"|"other","source":"glasses"|"phone"|"browser"|"file","model":str|null,"app_version":str|null}` | NEW P0 |
 | `next` | `{"type":"next","reason":"button"|"voice","from":int}`. Accepted only after hello. Same `from` rule as `/ws/ui` | NEW P1 |
 | `back` | `{"type":"back","from":int}`. Accepted only after hello | NEW P1 |
 
 hello field rules:
-- `device_id`: stable per install (UUID kept in app storage; capture.html keeps one in localStorage; replay uses `replay-<hostname>`). 1 to 64 chars.
+- `device_id`: stable per install (UUID kept in app storage; capture.html keeps one in localStorage; replay uses `replay-<hostname>-<pid>`). 1 to 64 chars.
 - `name`: what the UI shows, 1 to 40 chars, e.g. `"iPhone"`, `"Pixel 9"`, `"Ray-Ban Meta via iPhone"`, `"iPhone Safari"`, `"Replay: fold.mp4"`.
 - `model`: e.g. `"Ray-Ban Meta Gen 2"`, `"iPhone18,1"`; null if unknown.
 - Unknown `platform` or `source` values are stored as `"other"` / `"phone"`. Malformed hello is ignored (the socket stays open).
@@ -258,7 +262,7 @@ Binary (EXISTS): the newest live JPEG from the active camera, long side at most 
 | Field | Type | Status |
 |---|---|---|
 | `lesson_id` | string or null | EXISTS |
-| `rev` | int, lesson.json mtime in ms (0 with no lesson) | EXISTS |
+| `rev` | increasing int, opaque (0 with no lesson); see section 5 | EXISTS |
 | `step` | int, 0-based | EXISTS |
 | `total` | int | EXISTS |
 | `status` | `"watching"`, `"checking"`, `"verified"`, `"manual"`, `"done"` | EXISTS |
@@ -278,7 +282,7 @@ Binary (EXISTS): the newest live JPEG from the active camera, long side at most 
 `mistake` (NEW P1): sent once when the mistake check fires.
 ```json
 {"type":"mistake","step":4,"kind":"behind","looks_like":3,
- "message":"Flip it over first.","confidence":0.86}
+ "message":"Flip it over first.","confidence":0.86,"source":"gemini"}
 ```
 | Field | Type | Notes |
 |---|---|---|
@@ -287,7 +291,7 @@ Binary (EXISTS): the newest live JPEG from the active camera, long side at most 
 | `looks_like` | int, 0-based | the step the frame matches |
 | `message` | string | behind: the current step's `common_mistake` if set, else `This still looks like step <looks_like + 1>.` Ahead: `You're ahead.` |
 | `confidence` | float 0..1 | |
-| `source` | `"gemini"` or `"local"` | which checker matched |
+| `source` | `"gemini"`, `"local"` or `"mock"` | which checker matched; `mock` only from the `HANDOVER_MOCK_MISTAKE` test hook |
 
 Behind never moves the step. Ahead (SCOPE MUST 5, jump ahead): the hub confirms with one normal check of step k+1 (its question and reference). On yes >= 0.8 it sends this `mistake` message with `kind:"ahead"`, then `go(k + 2, "camera")` (an `advance` whose `to - from == 2`, or `to == total` at the end). Without that confirmation it sends nothing.
 
@@ -305,11 +309,11 @@ NEW P1 (details in architecture.md section 7):
 - Timeout 3 s. Circuit breaker: 3 consecutive errors or timeouts, or any 429, opens it for `HANDOVER_BREAKER_SECONDS`; then one trial call.
 - Local OpenCV check while the breaker is open, in `local` mode, or with no key: `HANDOVER_LOCAL_N` (3) consecutive passes. `last_check.confidence` for local = the step score, 0..1.
 - While Gemini is up, local only vetoes: no advance if local names another step with a lead > 0.2.
-- Mistake check: after 5 s of settled consecutive no on a camera step, at most once per 10 s per step. Gemini multiple choice (references k-1, k, k+1) when online; the local scores against those references when the breaker is open. Never in mock mode.
+- Mistake check: after 5 s of settled consecutive no on a camera step, at most once per 10 s per step. Gemini multiple choice (references k-1, k, k+1) when online; the local scores against those references when the breaker is open. Never in mock mode, except the `HANDOVER_MOCK_MISTAKE` test hook (section 1.3).
 
 ## 9. Discovery, QR and join
 
-### 9.1 mDNS (NEW P1)
+### 9.1 mDNS (NEW P2, STRETCH)
 - Service type `_handover._tcp.local.`, instance name = hub name, port = http port.
 - TXT: `v=2`, `id=<hub_id>`, `name=<hub name>`, `ips=<comma separated IPv4, best first>`, `https=<port or 0>`.
 - Clients probe `GET http://<ip>:<port>/api/info` for each IP (1.5 s timeout) and use the first that returns `app == "HandOver"`.
@@ -322,9 +326,9 @@ IPv4 only. Exclude loopback, 169.254.0.0/16, and interfaces named like `utun*`, 
 - join.html offers:
   - "Open in HandOver app": `handover://connect?host=<location.hostname>&port=<location.port or 80>&hub=<hub>`.
   - "Use this browser": `https://<host>:<https port>/capture`, shown only when `/api/info` reports `ports.https`.
-- Native apps accept any of: a `handover://connect?...` URL, any `http(s)://host[:port]/...` URL (use host and port, default port 8000 when the URL has none), or typed `host` / `host:port`.
+- Native apps accept any of: a `handover://connect?...` URL, any `http(s)://host[:port]/...` URL (use host and port, default port 8000 when the URL has none), or typed `host` / `host:port`. If the URL has a query `http=<port>`, use it as the http port.
 
-## 10. Lesson package `.handover` (NEW P0)
+## 10. Lesson package `.handover` (NEW P1, S-P, SHOULD)
 
 - A zip. Videos stored (no compression). Text files deflated. Entry names are forward-slash relative paths.
 - Required entries: `manifest.json`, `lesson.json`, and every `clip`, `captions` and `ref_frame` path that lesson.json names.
@@ -347,4 +351,4 @@ IPv4 only. Exclude loopback, 169.254.0.0/16, and interfaces named like `utun*`, 
 - Import: reject absolute names, drive letters, `..`, backslashes, symlinks, more than 2000 entries, total uncompressed size over `HANDOVER_IMPORT_MAX_MB`. Unpack into a temp folder inside the lessons root, validate, then rename into place. Rewrite lesson.json `id` to the final id. If `norm.mp4` is absent, set `video` to null.
 
 ## 11. Replay (EXISTS)
-`python -m server.replay VIDEO [--url ws://localhost:8000/ws/camera] [--fps 1] [--loop] [--start SEC] [--select LESSON_ID]`. Sends JPEG frames at the given rate. `--select` sends `select_lesson` on `/ws/ui` first and waits for a state confirming it. NEW P0: sends hello `{"platform":"replay","source":"file","name":"Replay: <file name>"}` first, and finds ffmpeg through the 1.2 lookup.
+`python -m server.replay VIDEO [--url ws://localhost:8000/ws/camera] [--fps 1] [--loop] [--start SEC] [--select LESSON_ID]`. Sends JPEG frames at the given rate. `--select` sends `select_lesson` on `/ws/ui` first and waits for a state confirming it. NEW P0: sends hello `{"platform":"replay","source":"file","name":"Replay: <file name>","device_id":"replay-<hostname>-<pid>"}` first, and finds ffmpeg through the 1.2 lookup.
