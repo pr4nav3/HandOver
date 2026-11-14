@@ -1,4 +1,4 @@
-// UNTESTED: written on Windows, never compiled.
+// Compiles with Xcode on macOS against MWDAT 1.0.1; not yet run on a device.
 
 import Foundation
 import AVFoundation
