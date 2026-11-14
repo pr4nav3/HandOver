@@ -10,6 +10,9 @@ For each camera step k it asks the real check (server.check.check_frame):
 
 A step passes when every own probe is a confident yes (HANDOVER_MIN_CONF, 0.8)
 and every prev probe is a no. Steps that fail are recommended "make manual".
+A probe whose call errored (timeout, rate limit, no key) is left out of every
+rate; a step with no answered probe is "not scored (errors)", and the run exits
+1 when every call errored.
 Prints a table and writes markdown to scripts/out/eval-<id>-<timestamp>.md.
 
 Needs a Gemini key (GEMINI_API_KEY, GOOGLE_API_KEY, or the repo .env); the key
@@ -45,6 +48,7 @@ class Probe:
     done: str  # yes, no, unsure
     confidence: float
     latency_ms: int
+    error: str | None = None  # timeout, rate_limited, error, no_key: the check never answered
 
 
 @dataclass
@@ -56,12 +60,25 @@ class StepScore:
     min_conf: float
 
     def _of(self, kind: str) -> list[Probe]:
-        return [p for p in self.probes if p.kind == kind]
+        """Probes of one kind that got an answer; errored probes say nothing about the question."""
+        return [p for p in self.probes if p.kind == kind and p.error is None]
+
+    def _has(self, kind: str) -> bool:
+        return any(p.kind == kind for p in self.probes)
 
     @property
-    def own_yes(self) -> float:
+    def errors(self) -> int:
+        return sum(p.error is not None for p in self.probes)
+
+    @property
+    def scored(self) -> bool:
+        """At least one answered own probe, and one answered prev probe when step k-1 exists."""
+        return bool(self._of("own")) and (not self._has("prev") or bool(self._of("prev")))
+
+    @property
+    def own_yes(self) -> float | None:
         own = self._of("own")
-        return sum(p.done == "yes" and p.confidence >= self.min_conf for p in own) / len(own)
+        return sum(p.done == "yes" and p.confidence >= self.min_conf for p in own) / len(own) if own else None
 
     @property
     def prev_no(self) -> float | None:
@@ -74,9 +91,9 @@ class StepScore:
         return sum(p.done == "yes" for p in nxt) / len(nxt) if nxt else None
 
     @property
-    def mean_conf(self) -> float:
-        scored = [p.confidence for p in self.probes if p.kind != "next"]
-        return statistics.fmean(scored) if scored else 0.0
+    def mean_conf(self) -> float | None:
+        scored = [p.confidence for p in self._of("own") + self._of("prev")]
+        return statistics.fmean(scored) if scored else None
 
     @property
     def mean_latency(self) -> float:
@@ -84,7 +101,11 @@ class StepScore:
 
     @property
     def passed(self) -> bool:
-        return self.own_yes == 1.0 and (self.prev_no is None or self.prev_no == 1.0)
+        return self.scored and self.own_yes == 1.0 and (self.prev_no is None or self.prev_no == 1.0)
+
+    @property
+    def verdict(self) -> str:
+        return "ok" if self.passed else "make manual" if self.scored else "not scored (errors)"
 
 
 # ---------------------------------------------------------------- key
@@ -124,7 +145,7 @@ def gemini_checker():
 
     async def run(ref: bytes, live: bytes, question: str) -> Probe:
         r = await check_frame(ref, live, question)
-        return Probe("", str(r.done), float(r.confidence), int(r.latency_ms))
+        return Probe("", str(r.done), float(r.confidence), int(r.latency_ms), getattr(r, "error", None))
 
     return run
 
@@ -141,7 +162,7 @@ def load_steps(folder: Path) -> tuple[str, list[dict]]:
             "title": s.get("title", ""),
             "type": s.get("check_type", "camera"),
             "question": (s.get("check_question", "Is this step finished?") or "").strip(),
-            "frame": folder / s.get("ref_frame", f"frames/{i:02d}.jpg"),
+            "frame": folder / (s.get("ref_frame") or f"frames/{i:02d}.jpg"),
         })
     return data.get("id", folder.name), out
 
@@ -180,13 +201,15 @@ def pct(v: float | None) -> str:
 
 
 def table_rows(scores: list[StepScore], with_next: bool) -> tuple[list[str], list[list[str]]]:
-    head = ["Step", "Own yes", "Prev no"] + (["Next yes"] if with_next else []) + ["Mean conf", "Latency", "Verdict"]
+    head = (["Step", "Own yes", "Prev no"] + (["Next yes"] if with_next else [])
+            + ["Mean conf", "Latency", "Errors", "Verdict"])
     rows = []
     for s in scores:
         row = [f"{s.n} {s.title}".strip(), pct(s.own_yes), pct(s.prev_no)]
         if with_next:
             row.append(pct(s.next_yes))
-        row += [f"{s.mean_conf:.2f}", f"{s.mean_latency:.0f} ms", "ok" if s.passed else "make manual"]
+        conf = "n/a" if s.mean_conf is None else f"{s.mean_conf:.2f}"
+        row += [conf, f"{s.mean_latency:.0f} ms", str(s.errors), s.verdict]
         rows.append(row)
     return head, rows
 
@@ -196,7 +219,7 @@ def confusion(scores: list[StepScore]) -> dict:
     out = {"yes": {"yes": 0, "no": 0, "unsure": 0}, "no": {"yes": 0, "no": 0, "unsure": 0}}
     for s in scores:
         for p in s.probes:
-            if p.kind in ("own", "prev"):
+            if p.kind in ("own", "prev") and p.error is None:
                 out["yes" if p.kind == "own" else "no"][p.done if p.done in ANSWERS else "unsure"] += 1
     return out
 
@@ -205,7 +228,7 @@ def confusion(scores: list[StepScore]) -> dict:
 def render_text(scores: list[StepScore], with_next: bool) -> str:
     head, rows = table_rows(scores, with_next)
     widths = [max(len(head[i]), *(len(r[i]) for r in rows)) for i in range(len(head))] if rows else [len(h) for h in head]
-    lines = ["  ".join(h.ljust(w) for h, w in zip(head, widths))]
+    lines = ["  ".join(h.ljust(w) for h, w in zip(head, widths)).rstrip()]
     lines += ["  ".join(c.ljust(w) for c, w in zip(r, widths)).rstrip() for r in rows]
     return "\n".join(lines)
 
@@ -229,17 +252,25 @@ def render_markdown(lesson_id: str, mode: str, n: int, with_next: bool, scores: 
            f"| no (prev) | {c['no']['yes']} | {c['no']['no']} | {c['no']['unsure']} |"]
     false_pass = c["no"]["yes"]
     md += ["", f"False passes (a previous state judged done): {false_pass}."]
+    errors = [p.error for s in scores for p in s.probes if p.error]
+    if errors:
+        kinds = ", ".join(f"{k} {errors.count(k)}" for k in sorted(set(errors)))
+        md += ["", f"Errored probes, left out of every rate above: {len(errors)} ({kinds}). "
+               "Rerun later or with a larger --pause."]
 
     if with_next:
         md += ["", "Next probes are informational: a later state can still satisfy an earlier question."]
 
-    failing = [s for s in scores if not s.passed]
+    failing = [s for s in scores if s.scored and not s.passed]
+    unscored = [s for s in scores if not s.scored]
     md += ["", "## Recommendation", ""]
-    if not failing:
+    if not failing and not unscored:
         md.append("Every scored step passed. Keep them as camera steps.")
+    for s in unscored:
+        md.append(f"- Step {s.n}: not scored, every probe it needed errored. No recommendation.")
     for s in failing:
         why = []
-        if s.own_yes < 1.0:
+        if s.own_yes is not None and s.own_yes < 1.0:
             why.append(f"own yes {pct(s.own_yes)}")
         if s.prev_no is not None and s.prev_no < 1.0:
             why.append(f"prev no {pct(s.prev_no)}")
@@ -249,7 +280,8 @@ def render_markdown(lesson_id: str, mode: str, n: int, with_next: bool, scores: 
 
 # ---------------------------------------------------------------- main
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None, checker=None) -> int:
+    """checker: optional async (ref, live, question) -> Probe, used by tests in place of --mock."""
     ap = argparse.ArgumentParser(prog="eval_checks.py", description="Score a lesson's camera check questions.")
     ap.add_argument("lesson", help="lesson folder, for example lessons/demo-v1")
     ap.add_argument("--n", type=int, default=1, help="probes per image pair (default 1)")
@@ -267,12 +299,14 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     try:
         lesson_id, steps = load_steps(folder)
-    except (OSError, ValueError, AttributeError) as e:
+    except (OSError, ValueError, AttributeError, TypeError) as e:
         print(f"eval_checks: lesson.json unreadable ({type(e).__name__}); run scripts/lesson_lint.py first",
               file=sys.stderr)
         return 2
 
-    if a.mock:
+    if checker is not None:
+        mode = "injected (test)"
+    elif a.mock:
         checker, mode = mock_check, "mock (offline)"
     else:
         if not has_key():
@@ -281,7 +315,7 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         checker = gemini_checker()
         mode = os.environ.get("HANDOVER_CHECK_MODEL") or DEFAULT_MODEL_LABEL
-    pause = a.pause if a.pause is not None else (0.0 if a.mock else 1.0)
+    pause = a.pause if a.pause is not None else (0.0 if a.mock or mode.startswith("injected") else 1.0)
     min_conf = float(os.environ.get("HANDOVER_MIN_CONF", "0.8"))
 
     skipped = []
@@ -294,7 +328,8 @@ def main(argv: list[str] | None = None) -> int:
             skipped.append({"n": s["n"], "why": "frame missing"})
 
     def progress(k: int, p: Probe) -> None:
-        print(f"  step {k} {p.kind:4s}  {p.done:6s}  conf {p.confidence:.2f}  {p.latency_ms} ms", flush=True)
+        err = f"  error: {p.error}" if p.error else ""
+        print(f"  step {k} {p.kind:4s}  {p.done:6s}  conf {p.confidence:.2f}  {p.latency_ms} ms{err}", flush=True)
 
     print(f"{lesson_id}: scoring with {mode}")
     t0 = time.monotonic()
@@ -309,12 +344,20 @@ def main(argv: list[str] | None = None) -> int:
     out = out_dir / f"eval-{lesson_id}-{now.strftime('%Y%m%d-%H%M%S')}.md"
     out.write_text(md, encoding="utf-8")
 
-    failing = [s.n for s in scores if not s.passed]
+    failing = [s.n for s in scores if s.scored and not s.passed]
+    unscored = [s.n for s in scores if not s.scored]
+    passed = sum(s.passed for s in scores)
     c = confusion(scores)
     print()
-    print(f"{len(scores) - len(failing)} of {len(scores)} steps pass, {c['no']['yes']} false passes, "
-          f"{time.monotonic() - t0:.1f} s. Make manual: {', '.join(map(str, failing)) or 'none'}.")
+    print(f"{passed} of {len(scores)} steps pass, {c['no']['yes']} false passes, "
+          f"{time.monotonic() - t0:.1f} s. Make manual: {', '.join(map(str, failing)) or 'none'}."
+          + (f" Not scored (errors): {', '.join(map(str, unscored))}." if unscored else ""))
     print(f"Report: {out}")
+    probes = [p for s in scores for p in s.probes]
+    if probes and all(p.error for p in probes):
+        print("eval_checks: every check call failed (timeout, rate limit or error); nothing was scored.",
+              file=sys.stderr)
+        return 1
     return 0
 
 
