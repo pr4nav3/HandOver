@@ -1011,20 +1011,42 @@ def test_no_key_shows_offline_at_startup() -> None:
         assert (st["check_offline"], st["check_offline_reason"]) == (True, "no_key")
 
 
-def test_mock_mistake_hook_only_on_no() -> None:
-    import asyncio
-
+def test_mock_mistake_hook_not_after_yes() -> None:
     make_lesson()
     engine = main.Engine()
     engine.select(LESSON)
     engine.go(1, "button")
     engine.step_started -= 10
-    job = main.CheckJob(1, "q", b"", FRAME, engine.version)
+    engine.cameras = 1
     with env(HANDOVER_MOCK_MISTAKE="behind:1"):
-        asyncio.run(engine._after_result(job, "yes"))
+        engine.last_check = {"done": "yes", "confidence": 0.9, "latency_ms": 1, "reason": None}
+        engine._mock_tick()
         assert engine.mistake is None
-        asyncio.run(engine._after_result(job, "no"))
+        engine.last_check, engine.mock_tick_at = None, 0.0  # no check yet on this step counts as not yes
+        engine._mock_tick()
         assert engine.mistake is not None and engine.mistake["kind"] == "behind"
+
+
+def test_mock_mistake_fires_with_gate_on() -> None:
+    """Identical frames: the gate holds checks back after the first, yet the planted mistake still fires."""
+    make_lesson()
+    fired_at = None
+    with env(HANDOVER_GATE="1", HANDOVER_MOCK_MISTAKE="behind:1", HANDOVER_MOCK_PASS_SECONDS="100"), \
+            patched(mistake, MOCK_AFTER_S=2.0), hub() as c, c.websocket_connect("/ws/ui") as ui, \
+            c.websocket_connect("/ws/camera") as cam:
+        select(ui)
+        ui.send_json({"type": "goto", "step": 1})
+        recv_json(ui, lambda m: is_state(m) and m["step"] == 1)
+        start, checks_before = time.monotonic(), main.metrics["checks"]
+        while time.monotonic() - start < 5 and main.engine.mistake is None:
+            cam.send_bytes(FRAME)
+            time.sleep(0.25)
+        fired_at = time.monotonic() - start
+        m = recv_json(ui, lambda m: m["type"] == "mistake")
+        assert (m["step"], m["kind"], m["source"]) == (1, "behind", "mock")
+        checks_in_window = main.metrics["checks"] - checks_before
+    assert fired_at < 3.6, fired_at  # 2 s delay plus at most one tick and a frame
+    assert checks_in_window <= 1, checks_in_window  # the gate held checks back, so a result-driven hook never ran
 
 
 def test_parse_message_limits() -> None:

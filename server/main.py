@@ -24,7 +24,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Awaitable, Callable, Optional
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
@@ -113,6 +113,7 @@ CLOSE_STALLED = 1011  # close code when a client's sender gave up (a send took o
 WARM_UP_TIMEOUT = 5.0  # seconds for the startup call that opens the pooled Gemini connection
 REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 UPLOAD_SUFFIXES = (".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi")  # never playlists (HLS, concat) for ffmpeg
+MOCK_TICK_SECONDS = 1.0  # the mock mistake hook is looked at no more often than this
 MAX_ACTIVE_JOBS = 3  # queued plus running teach jobs before uploads get 429
 MAX_RECUT_BODY = 1024**2  # 1 MB
 MAX_RECUT_STEPS = 50
@@ -416,7 +417,8 @@ class Engine:
         self.gated_seq = 0
         self.frame_wanted = False  # the motion gate's answer for gated_frame
         self.inflight: Optional[asyncio.Task] = None  # the one running check
-        self.mistake_task: Optional[asyncio.Task] = None  # the one running mistake compare
+        self.mistake_task: Optional[asyncio.Task] = None  # the one running mistake compare (or mock confirm)
+        self.mock_tick_at = 0.0  # last time the mock mistake hook was looked at
         self.frame_event = asyncio.Event()
         self.ui_frame_event = asyncio.Event()
         self.ref_cache: dict[tuple, bytes] = {}
@@ -784,6 +786,7 @@ class Engine:
                 self.frame_event.clear()
                 try:
                     await self._gate_newest()
+                    self._mock_tick()
                     if self.inflight is None or self.inflight.done():
                         job = self._next_job()
                         if job is not None:
@@ -903,28 +906,52 @@ class Engine:
     async def _after_result(self, job: CheckJob, done: str) -> None:
         """Feed the mistake policy after a check that did not pass. A due compare runs as its own task (one at a
         time) so it never delays normal checks, or inline when HANDOVER_MISTAKE_PARALLEL=0.
-        Mock mode never calls Gemini for this; only the HANDOVER_MOCK_MISTAKE hook runs there, on a "no"."""
+        Mock mode never calls Gemini for this; its HANDOVER_MOCK_MISTAKE hook runs in _mock_tick instead."""
         if check.is_mock():
-            if done != "no":
-                return
-            found = self.watch.mock(job.index, time.monotonic() - self.step_started, self.steps)
-            if found is not None and (not mistake.needs_confirmation(found) or await self._confirm_ahead(job)):
-                self._raise_mistake(found)
             return
         if not self.watch.on_result(job.index, done, time.monotonic()):
             return
         if self.mistake_task is not None and not self.mistake_task.done():
             return
         if mistake_parallel():
-            self.mistake_task = asyncio.create_task(self._mistake_task(job))
+            self.mistake_task = asyncio.create_task(self._background(self._compare_and_raise(job), "mistake compare"))
         else:
             await self._compare_and_raise(job)
 
-    async def _mistake_task(self, job: CheckJob) -> None:
+    async def _background(self, work: Awaitable[None], what: str) -> None:
         try:
-            await self._compare_and_raise(job)
+            await work
         except Exception:  # nothing awaits this task, so log here
-            log.exception("mistake compare crashed")
+            log.exception("%s crashed", what)
+
+    def _mock_tick(self) -> None:
+        """HANDOVER_MOCK_MISTAKE hook, mock mode only. Looked at on the frame path at most once a second, so it
+        fires even while the motion gate holds checks back. Once per step visit, after the hook's delay, unless
+        the last check on this step said yes. An ahead still needs its confirming check."""
+        now = time.monotonic()
+        if not check.is_mock() or now - self.mock_tick_at < MOCK_TICK_SECONDS:
+            return
+        self.mock_tick_at = now
+        cur = self.current()
+        if cur is None or cur.get("check_type", "camera") != "camera" or self.verified or self.cameras == 0:
+            return
+        if self.last_check is not None and self.last_check.get("done") == "yes":
+            return
+        found = self.watch.mock(self.step, now - self.step_started, self.steps)
+        if found is None:
+            return
+        if not mistake.needs_confirmation(found):
+            self._raise_mistake(found)
+            return
+        frame, ref = self.gated_frame or self.frame, self.ref_bytes(self.step)
+        if frame is None or ref is None or (self.mistake_task is not None and not self.mistake_task.done()):
+            return
+        job = CheckJob(self.step, cur.get("check_question") or "", ref, frame, self.version)
+        self.mistake_task = asyncio.create_task(self._background(self._confirm_and_raise(job, found), "mock confirm"))
+
+    async def _confirm_and_raise(self, job: CheckJob, found: dict) -> None:
+        if await self._confirm_ahead(job) and job.version == self.version:
+            self._raise_mistake(found)
 
     async def _compare_and_raise(self, job: CheckJob) -> None:
         match = await self._compare(job)
