@@ -1021,7 +1021,8 @@ async def test_check_camera_advance_verified_then_advance():
         m = await ui.wait(is_type("advance"), timeout=3, what="camera advance")
         hold = time.monotonic() - t_verified
         assert (m["from"], m["to"], m["reason"]) == (0, 1, "camera"), m
-        assert 0.9 <= hold <= 2.0, f"verified held {hold:.2f} s, want about 1.2 s"
+        want = float(os.environ.get("HANDOVER_VERIFIED_HOLD", "0.8"))  # tuning knob, default 0.8 s
+        assert want - 0.2 <= hold <= want + 0.8, f"verified held {hold:.2f} s, want about {want:.1f} s"
         st = await ui.wait(lambda x: isinstance(x, dict), what="state after camera advance")
         assert st.get("type") == "state" and st["step"] == 1 and st["last_check"] is None, st
         assert st["status"] in ("watching", "checking"), st

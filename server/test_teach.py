@@ -1,0 +1,538 @@
+"""Teach pipeline tests: reference frames, recut rule, step 1 manual, safety and tools, self-test, CLI.
+
+Run: .venv/bin/python -m server.test_teach (or pytest if installed). Works on copies of lessons/demo-v1 in a
+temp folder and never touches the committed lesson. No network: extraction is faked and checks run in mock mode.
+"""
+
+import contextlib
+import io
+import json
+import os
+import shutil
+import subprocess
+import tempfile
+from pathlib import Path
+
+TMP = Path(tempfile.mkdtemp(prefix="handover-teach-test-"))
+os.environ["HANDOVER_LESSONS"] = str(TMP / "lessons")
+os.environ.pop("HANDOVER_TEACH_MOCK", None)
+
+from PIL import Image, ImageStat  # noqa: E402
+
+from server import teach  # noqa: E402
+
+DEMO = teach.REPO / "lessons" / "demo-v1"
+DEMO_COLORS = [(0x1F, 0x6F, 0xEB), (0x2D, 0xA4, 0x4E), (0xBF, 0x87, 0x00), (0xCF, 0x22, 0x2E), (0x82, 0x50, 0xDF)]
+
+_cache: dict = {}
+
+
+def _ffmpeg(*args: str) -> None:
+    subprocess.run([teach._bin("ffmpeg"), "-hide_banner", "-loglevel", "error", "-y", *args], check=True)
+
+
+def _demo_copy(name: str) -> Path:
+    """A copy of lessons/demo-v1, recut once with the current code (cached), under the temp lessons folder."""
+    if "demo" not in _cache:
+        d = TMP / "demo-base"
+        shutil.copytree(DEMO, d, ignore=shutil.ignore_patterns(".recut_*"))
+        teach.recut(d)
+        _cache["demo"] = d
+    dst = TMP / "lessons" / name
+    shutil.rmtree(dst, ignore_errors=True)
+    shutil.copytree(_cache["demo"], dst)
+    return dst
+
+
+def _read(d: Path) -> dict:
+    return json.loads((d / "lesson.json").read_text(encoding="utf-8"))
+
+
+def _write(d: Path, lesson: dict) -> None:
+    (d / "lesson.json").write_text(json.dumps(lesson, indent=2), encoding="utf-8")
+
+
+def _mean_rgb(path: Path) -> tuple:
+    with Image.open(path) as im:
+        return tuple(ImageStat.Stat(im.convert("RGB")).mean)
+
+
+def _nearest_color(rgb) -> int:
+    return min(range(len(DEMO_COLORS)), key=lambda i: sum((a - b) ** 2 for a, b in zip(rgb, DEMO_COLORS[i])))
+
+
+# ---------------------------------------------------------------- reference frames (M8)
+
+def test_ref_frames_in_last_15_percent_and_not_black():
+    d = _demo_copy("ref-frames")
+    for i, s in enumerate(_read(d)["steps"]):
+        a, b = teach.parse_time(s["start"]), teach.parse_time(s["end"])
+        t = teach.parse_time(s["ref_time"])
+        assert a + 0.85 * (b - a) - 0.1 <= t < b, (s["n"], s["ref_time"])
+        frame = d / s["ref_frame"]
+        assert frame.stat().st_size > 0
+        rgb = _mean_rgb(frame)
+        assert sum(rgb) / 3 > teach.DARK, (s["n"], rgb)
+        # each demo step has its own background color: the frame must come from this step, not the next one
+        assert _nearest_color(rgb) == i, (s["n"], rgb)
+        with Image.open(frame) as im:
+            assert im.size == (1920, 1080)
+    assert not (d / ".recut_tmp").exists() and not (d / ".recut_old").exists()
+
+
+def test_pick_prefers_the_still_moment():
+    # 9 s of moving test pattern, then the last frame held for 1 s: the still second must win
+    src = TMP / "still-end.mp4"
+    _ffmpeg("-f", "lavfi", "-i", "testsrc2=s=320x240:r=30:d=9", "-vf", "tpad=stop_mode=clone:stop_duration=1",
+            "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", str(src))
+    t = teach.pick_ref_time(src, 0.0, 10.0)
+    assert t is not None and 9.0 <= t < 10.0, t
+    assert abs(t * 10 - round(t * 10)) < 1e-6  # on the 0.1 s grid lesson.json uses
+
+
+def test_hint_wins_when_equally_still():
+    # the demo's moving box runs at a constant speed, so every moment is equally still and the hint wins
+    t = teach.pick_ref_time(DEMO / "norm.mp4", 0.0, 8.0, hint=5.0)
+    assert t == 5.0, t
+    # a hint outside the step is ignored
+    t = teach.pick_ref_time(DEMO / "norm.mp4", 0.0, 8.0, hint=20.0)
+    assert t is not None and 6.7 <= t < 8.0, t
+
+
+# ---------------------------------------------------------------- recut rule
+
+def test_ref_time_persisted_and_honored_by_recut():
+    d = _demo_copy("ref-honor")
+    lesson = _read(d)
+    assert all(s.get("ref_time") for s in lesson["steps"])
+    lesson["steps"][1]["ref_time"] = "00:10.0"   # inside step 2 (00:08 to 00:16)
+    lesson["steps"][3]["ref_time"] = "00:02"     # outside step 4: a new one is chosen
+    _write(d, lesson)
+    out = teach.recut(d)
+    assert out["steps"][1]["ref_time"] == "00:10"
+    expect = TMP / "expect-10.jpg"
+    teach._grab_frame(d / "norm.mp4", 10.0, expect)
+    assert (d / "frames" / "02.jpg").read_bytes() == expect.read_bytes()
+    t4 = teach.parse_time(out["steps"][3]["ref_time"])
+    assert 24.0 <= t4 < 32.0, out["steps"][3]["ref_time"]
+    assert _nearest_color(_mean_rgb(d / "frames" / "04.jpg")) == 3
+    # a second recut keeps the persisted values
+    again = teach.recut(d)
+    assert [s["ref_time"] for s in again["steps"]] == [s["ref_time"] for s in out["steps"]]
+
+
+def test_recut_keeps_unknown_and_new_fields():
+    d = _demo_copy("keep-fields")
+    lesson = _read(d)
+    lesson["custom_top"] = {"a": [1, 2]}
+    lesson["safety"], lesson["tools"] = ["Keep fingers clear."], ["Bone folder"]
+    st = lesson["steps"][1]
+    st["common_mistake"] = "Flip it over first."
+    st["self_test"] = {"own": "yes", "prev": "no", "ok": True}
+    st["x_note"] = "keep me"
+    st["title"] = "Renamed by hand"
+    _write(d, lesson)
+    out = teach.recut(d)
+    assert out["custom_top"] == {"a": [1, 2]}
+    assert out["safety"] == ["Keep fingers clear."] and out["tools"] == ["Bone folder"]
+    s2 = out["steps"][1]
+    assert s2["common_mistake"] == "Flip it over first."
+    assert s2["self_test"] == {"own": "yes", "prev": "no", "ok": True}
+    assert s2["x_note"] == "keep me" and s2["title"] == "Renamed by hand"
+    assert out["steps"][0]["check_type"] == "camera"  # recut never makes step 1 manual
+    assert _read(d) == out
+
+
+# ---------------------------------------------------------------- new extraction
+
+def _fake_extraction() -> "teach.Extraction":
+    return teach.Extraction(
+        steps=[
+            teach.Step(start="00:00", end="00:01", title="Lay it flat", check_question="Is there one square?",
+                       prerequisites=[], ref_time="00:00.8", common_mistake=""),
+            teach.Step(start="00:01", end="00:02", title="Fold in half", check_question="Is it a rectangle?",
+                       prerequisites=[1], ref_time="00:01.9", common_mistake="  Flip it   over first. "),
+            teach.Step(start="00:02", end="00:03", title="Fold corners", check_question="Are there four flaps?",
+                       prerequisites=[2], ref_time="", common_mistake=""),
+        ],
+        transcript=[teach.Segment(start=0.2, end=0.9, text="Lay it flat.")],
+        safety=["Mind the blade.", " mind the  blade. ", ""],
+        tools=["Craft knife", "Ruler"],
+    )
+
+
+def _built_from_fake(lesson_id: str) -> Path:
+    src = TMP / "fake-src.mp4"
+    if not src.exists():
+        _ffmpeg("-f", "lavfi", "-i", "testsrc2=s=320x240:r=30:d=3", "-c:v", "libx264", "-preset", "ultrafast",
+                "-pix_fmt", "yuv420p", str(src))
+    real = teach.extract
+    teach.extract = lambda norm, progress=None: _fake_extraction()
+    try:
+        teach.process_upload(src, lesson_id, "Fake lesson")
+    finally:
+        teach.extract = real
+    return teach.lessons_root() / lesson_id
+
+
+def test_step_one_manual_only_on_new_extraction():
+    d = _built_from_fake("first-manual")
+    lesson = _read(d)
+    kinds = [s["check_type"] for s in lesson["steps"]]
+    assert kinds == ["manual", "camera", "camera"], kinds
+    assert lesson["steps"][0]["check_question"] == ""
+    assert lesson["steps"][1]["common_mistake"] == "Flip it over first."
+    assert all(s["ref_time"] for s in lesson["steps"])
+    # the author turns step 1 back into a camera step; recut must leave it that way
+    lesson["steps"][0].update(check_type="camera", check_question="Is there one square?")
+    _write(d, lesson)
+    out = teach.recut(d)
+    assert out["steps"][0]["check_type"] == "camera"
+    assert out["steps"][0]["check_question"] == "Is there one square?"
+
+
+def test_steps_file_is_not_changed_to_manual():
+    d = TMP / "steps-file"
+    shutil.copytree(DEMO, d)
+    ex = teach._plan_extraction(40.0, d / "extraction.json")
+    assert teach._is_manual(ex.steps[0].check_question) is False  # demo lesson keeps its camera step 1
+
+
+def test_safety_and_tools_round_trip():
+    d = _built_from_fake("safety-tools")
+    lesson = _read(d)
+    assert lesson["safety"] == ["Mind the blade."]
+    assert lesson["tools"] == ["Craft knife", "Ruler"]
+    stored = json.loads((d / "extraction.json").read_text(encoding="utf-8"))
+    assert stored["safety"] == ["Mind the blade."] and stored["tools"] == ["Craft knife", "Ruler"]
+    out = teach.recut(d)
+    assert out["safety"] == ["Mind the blade."] and out["tools"] == ["Craft knife", "Ruler"]
+    # old extraction files without the new fields still load
+    old = teach.Extraction.model_validate_json((DEMO / "extraction.json").read_text(encoding="utf-8"))
+    assert old.safety == [] and old.tools == [] and old.steps[0].ref_time == ""
+
+
+def test_gemini_schema_requires_every_field():
+    schema = teach.gemini_schema()
+    assert list(schema["properties"]) == ["transcript", "steps", "safety", "tools"]  # narration first
+    assert set(schema["required"]) == {"steps", "transcript", "safety", "tools"}
+    step = schema["$defs"]["Step"]
+    assert {"ref_time", "common_mistake", "check_question"} <= set(step["required"])
+    seg = schema["$defs"]["_WireSegment"]["properties"]
+    assert seg["start"]["type"] == "string" and seg["end"]["type"] == "string"
+
+    def no_ref_siblings(node):
+        if isinstance(node, dict):
+            if "$ref" in node:
+                assert set(node) == {"$ref"}, node
+            for v in node.values():
+                no_ref_siblings(v)
+        elif isinstance(node, list):
+            for v in node:
+                no_ref_siblings(v)
+
+    no_ref_siblings(schema)
+    assert "never use color" in teach.PROMPT.lower() and '"MM:SS" timestamps' in teach.PROMPT
+
+
+def test_segment_accepts_mmss_strings():
+    seg = teach.Segment.model_validate({"start": "01:02.5", "end": 63, "text": "hi"})
+    assert (seg.start, seg.end) == (62.5, 63.0)
+
+
+def test_clips_have_a_keyframe_every_second():
+    d = _demo_copy("keyframes")
+    out = subprocess.run([teach._bin("ffprobe"), "-v", "error", "-select_streams", "v:0", "-skip_frame", "nokey",
+                          "-show_entries", "frame=pts_time", "-of", "csv=p=0", str(d / "clips" / "02.mp4")],
+                         capture_output=True, text=True, encoding="utf-8")
+    keys = [float(x.strip(",")) for x in out.stdout.split() if x.strip(",")]
+    assert len(keys) >= 8, keys
+    assert max(b - a for a, b in zip(keys, keys[1:])) <= 1.05, keys
+
+
+# ---------------------------------------------------------------- extraction request (faked Gemini client)
+
+class _FakeFiles:
+    def __init__(self, log):
+        self.log = log
+
+    def upload(self, file):
+        self.log["uploaded"] = Path(file).name
+        return type("F", (), {"state": "ACTIVE", "name": "files/x", "uri": "gs://x", "mime_type": "video/mp4"})()
+
+    def get(self, name):
+        raise AssertionError("upload was already ACTIVE")
+
+    def delete(self, name):
+        self.log["deleted"] = name
+
+
+def _fake_client(log):
+    answer = {
+        "transcript": [{"start": "00:01", "end": "00:03.5", "text": "Lay it flat."},
+                       {"start": "bad", "end": "00:04", "text": "dropped"}],
+        "steps": [{"start": "00:00", "end": "00:08", "title": "Lay it flat", "check_question": "Is it flat?",
+                   "prerequisites": [], "ref_time": "00:07", "common_mistake": ""}],
+        "safety": [], "tools": ["Paper"],
+    }
+
+    class Models:
+        def generate_content(self, model, contents, config):
+            part = contents[0].parts[0]
+            log.update(model=model, part=part, config=config,
+                       proxy_exists=(log["dir"] / "proxy.mp4").exists())
+            return type("R", (), {"text": json.dumps(answer)})()
+
+    class Client:
+        def __init__(self, api_key, http_options):
+            log["http_options"] = http_options
+            self.models, self.files = Models(), _FakeFiles(log)
+
+    return Client
+
+
+def _extract_with_fake(d: Path, inline_limit: int):
+    from google import genai
+    from google.genai import types
+
+    log = {"dir": d}
+    real_client, real_limit, real_key = genai.Client, teach.INLINE_LIMIT, os.environ.get("GEMINI_API_KEY")
+    genai.Client, teach.INLINE_LIMIT = _fake_client(log), inline_limit
+    os.environ["GEMINI_API_KEY"] = "test-key-not-real"
+    try:
+        ex = teach.extract(d / "norm.mp4")
+    finally:
+        genai.Client, teach.INLINE_LIMIT = real_client, real_limit
+        if real_key is None:
+            os.environ.pop("GEMINI_API_KEY", None)
+        else:
+            os.environ["GEMINI_API_KEY"] = real_key
+    return ex, log, types
+
+
+def test_extract_sends_small_proxy_inline():
+    d = _demo_copy("extract-inline")
+    ex, log, types = _extract_with_fake(d, teach.INLINE_LIMIT)
+    part, cfg = log["part"], log["config"]
+    assert log["proxy_exists"] and not (d / "proxy.mp4").exists()  # made for the call, deleted after
+    assert part.inline_data is not None and part.file_data is None and "uploaded" not in log
+    assert part.inline_data.mime_type == "video/mp4" and len(part.inline_data.data) < teach.INLINE_LIMIT
+    assert part.video_metadata.fps == 2
+    assert log["http_options"].api_version == "v1beta" and log["http_options"].timeout == 600_000
+    assert cfg.max_output_tokens == 32768
+    assert cfg.thinking_config.thinking_level == types.ThinkingLevel.HIGH
+    assert cfg.media_resolution == types.MediaResolution.MEDIA_RESOLUTION_LOW
+    assert [(s.start, s.end, s.text) for s in ex.transcript] == [(1.0, 3.5, "Lay it flat.")]
+    assert ex.tools == ["Paper"] and ex.steps[0].ref_time == "00:07"
+
+
+def test_extract_uses_files_api_for_big_proxy():
+    d = _demo_copy("extract-files")
+    _, log, _ = _extract_with_fake(d, 0)
+    assert log["uploaded"] == "proxy.mp4" and log["deleted"] == "files/x"
+    assert log["part"].file_data.file_uri == "gs://x" and log["part"].inline_data is None
+    assert not (d / "proxy.mp4").exists()
+
+
+def test_proxy_is_480p_10fps_same_length():
+    d = _demo_copy("proxy")
+    out = TMP / "proxy-check.mp4"
+    teach.make_proxy(d / "norm.mp4", out)
+    probe = subprocess.run([teach._bin("ffprobe"), "-v", "error", "-select_streams", "v:0", "-show_entries",
+                            "stream=height,r_frame_rate,start_time", "-of", "default=nw=1", str(out)],
+                           capture_output=True, text=True, encoding="utf-8").stdout
+    assert "height=480" in probe and "r_frame_rate=10/1" in probe, probe
+    assert "start_time=0.000000" in probe, probe  # same clock as norm.mp4
+    # only the last frame's length (1/10 s, rounded up) may differ at 10 fps
+    assert abs(teach.probe_duration(out) - teach.probe_duration(d / "norm.mp4")) <= 0.25
+
+
+# ---------------------------------------------------------------- self-test (S-T) and CLI
+
+def _cli(*argv: str) -> tuple[int, str, str]:
+    out, err = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        code = teach.main(list(argv))
+    return code, out.getvalue(), err.getvalue()
+
+
+def test_self_test_mock_writes_results():
+    d = _demo_copy("self-test")
+    prev = os.environ.get("HANDOVER_CHECK")
+    os.environ["HANDOVER_CHECK"] = "mock"
+    try:
+        code, out, err = _cli("--self-test", str(d))
+    finally:
+        if prev is None:
+            os.environ.pop("HANDOVER_CHECK", None)
+        else:
+            os.environ["HANDOVER_CHECK"] = prev
+    assert code == 0, (out, err)
+    assert "step 2: own yes" in out
+    for s in _read(d)["steps"]:
+        if s["check_type"] == "manual":
+            assert "self_test" not in s
+        else:
+            assert s["self_test"] == {"own": "yes", "prev": "no", "ok": True, "mock": True}, s
+
+
+def test_self_test_uses_its_own_timeout():
+    from server import check
+
+    d = _demo_copy("self-test-timeout")
+    seen, real = [], check.check_frame
+
+    async def fake(ref, live, question, *, step_started_at=None, prev_ref=None, timeout=None):
+        seen.append(timeout)
+        return check.CheckResult("yes" if live == ref else "no", 0.9, 1)
+
+    env_before = dict(os.environ)
+    check.check_frame = fake
+    try:
+        teach.self_test_lesson(d)
+        os.environ["HANDOVER_SELFTEST_TIMEOUT"] = "25"
+        teach.self_test_lesson(d)
+    finally:
+        check.check_frame = real
+        os.environ.pop("HANDOVER_SELFTEST_TIMEOUT", None)
+    assert seen[:8] == [10.0] * 8 and seen[8:] == [25.0] * 8, seen
+    assert dict(os.environ) == env_before  # the self-test never touches the environment
+    assert teach._accepts_timeout(real)  # the real check_frame has the parameter
+    results = [s.get("self_test") for s in _read(d)["steps"]]
+    # demo step 1 starts and ends on the same picture (its moving box wraps back to x=0), so the fake check,
+    # which compares bytes, rightly fails it; steps 2, 4 and 5 compare against a different previous reference
+    assert results[0] == {"own": "yes", "prev": "yes", "ok": False}, results
+    assert [r["ok"] for r in (results[1], results[3], results[4])] == [True, True, True] and results[2] is None
+
+
+def test_self_test_skips_failed_calls():
+    from server import check
+
+    d = _demo_copy("self-test-errors")
+    lesson = _read(d)
+    lesson["steps"][1]["self_test"] = {"own": "yes", "prev": "no", "ok": True}  # stale result from an old run
+    _write(d, lesson)
+    real = check.check_frame
+
+    async def failing(ref, live, question, *, step_started_at=None, prev_ref=None, timeout=None):
+        return check.CheckResult("unsure", 0.0, 10000, error="timeout")
+
+    check.check_frame = failing
+    try:
+        code, out, err = _cli("--self-test", str(d))
+    finally:
+        check.check_frame = real
+    assert code == 1, (out, err)
+    assert "step 2: skipped, check failed (timeout)" in out and "check failed on steps 1, 2, 4, 5" in err
+    assert all("self_test" not in s for s in _read(d)["steps"])  # never saved as a disagreement
+
+
+def test_self_test_async_runs_on_a_loop():
+    import asyncio
+
+    d = _demo_copy("self-test-async")
+    os.environ["HANDOVER_CHECK"] = "mock"
+    try:
+        lesson = asyncio.run(teach.self_test_lesson_async(d))
+    finally:
+        os.environ.pop("HANDOVER_CHECK", None)
+    assert lesson["steps"][1]["self_test"]["ok"] is True and _read(d) == lesson
+
+
+def test_sanitize_id_fits_the_read_rule():
+    import re
+
+    long_id = teach.sanitize_id("A" * 63 + " b" + "c" * 10)
+    assert len(long_id) <= 64 and not long_id.endswith("-")
+    assert re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", long_id)
+    assert teach.sanitize_id("  My Lesson!! ") == "my-lesson"
+
+
+def test_recut_empty_question_gets_contract_default():
+    d = _demo_copy("default-question")
+    lesson = _read(d)
+    lesson["steps"][1]["check_question"] = ""          # camera step, no question
+    lesson["steps"][3]["check_question"] = "manual"    # explicit manual
+    _write(d, lesson)
+    out = teach.recut(d)
+    assert (out["steps"][1]["check_type"], out["steps"][1]["check_question"]) == ("camera", "Is this step finished?")
+    assert (out["steps"][3]["check_type"], out["steps"][3]["check_question"]) == ("manual", "")
+    assert out["steps"][2]["check_type"] == "manual"   # check_type manual stays manual
+
+
+def test_job_errors_are_scrubbed():
+    lessons = teach.lessons_root()
+    os.environ["GEMINI_API_KEY"] = "AIzaFAKEKEY123"
+    try:
+        raw = f"boom AIzaFAKEKEY123 at {lessons}/x/norm.mp4 and {teach.REPO}/server/uploads/a.mov"
+        assert teach.scrub(raw) == "boom *** at <lessons>/x/norm.mp4 and <repo>/server/uploads/a.mov"
+        real = teach.build
+
+        def fail(*a, **k):
+            raise RuntimeError(raw)
+
+        teach.build = fail
+        try:
+            teach.process_upload(Path("x.mov"), "x", "X")
+            raise AssertionError("expected an error")
+        except RuntimeError as e:
+            assert "AIzaFAKEKEY123" not in str(e) and str(lessons) not in str(e) and str(teach.REPO) not in str(e)
+        finally:
+            teach.build = real
+    finally:
+        os.environ.pop("GEMINI_API_KEY", None)
+
+
+def test_handover_ffmpeg_comes_first():
+    real = teach._bin("ffmpeg")
+    link_dir = TMP / "ffbin"
+    link_dir.mkdir(exist_ok=True)
+    for name in ("ffmpeg", "ffprobe"):
+        (link_dir / name).unlink(missing_ok=True)
+        (link_dir / name).symlink_to(teach._bin(name))
+    os.environ["HANDOVER_FFMPEG"] = str(link_dir / "ffmpeg")
+    try:
+        assert teach._bin("ffmpeg") == str(link_dir / "ffmpeg")
+        assert teach._bin("ffprobe") == str(link_dir / "ffprobe")
+        os.environ["HANDOVER_FFMPEG"] = str(link_dir / "missing")
+        try:
+            teach._bin("ffmpeg")
+            raise AssertionError("expected an error")
+        except RuntimeError as e:
+            assert "HANDOVER_FFMPEG" in str(e)
+    finally:
+        os.environ.pop("HANDOVER_FFMPEG", None)
+    assert teach._bin("ffmpeg") == real
+
+
+def test_cli_dry_run_and_errors():
+    d = _demo_copy("cli")
+    before = (d / "lesson.json").read_bytes()
+    code, out, _ = _cli("--recut", str(d), "--dry-run")
+    assert code == 0 and "would cut 5 steps" in out and "00:08 to 00:16" in out
+    assert (d / "lesson.json").read_bytes() == before
+    code, _, err = _cli("--recut", str(TMP / "missing"))
+    assert code == 2 and "no lesson.json" in err
+    code, _, err = _cli(str(TMP / "nope.mp4"), "--id", "x")
+    assert code == 2 and "video not found" in err
+    code, _, err = _cli(str(DEMO / "norm.mp4"), "--id", "x", "--dry-run")
+    assert code == 2 and "never calls Gemini" in err
+    code, out, _ = _cli(str(DEMO / "norm.mp4"), "--id", "Dry Run", "--steps-json", str(DEMO / "extraction.json"),
+                        "--dry-run")
+    assert code == 0 and "5 steps from 40.0 s" in out
+    assert not (teach.lessons_root() / "dry-run").exists()
+    lesson = _read(d)
+    lesson["steps"][2]["start"] = "nonsense"
+    _write(d, lesson)
+    code, _, err = _cli("--recut", str(d))
+    assert code == 2 and "step 3" in err
+
+
+if __name__ == "__main__":
+    try:
+        for name, fn in list(globals().items()):
+            if name.startswith("test_"):
+                fn()
+                print("ok", name)
+    finally:
+        shutil.rmtree(TMP, ignore_errors=True)
