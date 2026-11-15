@@ -2451,6 +2451,27 @@ button.option-card:hover {
   gap: 14px;
 }
 
+.step-target { display: flex; align-items: center; gap: 14px; flex: 0 0 auto; margin: 0; padding: 10px; border: 1px solid var(--border); border-radius: 12px; background: var(--panel); }
+.step-target img { width: 136px; height: 88px; object-fit: contain; border-radius: 6px; background: var(--panel-2); }
+.step-target figcaption { display: grid; gap: 5px; font-size: 13px; }
+.step-target figcaption span { color: var(--muted); font-size: 12px; }
+.tutorial-result { position: absolute; inset: 0; background: var(--panel); }
+.tutorial-result img { width: 100%; height: 100%; object-fit: contain; }
+.tutorial-review { position: absolute; left: 16px; right: 16px; bottom: 72px; margin: 0; padding: 9px 12px; border-radius: 8px; background: var(--video-surface); color: var(--video-ink); text-align: center; font-size: 14px; }
+.step-completion { position: fixed; inset: 0; z-index: 1000; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; background: color-mix(in srgb, var(--bg) 94%, transparent); color: var(--green); pointer-events: none; }
+.step-completion svg { width: clamp(120px, 16vw, 190px); fill: none; stroke: currentColor; stroke-width: 5; stroke-linecap: round; stroke-linejoin: round; }
+.step-completion circle { fill: color-mix(in srgb, var(--green) 9%, var(--bg)); stroke-width: 2; }
+.step-completion strong { color: var(--text); font-size: clamp(26px, 3vw, 42px); font-weight: 600; letter-spacing: -0.025em; }
+.completion-detail { color: var(--muted); font-size: 15px; }
+.step-completion.show { animation: completion-arrive 180ms ease-out; }
+.step-completion.show path { stroke-dasharray: 78; stroke-dashoffset: 78; animation: completion-draw 360ms 100ms ease-out forwards; }
+@keyframes completion-arrive { from { opacity: 0; } to { opacity: 1; } }
+@keyframes completion-draw { to { stroke-dashoffset: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .step-completion.show, .step-completion.show path { animation: none; }
+  .step-completion.show path { stroke-dashoffset: 0; }
+}
+
 .live-col > .feedback-card {
   flex: 0 0 auto;
 }

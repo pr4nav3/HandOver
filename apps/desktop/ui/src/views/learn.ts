@@ -89,14 +89,15 @@ const TEMPLATE = html`<div class="learn">
       <span class="badge watching camera-verdict" role="status" aria-live="polite" aria-atomic="true"><span class="badge-dot"></span><span class="badge-label">Getting ready</span></span>
     </section>
     <div class="mistake-card" role="alert" hidden></div>
+    <figure class="step-target" hidden><img alt="Expected result for this step" /><figcaption><strong>Match this view</strong><span>The finished position for this step.</span></figcaption></figure>
     </div>
     <button class="learn-divider" type="button" role="separator" aria-orientation="vertical" aria-label="Resize camera and tutorial panels" aria-valuemin="24" aria-valuemax="62"><span></span></button>
     <section class="side">
       <div class="clip-box">
         <div class="clip">
-          <video loop playsinline preload="auto" crossorigin="anonymous"></video>
+          <video playsinline preload="auto" crossorigin="anonymous"></video>
+          <div class="tutorial-result" hidden><img alt="Expected result for this step" /><p class="tutorial-review" role="status"></p></div>
           <button class="unmute" type="button" hidden>${icons.sound}<span>Turn on sound</span></button>
-          <span class="result-moment" hidden></span>
           <div class="placeholder clip-ph" hidden><span class="spinner"></span></div>
           <div class="tutorial-transport">
             <button class="tutorial-play" type="button" title="Pause tutorial (K)">${icons.pause}<span>Pause</span></button>
@@ -137,6 +138,10 @@ const TEMPLATE = html`<div class="learn">
   </footer>
   <div class="done-layer" hidden></div>
   <div class="learn-empty" hidden></div>
+  <div class="step-completion" role="status" aria-live="polite" hidden>
+    <svg viewBox="0 0 120 120" aria-hidden="true"><circle cx="60" cy="60" r="52" /><path d="M34 61 52 79 87 42" /></svg>
+    <strong>Step complete</strong><span class="completion-detail"></span>
+  </div>
 </div>`;
 
 const expertOf = (s: Step) => Math.max(0, toSeconds(s.end) - toSeconds(s.start));
@@ -162,7 +167,11 @@ export class LearnView {
   private spoken = "";
   private flashVerified = false;
   private flashTimer = 0;
-  private resultTimer = 0;
+  private completionTimer = 0;
+  private completionKey = "";
+  private reviewing = false;
+  private reviewTimer = 0;
+  private reviewUntil = 0;
   private loadedClip = "";
   private userPaused = false;
   private captionsOn = localStorage.getItem("handover.learnCaptions.v1") !== "off";
@@ -196,6 +205,7 @@ export class LearnView {
     this.video.addEventListener("durationchange", () => this.syncTutorialTimeline());
     this.video.addEventListener("play", () => this.syncTutorialPlayback());
     this.video.addEventListener("pause", () => this.syncTutorialPlayback());
+    this.video.addEventListener("ended", () => this.reviewResult());
     this.q(".next").addEventListener("click", () => this.next());
     this.q("button.back").addEventListener("click", () => this.back());
     this.q(".replay-clip").addEventListener("click", () => this.replay());
@@ -203,6 +213,7 @@ export class LearnView {
     this.q(".tutorial-cc").addEventListener("click", () => this.toggleCaptions());
     this.q<HTMLInputElement>(".tutorial-scrubber").addEventListener("input", (e) => {
       const at = Number((e.currentTarget as HTMLInputElement).value);
+      this.clearReview();
       if (Number.isFinite(at)) this.video.currentTime = at;
       this.syncTutorialTimeline();
     });
@@ -224,7 +235,7 @@ export class LearnView {
     this.q(".unmute").addEventListener("click", () => {
       this.video.muted = false;
       this.q<HTMLElement>(".unmute").hidden = true;
-      void this.video.play().catch(() => {});
+      if (!this.reviewing && !this.completing) void this.video.play().catch(() => {});
     });
     this.el.addEventListener("click", (e) => {
       const t = (e.target as HTMLElement).closest<HTMLElement>("[data-act]");
@@ -319,6 +330,9 @@ export class LearnView {
   }
 
   resetRun() {
+    this.clearReview();
+    this.clearCompletion();
+    this.completionKey = "";
     const now = performance.now();
     this.runStart = now;
     this.runs = [];
@@ -350,26 +364,27 @@ export class LearnView {
 
   /** Resumes only the visible, unfinished tutorial. */
   resumeMedia() {
-    if (!this.userPaused && this.active && this.model.state?.status !== "done" && this.tutorialLoaded) this.play();
+    if (!this.userPaused && !this.reviewing && !this.completing && !this.video.ended && this.active && this.model.state?.status !== "done" && this.model.state?.status !== "verified" && this.tutorialLoaded) this.play();
   }
 
   /** Deterministic lesson teardown. Safe to call repeatedly from route, window, and native close events. */
   stopMedia() {
+    this.clearReview();
+    this.clearCompletion();
     stopLessonPlayback(this.video, window.speechSynthesis);
     stopChime();
     this.userPaused = false;
     this.loadedClip = "";
     this.video.querySelectorAll("track").forEach((track) => track.remove());
     window.clearTimeout(this.flashTimer);
-    window.clearTimeout(this.resultTimer);
     this.flashVerified = false;
-    this.q<HTMLElement>(".result-moment").hidden = true;
     this.live.stop();
   }
 
   /** Starts the current expert step from the beginning without changing course progress. */
   replay() {
-    if (!this.tutorialLoaded) return;
+    if (!this.tutorialLoaded || this.completing) return;
+    this.clearReview();
     this.video.currentTime = 0;
     this.userPaused = false;
     if (this.active) this.play();
@@ -379,6 +394,7 @@ export class LearnView {
   /** Pauses or resumes only the expert clip; the live camera and feedback remain active. */
   toggleTutorial() {
     if (!this.tutorialLoaded) return;
+    if (this.reviewing || this.video.ended) { this.replay(); return; }
     if (this.video.paused) {
       this.userPaused = false;
       if (this.active) this.play();
@@ -408,6 +424,7 @@ export class LearnView {
   seekTutorial(delta: number) {
     const duration = this.video.duration;
     if (!Number.isFinite(duration) || duration <= 0) return;
+    this.clearReview();
     this.video.currentTime = Math.max(0, Math.min(duration, this.video.currentTime + delta));
     this.syncTutorialTimeline();
   }
@@ -421,9 +438,10 @@ export class LearnView {
   private syncTutorialPlayback() {
     const paused = this.video.paused;
     const button = this.q<HTMLButtonElement>(".tutorial-play");
-    paint(button, paused ? html`${icons.play}<span>Play</span>` : html`${icons.pause}<span>Pause</span>`);
-    button.setAttribute("aria-label", paused ? "Play tutorial" : "Pause tutorial");
-    button.title = `${paused ? "Play" : "Pause"} tutorial (K)`;
+    paint(button, this.reviewing ? html`${icons.refresh}<span>Replay</span>` : paused ? html`${icons.play}<span>Play</span>` : html`${icons.pause}<span>Pause</span>`);
+    const action = this.reviewing ? "Replay" : paused ? "Play" : "Pause";
+    button.setAttribute("aria-label", `${action} tutorial`);
+    button.title = `${action} tutorial (K)`;
     button.disabled = !this.tutorialLoaded;
   }
 
@@ -456,6 +474,7 @@ export class LearnView {
     const prev = this.model.state;
     this.model = m;
     const s = m.state;
+    if (s?.status === "verified" && this.active) this.showCompletion(s.step, true);
     const now = performance.now();
     // A disconnect over 10 s marks the run interrupted (section 20.1).
     if (m.down && !this.downSince) this.downSince = now;
@@ -506,10 +525,10 @@ export class LearnView {
   onAdvance(a: Advance) {
     const steps = this.model.lesson?.steps ?? [];
     if (a.to > a.from && a.from < steps.length) {
+      if (this.active) this.showCompletion(a.from, a.reason === "camera");
       this.run(a.from).how = a.reason === "camera" ? "camera" : "hand";
       // An ahead advance (k to k+2) jumps over k+1.
       for (let k = a.from + 1; k < a.to && k < steps.length; k++) if (!this.run(k).how) this.run(k).how = "skipped";
-      if (a.to < steps.length) this.resultMoment(a.from, a.reason);
     }
     if (a.reason !== "camera") return;
     if (this.model.chime && this.active) playChime();
@@ -522,28 +541,58 @@ export class LearnView {
     this.render();
   }
 
-  /** Section 7.10: a short note after each finished step. */
-  private resultMoment(i: number, reason: Advance["reason"]) {
-    const steps = this.model.lesson?.steps ?? [];
-    const r = this.run(i);
-    const ms = r.ms + (this.pos === i ? performance.now() - this.posAt : 0);
-    const t = ms / 1000;
-    const exp = steps[i] ? expertOf(steps[i]) : 0;
-    let text: string;
-    if (r.mistakes) text = `Done. ${r.mistakes} ${r.mistakes === 1 ? "mistake" : "mistakes"} fixed.`;
-    else if (t >= 1 && exp) {
-      if (t < exp * 0.9) text = `Done in ${mmss(t, true)}, faster than the expert.`;
-      else if (t <= exp * 1.1) text = `Done. ${mmss(t, true)}, about the expert's time.`;
-      else text = `Done in ${mmss(t, true)}.`;
-    } else text = reason === "camera" ? "Verified." : "Done.";
-    const el = this.q<HTMLElement>(".result-moment");
-    el.textContent = text;
-    el.hidden = false;
-    el.classList.remove("show");
-    void el.offsetWidth;
-    el.classList.add("show");
-    window.clearTimeout(this.resultTimer);
-    this.resultTimer = window.setTimeout(() => (el.hidden = true), 1500);
+  private get completing() { return !this.q<HTMLElement>(".step-completion").hidden; }
+
+  private clearCompletion() {
+    window.clearTimeout(this.completionTimer);
+    this.q<HTMLElement>(".step-completion").hidden = true;
+  }
+
+  private showCompletion(index: number, verified: boolean) {
+    const key = `${this.runStart}:${this.model.lesson?.id}:${this.model.state?.rev}:${index}`;
+    if (key === this.completionKey) return;
+    this.completionKey = key;
+    this.pauseMedia();
+    this.clearReview();
+    const overlay = this.q<HTMLElement>(".step-completion");
+    this.q(".completion-detail").textContent = verified ? "Checked by camera" : "Marked complete by you";
+    overlay.hidden = false;
+    overlay.classList.remove("show");
+    void overlay.offsetWidth;
+    overlay.classList.add("show");
+    window.clearTimeout(this.completionTimer);
+    this.completionTimer = window.setTimeout(() => {
+      overlay.hidden = true;
+      this.resumeMedia();
+    }, 1000);
+  }
+
+  /** A finished clip stays still. The camera keeps checking; a timer never grants completion. */
+  private reviewResult() {
+    if (!this.active || !this.tutorialLoaded || this.model.state?.status === "done" || this.completing) return;
+    this.clearReview();
+    this.reviewing = true;
+    this.video.pause();
+    this.reviewUntil = performance.now() + 3000;
+    const update = () => {
+      if (!this.reviewing || !this.active) return;
+      const seconds = Math.max(0, Math.ceil((this.reviewUntil - performance.now()) / 1000));
+      const manual = this.model.lesson?.steps[this.model.state?.step ?? 0]?.check_type === "manual";
+      this.q(".tutorial-review").textContent = seconds
+        ? `Compare your result · ${seconds}s`
+        : manual ? "Matches? Use Next when you’re ready." : "Hold your result in view. Camera checks are still running.";
+      this.q<HTMLElement>(".tutorial-result").hidden = false;
+      if (seconds) this.reviewTimer = window.setTimeout(update, 100);
+    };
+    update();
+    this.syncTutorialPlayback();
+  }
+
+  private clearReview() {
+    window.clearTimeout(this.reviewTimer);
+    this.reviewing = false;
+    this.reviewUntil = 0;
+    this.q<HTMLElement>(".tutorial-result").hidden = true;
   }
 
   onMistake(m: Mistake) {
@@ -571,6 +620,7 @@ export class LearnView {
   }
 
   next() {
+    if (this.completing) return;
     const s = this.model.state;
     if (s?.lesson_id && s.status !== "done" && !this.model.down) {
       // Stop the old narration at the gesture boundary; do not wait for the hub round trip.
@@ -702,6 +752,7 @@ export class LearnView {
     const v = this.video;
     // Only while Learn is open, so the clip is not fetched for a lesson nobody is viewing.
     if (clipKey && clipKey !== this.loadedClip && lesson && step && this.active) {
+      this.clearReview();
       this.loadedClip = clipKey;
       this.userPaused = false;
       stopChime();
@@ -722,9 +773,17 @@ export class LearnView {
         v.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 250, easing: "ease-out" });
     }
     v.classList.toggle("hidden", !step);
-    if (this.active && step && !isDone && !this.userPaused && v.paused && this.tutorialLoaded) this.play();
+    if (this.active && step && !isDone && s?.status !== "verified" && !this.userPaused && !this.reviewing && !this.completing && !v.ended && v.paused && this.tutorialLoaded) this.play();
     if (isDone || !this.active) v.pause();
     this.q<HTMLElement>(".clip-ph").hidden = !!step;
+    const target = this.q<HTMLElement>(".step-target");
+    target.hidden = !step || isDone;
+    if (lesson && step) {
+      const ref = lessonUrl(lesson.id, step.ref_frame, s?.rev);
+      for (const image of [this.q<HTMLImageElement>(".step-target img"), this.q<HTMLImageElement>(".tutorial-result img")]) {
+        if (image.getAttribute("src") !== ref) image.src = ref;
+      }
+    }
 
     this.q(".step-count").textContent = step ? `Step ${idx + 1} of ${total}` : " ";
     this.q(".step-title").textContent = step ? step.title : " ";
