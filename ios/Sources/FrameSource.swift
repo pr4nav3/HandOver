@@ -3,7 +3,7 @@
 import Foundation
 import UIKit
 
-/// A camera that produces JPEG frames at about 1 fps.
+/// A camera that produces JPEG frames at about 2 fps.
 ///
 /// Threading: call `start()` and `stop()` on the main thread. `onFrame` may be called on any
 /// queue; the consumer hops to the main actor itself. Set `onFrame` before calling `start()`.
@@ -47,7 +47,7 @@ enum JPEGEncoder {
     }
 }
 
-// MARK: - 1 fps throttle
+// MARK: - 2 fps throttle
 
 /// Lets one frame through per `interval` seconds. Thread safe.
 /// `@unchecked Sendable` is sound here: the only mutable state, `last`, is read and written under `lock`.
@@ -56,8 +56,11 @@ final class FrameThrottle: @unchecked Sendable {
     private let lock = NSLock()
     private var last: TimeInterval?
 
-    /// `slack` absorbs jitter so a 2 fps source does not drop to 0.67 fps.
-    init(interval: TimeInterval = 1.0, slack: TimeInterval = 0.1) {
+    /// Seconds between frames sent to the hub: 2 fps.
+    static let defaultInterval: TimeInterval = 0.5
+
+    /// `slack` absorbs jitter so a 2 fps source (the glasses) does not drop to 1 fps.
+    init(interval: TimeInterval = FrameThrottle.defaultInterval, slack: TimeInterval = 0.05) {
         self.interval = max(0, interval - slack)
     }
 
@@ -110,6 +113,8 @@ final class LockedFlag: @unchecked Sendable {
 #if HANDOVER_NO_GLASSES || !canImport(MWDATCore) || !canImport(MWDATCamera)
 final class GlassesCameraSource: FrameSource {
     static let isAvailable = false
+
+    init(busy: LockedFlag? = nil) {}
 
     var onFrame: ((Data) -> Void)?
     /// Called on the main thread.

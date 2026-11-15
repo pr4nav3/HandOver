@@ -10,6 +10,8 @@
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  /* Classes below set display, which would otherwise beat the hidden attribute. */
+  [hidden] { display: none !important; }
   html, body { margin: 0; height: 100%; background: #000; color: #f5f5f7;
     font: 17px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif; }
   body { display: flex; flex-direction: column;
@@ -19,15 +21,14 @@
   .sub { margin: 2px 0 0; font-size: 15px; color: #a1a1a6; font-variant-numeric: tabular-nums; }
   .right { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
   .pills { display: inline-flex; align-items: center; gap: 14px; }
-  .pill { display: inline-flex; align-items: center; gap: 8px; font-size: 15px; color: #a1a1a6; }
+  .pill { display: inline-flex; align-items: center; gap: 8px; font-size: 15px; color: #a1a1a6; white-space: nowrap; }
   .dot { width: 9px; height: 9px; border-radius: 50%; background: #636366; }
   .dot.on { background: #30d158; }
   .dot.wait { background: #ff9f0a; }
   .rec { font-size: 13px; font-weight: 700; letter-spacing: 0.04em; color: #636366; gap: 6px; }
   .rec .dot { width: 10px; height: 10px; }
   .rec.live { color: #ff453a; }
-  .rec.live .dot { background: #ff453a; animation: pulse 1.2s ease-in-out infinite; }
-  @keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.35; transform: scale(0.8); } }
+  .rec.live .dot { background: #ff453a; }
   .cam { font-size: 13px; color: #8e8e93; }
   .cam.active { color: #30d158; }
   .cam.idle { color: #ff9f0a; }
@@ -60,6 +61,8 @@
   .stats { color: #a1a1a6; font-size: 15px; font-variant-numeric: tabular-nums; }
   .note { color: #8e8e93; font-size: 13px; margin: 0; }
   .err { color: #ff453a; font-size: 15px; margin: 0; }
+  .mistake { margin: 0; padding: 10px 12px; border-radius: 10px; font-size: 17px; font-weight: 600;
+    background: rgba(255, 179, 64, 0.15); color: #ffb340; }
 </style>
 </head>
 <body>
@@ -81,7 +84,8 @@
     <video id="video" playsinline muted autoplay></video>
     <div id="placeholder" class="placeholder">Point the back camera at your hands and the work.</div>
   </div>
-  <p class="privacy">Frames go to the hub on this network only and are never saved.</p>
+  <p class="privacy">Frames go to the hub on this network, which sends them to the AI model for each check. The hub never saves them.</p>
+  <p id="mistake" class="mistake" role="alert" hidden></p>
   <p id="idle" class="idle" hidden>Not sending. Check the hub address and network.</p>
   <div class="row">
     <span class="label">Live view</span>
@@ -111,11 +115,15 @@
   const video = $("video"), canvas = $("canvas"), ctx = canvas.getContext("2d");
   const startBtn = $("start"), dot = $("dot"), conn = $("conn"), stats = $("stats"), err = $("err");
   const rec = $("rec"), idleEl = $("idle"), camEl = $("cam"), stepEl = $("step"), stage = $("stage");
-  const nextBtn = $("next"), backBtn = $("back");
+  const nextBtn = $("next"), backBtn = $("back"), mistakeEl = $("mistake");
   const wsUrl = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws/camera`;
-  // Frames are dropped while more than about two are still waiting in the socket, so latency never grows.
-  const MAX_BUFFERED = 64 * 1024;
-  const MAX_SIDE = 640, JPEG_QUALITY = 0.55, DEFAULT_FPS = 12;
+  // About 12 small frames a second by default (6/12/15 in the Live view row): smooth on the learn screen, light on the network.
+  // The long side is at most MAX_SIDE before JPEG encoding: fewer bytes to upload
+  // and less for the hub to decode.
+  const DEFAULT_FPS = 12, MAX_SIDE = 640, JPEG_QUALITY = 0.55;
+  const bitmapPath = typeof createImageBitmap === "function" && typeof OffscreenCanvas === "function"
+    && typeof OffscreenCanvas.prototype.convertToBlob === "function";
+  let offscreen = null;
   const IDLE_MS = 5000, BACKOFF_MIN = 500, BACKOFF_MAX = 5000;
 
   // Stable device id and label, kept in localStorage (falls back to per-page values if storage is blocked).
@@ -134,10 +142,21 @@
     return Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
   }
   const deviceId = stored("handover.device_id", () => "web-" + randomId());
-  const deviceName = stored("handover.device_name", () => "iPhone Safari");
+  // A readable name for the hub's camera list, from the browser's own description.
+  function guessName() {
+    const ua = navigator.userAgent || "";
+    const device = /iPad/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1) ? "iPad"
+      : /iPhone/.test(ua) ? "iPhone" : /Android/.test(ua) ? "Android phone"
+      : /Macintosh/.test(ua) ? "Mac" : /Windows/.test(ua) ? "Windows PC" : "Browser";
+    const browser = /CriOS|Chrome\//.test(ua) && !/Edg/.test(ua) ? "Chrome" : /FxiOS|Firefox\//.test(ua) ? "Firefox"
+      : /Edg/.test(ua) ? "Edge" : /Safari\//.test(ua) ? "Safari" : "";
+    return browser ? `${device} ${browser}` : device;
+  }
+  const deviceName = stored("handover.device_name_v2", guessName);
+  const STATUS_WORDS = { watching: "Watching", checking: "Watching", verified: "Verified", manual: "Manual step", done: "Done" };
 
   let stream = null, ws = null, timer = null, reconnectTimer = null, wakeLock = null, flashTimer = null;
-  let running = false, sent = 0, skipped = 0, intervalMs = 1000 / DEFAULT_FPS, encoding = false;
+  let running = false, sent = 0, skipped = 0, sentBytes = 0, intervalMs = 1000 / DEFAULT_FPS, encoding = false, sentTimes = [];
   let backoff = BACKOFF_MIN, lastSentAt = 0, helloSent = false, hubState = null;
 
   function setConn(state, text) {
@@ -146,7 +165,11 @@
   }
   function showError(text) { err.textContent = text; err.hidden = !text; }
   function updateStats() {
-    stats.textContent = `${sent} frame${sent === 1 ? "" : "s"} sent` + (skipped ? `, ${skipped} skipped` : "");
+    const now = Date.now();
+    while (sentTimes.length && now - sentTimes[0] > 1000) sentTimes.shift();
+    const fps = running && sent ? `${sentTimes.length} fps, ` : "";
+    stats.textContent = fps + `${sent} frame${sent === 1 ? "" : "s"} sent` + (skipped ? `, ${skipped} skipped` : "")
+      + (sent ? `, ${Math.round(sentBytes / sent / 1024)} KB each` : "");
   }
   function setCam(active) {
     if (active === null) { camEl.textContent = ""; camEl.className = "cam"; return; }
@@ -161,7 +184,7 @@
     rec.classList.toggle("live", !!(fresh && socketOpen()));
     idleEl.hidden = !(running && Date.now() - lastSentAt >= IDLE_MS);
   }
-  setInterval(updateSending, 1000);
+  setInterval(() => { updateSending(); updateStats(); }, 1000);
 
   function updateNav() {
     const ok = running && helloSent && socketOpen() && !!hubState && hubState.total > 0;
@@ -177,7 +200,14 @@
     showModelRate();
     if (!hubState) { stepEl.textContent = "No step yet"; return; }
     const { step, total, status } = hubState;
-    stepEl.textContent = total > 0 ? `Step ${step + 1} of ${total}` + (status ? ` · ${status}` : "") : "No lesson selected";
+    const word = STATUS_WORDS[status] || "";
+    if (total <= 0) stepEl.textContent = "No lesson selected";
+    else if (status === "done") stepEl.textContent = "Done";
+    else stepEl.textContent = `Step ${step + 1} of ${total}` + (word ? ` · ${word}` : "");
+  }
+  function showMistake(text) {
+    mistakeEl.textContent = text || "";
+    mistakeEl.hidden = !text;
   }
   function flashStage() {
     clearTimeout(flashTimer);
@@ -196,8 +226,14 @@
       hubState = { step: m.step, total: m.total, status: typeof m.status === "string" ? m.status : "",
         checkInterval: typeof ci === "number" && isFinite(ci) && ci > 0 ? ci : null };
       showState(); updateNav();
+      // Older hubs omit `mistake`; null clears the card.
+      if (m.mistake === null) showMistake("");
+      else if (m.mistake && typeof m.mistake.message === "string") showMistake(m.mistake.message);
     } else if (m.type === "advance") {
+      showMistake("");
       if (m.reason === "camera") flashStage();
+    } else if (m.type === "mistake") {
+      if (typeof m.message === "string") showMistake(m.message);
     } else if (m.type === "camera_status") {
       if (typeof m.active === "boolean") setCam(m.active);
     } else if (m.type === "error") {
@@ -234,7 +270,7 @@
     sock.onclose = (e) => {
       if (ws !== sock) return;
       ws = null; helloSent = false; hubState = null;
-      setCam(null); showState(); updateNav(); updateSending();
+      setCam(null); showState(); showMistake(""); updateNav(); updateSending();
       if (e.code === 4000) {
         // A newer connection with our device_id took over; never auto-reconnect.
         stop("Replaced by another camera");
@@ -249,28 +285,46 @@
     sock.onerror = () => { try { sock.close(); } catch (_) {} };
   }
 
-  function sendFrame() {
+  // One JPEG of the current video frame, long side at most MAX_SIDE.
+  async function encodeFrame(w, h) {
+    if (bitmapPath) {
+      try {
+        const bitmap = await createImageBitmap(video);
+        if (!offscreen || offscreen.width !== w || offscreen.height !== h) offscreen = new OffscreenCanvas(w, h);
+        offscreen.getContext("2d").drawImage(bitmap, 0, 0, w, h);
+        bitmap.close();
+        return await offscreen.convertToBlob({ type: "image/jpeg", quality: JPEG_QUALITY });
+      } catch (_) { /* fall back to the page canvas */ }
+    }
+    if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+    ctx.drawImage(video, 0, 0, w, h);
+    return new Promise((done) => canvas.toBlob(done, "image/jpeg", JPEG_QUALITY));
+  }
+
+  async function sendFrame() {
     if (!socketOpen() || !helloSent || encoding) return;
-    if (ws.bufferedAmount > MAX_BUFFERED) { skipped++; updateStats(); return; }
+    // Never queue: if the last frame has not left yet, skip this one.
+    if (ws.bufferedAmount > 0) { skipped++; updateStats(); return; }
+    // A muted or ended track gives black or frozen frames; send nothing until it is back.
+    const track = stream && stream.getVideoTracks()[0];
+    if (!track || track.readyState !== "live" || track.muted) return;
     const vw = video.videoWidth, vh = video.videoHeight;
     if (!vw || !vh) return;
     const scale = Math.min(1, MAX_SIDE / Math.max(vw, vh));
     const w = Math.round(vw * scale), h = Math.round(vh * scale);
-    if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
-    ctx.drawImage(video, 0, 0, w, h);
     encoding = true;
-    canvas.toBlob((blob) => {
-      encoding = false;
-      if (!blob || !socketOpen() || !helloSent) return;
-      ws.send(blob);
-      sent++; lastSentAt = Date.now();
-      updateStats(); updateSending();
-    }, "image/jpeg", JPEG_QUALITY);
+    let blob = null;
+    try { blob = await encodeFrame(w, h); } catch (_) {}
+    encoding = false;
+    if (!blob || !socketOpen() || !helloSent || ws.bufferedAmount > 0) return;
+    ws.send(blob);
+    sent++; sentBytes += blob.size; lastSentAt = Date.now(); sentTimes.push(lastSentAt);
+    updateStats(); updateSending();
   }
 
   function restartTimer() {
     clearInterval(timer);
-    if (running) timer = setInterval(sendFrame, intervalMs);
+    if (running) timer = setInterval(sendFrame, Math.round(intervalMs));
   }
 
   async function requestWakeLock() {
@@ -290,6 +344,7 @@
       });
       if (stream) stream.getTracks().forEach((t) => t.stop());
       stream = next;
+      watchTrack(next.getVideoTracks()[0]);
     } catch (e) {
       showError(e && e.name === "NotAllowedError"
         ? "Camera access was blocked. Allow it in Settings, Safari, Camera, then try again."
@@ -301,7 +356,23 @@
     return true;
   }
 
-  // iOS can end or mute the camera track while the page is in the background; get a fresh one on return.
+  // iOS can end or mute the camera track (background, a phone call, another app taking the camera).
+  // Ended: get a fresh one now. Muted: give it 2 s to come back on its own, then get a fresh one.
+  let muteTimer = null;
+  function watchTrack(track) {
+    if (!track) return;
+    track.addEventListener("ended", () => {
+      if (running && track === (stream && stream.getVideoTracks()[0])) reviveCamera();
+    });
+    track.addEventListener("mute", () => {
+      clearTimeout(muteTimer);
+      muteTimer = setTimeout(() => {
+        if (running && track.muted && document.visibilityState === "visible") reviveCamera();
+      }, 2000);
+    });
+    track.addEventListener("unmute", () => clearTimeout(muteTimer));
+  }
+
   let reviving = false;
   async function reviveCamera() {
     const track = stream && stream.getVideoTracks()[0];
@@ -311,7 +382,14 @@
     if (stream) { stream.getTracks().forEach((t) => t.stop()); stream = null; }  // iOS allows one capture at a time
     const ok = await openCamera();
     reviving = false;
-    if (ok && !running) { stream.getTracks().forEach((t) => t.stop()); stream = null; video.srcObject = null; }
+    if (!ok) {
+      // openCamera already says why; stop so the page does not claim to be running without a camera.
+      const why = err.textContent;
+      if (running) stop();
+      showError(why);
+      return;
+    }
+    if (!running) { stream.getTracks().forEach((t) => t.stop()); stream = null; video.srcObject = null; }
   }
 
   async function start() {
@@ -337,10 +415,12 @@
     running = false;
     clearInterval(timer); clearTimeout(reconnectTimer);
     if (ws) { const s = ws; ws = null; try { s.close(); } catch (_) {} }
-    helloSent = false; hubState = null; lastSentAt = 0;
+    helloSent = false; hubState = null; lastSentAt = 0; sentTimes = [];
     if (stream) { stream.getTracks().forEach((t) => t.stop()); stream = null; }
+    clearTimeout(muteTimer);
     video.srcObject = null;
     $("placeholder").hidden = false;
+    showMistake("");
     if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
     startBtn.textContent = "Start camera";
     startBtn.classList.remove("stop");

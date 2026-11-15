@@ -8,8 +8,11 @@
 //   PORT        default 8000
 //   MOCK_AUTO   1 (default) auto-advances steps; 0 waits for next/back or /mock calls
 //   MOCK_CAMERA 1 (default) sends fake frames; 0 starts with no camera
+//   MOCK_FRAME_MS gap between fake frames (default 400; 67 is about 15 fps)
 //   MOCK_SOURCE camera source in state.camera: phone (default), glasses, browser, file (shows "Recording")
-//   MOCK_OFFLINE no_key | rate_limited | errors: start with checks off
+//   MOCK_OFFLINE no_key | rate_limited | errors | budget: start with checks off
+//   MOCK_CHECK_MODE mock | claude | gemini: sent as state.check_mode (unset = omitted, like an older hub)
+//   MOCK_NEXT_CLIP 1 (default) sends state.next_clip (the next step's clip path); 0 omits it
 //   MOCK_MISTAKE behind:<0-based step> or ahead:<0-based step>: after 4 s on that step send `mistake`
 //
 // Test hooks (plain GET so curl and Playwright can drive it):
@@ -20,9 +23,18 @@
 //   /mock/error?m=text            send {"type":"error"} to UI clients
 //   /mock/recut                   bump rev as if the lesson was re-cut
 //   /mock/restart                 forget the lesson and jobs, drop UI sockets (server restart)
-//   /mock/mistake?kind=behind     send a mistake for the current step now (kind behind or ahead)
+//   /mock/mistake?kind=behind     send a mistake for the current step now (kind behind, ahead or live; optional label=)
 //   /mock/offline?r=rate_limited  checks off with a reason; r= (empty) turns checks back on
 //   /mock/source?s=file           change the camera source
+//   /mock/check_mode?m=mock       set state.check_mode; m= (empty) omits it
+//   /mock/camera_stats            frames and bytes received on /ws/camera; ?reset=1 clears them
+//   /mock/select?id=demo-v1       select a lesson, as a UI select_lesson would
+//   /mock/strip_paths?on=1        serve lesson.json without clip, captions and ref_frame (contract defaults apply)
+//   /mock/upload_fail?m=text      the next POST /api/lesson fails with 413 {"detail": text}
+//
+// /capture serves the real server/static/capture.html, so its sending can be
+// measured here; /ws/camera counts the frames, and after a hello gets state,
+// advance and mistake like the real hub (CONTRACT.md section 6).
 
 import { createServer } from 'node:http'
 import { createReadStream, existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
@@ -33,6 +45,19 @@ import { FIXTURE_DIR, fixtureExists, makeFixture } from './make-fixture.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const REPO_LESSONS = resolve(here, '..', '..', 'lessons')
+const CAPTURE_HTML = resolve(here, '..', '..', 'server', 'static', 'capture.html')
+const cameraStats = { frames: 0, bytes: 0, sizes: [], last: null }
+
+// Width and height from a JPEG's start-of-frame marker, or null.
+function jpegSize(buf) {
+  for (let i = 2; i + 9 < buf.length; ) {
+    if (buf[i] !== 0xff) return null
+    const marker = buf[i + 1]
+    if (marker >= 0xc0 && marker <= 0xc3) return `${buf.readUInt16BE(i + 7)}x${buf.readUInt16BE(i + 5)}`
+    i += 2 + buf.readUInt16BE(i + 2)
+  }
+  return null
+}
 const PORT = Number(process.env.PORT || 8000)
 const AUTO = process.env.MOCK_AUTO !== '0'
 
@@ -108,6 +133,10 @@ const state = {
   ui_fps: 15,
 }
 let cameraSource = process.env.MOCK_SOURCE || 'phone'
+let checkMode = process.env.MOCK_CHECK_MODE || ''
+let stripPaths = false
+let uploadFail = ''
+const NEXT_CLIP = process.env.MOCK_NEXT_CLIP !== '0'
 const cameraInfo = () =>
   state.camera_connected
     ? { name: cameraSource === 'file' ? 'Replay: skipped-flip.mp4' : 'Mock iPhone', platform: cameraSource === 'file' ? 'replay' : 'ios', source: cameraSource }
@@ -118,11 +147,23 @@ let stepSince = Date.now()
 const clients = new Set()
 
 const steps = () => readLesson(state.lesson_id)?.steps ?? []
-const stateMsg = () => ({ type: 'state', ...state, camera: cameraInfo(), total: steps().length, rev: lessonRev(state.lesson_id) })
+const stateMsg = () => ({
+  type: 'state',
+  ...state,
+  camera: cameraInfo(),
+  total: steps().length,
+  rev: lessonRev(state.lesson_id),
+  ...(checkMode ? { check_mode: checkMode } : {}),
+  ...(NEXT_CLIP ? { next_clip: state.status === 'done' ? null : (steps()[state.step + 1]?.clip ?? null) } : {}),
+})
+
+// Camera sockets that sent hello.
+const cameraClients = new Set()
 
 function broadcast(msg) {
   const text = JSON.stringify(msg)
   for (const ws of clients) ws.send(text)
+  for (const ws of cameraClients) ws.send(text)
 }
 
 function baseStatus() {
@@ -131,12 +172,14 @@ function baseStatus() {
 }
 
 // Like the hub: send `mistake` once, keep it in state until step change or dismiss.
-function sendMistake(kind) {
+function sendMistake(kind, label = null) {
   const s = state.step
   const list = steps()
-  const looks_like = kind === 'ahead' ? Math.min(s + 1, list.length - 1) : Math.max(0, s - 1)
-  const message = kind === 'ahead' ? "You're ahead." : list[s]?.common_mistake || `This still looks like step ${looks_like + 1}.`
-  const m = { step: s, kind, looks_like, message, confidence: 0.86, source: 'mock' }
+  // A live mistake is about this step, so it names no other step.
+  const looks_like = kind === 'live' ? null : kind === 'ahead' ? Math.min(s + 1, list.length - 1) : Math.max(0, s - 1)
+  const message =
+    kind === 'ahead' ? "You're ahead." : kind === 'live' ? 'Check the fold before you go on.' : list[s]?.common_mistake || `This still looks like step ${looks_like + 1}.`
+  const m = { step: s, kind, looks_like, ...(label ? { label } : {}), message, confidence: 0.86, source: 'mock' }
   state.mistake = m
   broadcast({ type: 'mistake', ...m })
   broadcast(stateMsg())
@@ -228,11 +271,18 @@ setInterval(() => {
   if (!existsSync(file)) return
   const jpeg = readFileSync(file)
   for (const ws of clients) ws.send(jpeg, { binary: true })
-}, 400)
+}, Number(process.env.MOCK_FRAME_MS) || 400)
 
 const server = createServer((req, res) => {
   const url = new URL(req.url, 'http://x')
   const path = decodeURIComponent(url.pathname)
+
+  if (path === '/api/hub-info' && req.method === 'GET') {
+    // Like the real hub with no LAN address found: the page keeps its typed-address hint.
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ lan_ip: null, http_port: 8000, https_port: 8443, hub_url: null, pair_link: null, capture_url: null }))
+    return
+  }
 
   if (path === '/api/lessons' && req.method === 'GET') {
     const list = [...lessonDirs().keys()].map((id) => {
@@ -244,11 +294,17 @@ const server = createServer((req, res) => {
   let m = /^\/api\/lessons\/([^/]+)$/.exec(path)
   if (m && req.method === 'GET') {
     const l = readLesson(m[1])
-    return l ? sendJson(res, 200, l) : sendJson(res, 404, { detail: 'Not found' })
+    if (l && stripPaths) l.steps = l.steps.map(({ clip, captions, ref_frame, ...rest }) => rest)
+    return l ? sendJson(res, 200, l) : sendJson(res, 404, { detail: 'lesson not found' })
   }
   if (path === '/api/lesson' && req.method === 'POST') {
     req.resume()
     req.on('end', () => {
+      if (uploadFail) {
+        const detail = uploadFail
+        uploadFail = ''
+        return sendJson(res, 413, { detail })
+      }
       const job = `job-${Date.now().toString(36)}`
       jobs.set(job, Date.now())
       sendJson(res, 200, { job, id: 'mock-demo' })
@@ -273,8 +329,12 @@ const server = createServer((req, res) => {
     return serveFile(req, res, file)
   }
   if (path === '/capture') {
-    res.writeHead(200, { 'Content-Type': 'text/plain' })
-    return res.end('Mock server: the real capture page lives in the FastAPI server.')
+    res.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-cache' })
+    return res.end(readFileSync(CAPTURE_HTML))
+  }
+  if (path === '/mock/camera_stats') {
+    if (url.searchParams.get('reset')) Object.assign(cameraStats, { frames: 0, bytes: 0, sizes: [] })
+    return sendJson(res, 200, cameraStats)
   }
 
   // Test hooks.
@@ -311,7 +371,8 @@ const server = createServer((req, res) => {
     return sendJson(res, 200, stateMsg())
   }
   if (path === '/mock/mistake') {
-    if (state.lesson_id && state.status !== 'done') sendMistake(url.searchParams.get('kind') === 'ahead' ? 'ahead' : 'behind')
+    const kind = url.searchParams.get('kind')
+    if (state.lesson_id && state.status !== 'done') sendMistake(['ahead', 'live'].includes(kind) ? kind : 'behind', url.searchParams.get('label'))
     return sendJson(res, 200, stateMsg())
   }
   if (path === '/mock/offline') {
@@ -323,6 +384,23 @@ const server = createServer((req, res) => {
   }
   if (path === '/mock/source') {
     cameraSource = url.searchParams.get('s') || 'phone'
+    broadcast(stateMsg())
+    return sendJson(res, 200, stateMsg())
+  }
+  if (path === '/mock/select') {
+    selectLesson(url.searchParams.get('id') || 'demo-v1', null)
+    return sendJson(res, 200, stateMsg())
+  }
+  if (path === '/mock/strip_paths') {
+    stripPaths = url.searchParams.get('on') === '1'
+    return sendJson(res, 200, { stripPaths })
+  }
+  if (path === '/mock/upload_fail') {
+    uploadFail = url.searchParams.get('m') || 'video is larger than 2 GB'
+    return sendJson(res, 200, { uploadFail })
+  }
+  if (path === '/mock/check_mode') {
+    checkMode = url.searchParams.get('m') || ''
     broadcast(stateMsg())
     return sendJson(res, 200, stateMsg())
   }
@@ -341,7 +419,29 @@ server.on('upgrade', (req, socket, head) => {
   if (path === '/ws/ui') {
     wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws))
   } else if (path === '/ws/camera') {
-    wss.handleUpgrade(req, socket, head, (ws) => ws.on('message', () => {}))
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      ws.on('close', () => cameraClients.delete(ws))
+      ws.on('message', (data, isBinary) => {
+        if (!isBinary) {
+          let msg
+          try {
+            msg = JSON.parse(String(data))
+          } catch {
+            return
+          }
+          if (msg.type === 'hello') {
+            cameraStats.hello = msg
+            cameraClients.add(ws)
+            ws.send(JSON.stringify(stateMsg()))
+          }
+          return
+        }
+        cameraStats.frames += 1
+        cameraStats.bytes += data.length
+        cameraStats.sizes.push(data.length)
+        cameraStats.last = jpegSize(data)
+      })
+    })
   } else {
     socket.destroy()
   }
@@ -367,6 +467,13 @@ wss.on('connection', (ws) => {
       // Like the real server: clamped to 0.2..10, works with no lesson, ignores non-numbers.
       if (typeof msg.seconds === 'number' && Number.isFinite(msg.seconds)) {
         state.check_interval_s = Math.min(10, Math.max(0.2, msg.seconds))
+        broadcast(stateMsg())
+      }
+    }
+    else if (msg.type === 'end_lesson') {
+      // Like the real hub: stop and unload; a no-op when nothing is loaded.
+      if (state.lesson_id) {
+        Object.assign(state, { lesson_id: null, step: 0, status: 'watching', mistake: null })
         broadcast(stateMsg())
       }
     }

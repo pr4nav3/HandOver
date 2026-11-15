@@ -38,7 +38,13 @@ export interface LessonSummary {
 
 export type Status = 'watching' | 'checking' | 'verified' | 'manual' | 'done'
 
-export type CheckOfflineReason = 'no_key' | 'rate_limited' | 'errors'
+export type CheckOfflineReason = 'no_key' | 'rate_limited' | 'errors' | 'budget'
+
+/** How the hub checks steps. `mock` passes on a timer and never looks at the camera. */
+export type CheckMode = 'mock' | 'claude' | 'gemini'
+
+/** The clip the hub expects to show next: a path inside the lesson folder, or one with its captions. */
+export type NextClip = string | { clip: string; captions?: string | null }
 
 export interface LastCheck {
   done: 'yes' | 'no' | 'unsure'
@@ -57,8 +63,12 @@ export interface CameraInfo {
 /** The mistake object, as carried in state (the message minus `type`). */
 export interface Mistake {
   step: number
-  kind: 'behind' | 'ahead'
-  looks_like: number
+  /** behind: looks like an earlier step; ahead: looks like a later one; live: something wrong on this step. */
+  kind: 'behind' | 'ahead' | 'live'
+  /** 0-based step the frame looks like, when the hub knows one. */
+  looks_like?: number | null
+  /** A few words naming the problem, when the hub has them. */
+  label?: string | null
   message: string
   confidence: number
   source: string
@@ -71,6 +81,7 @@ export interface MistakeMsg extends Mistake {
 export interface StateMsg {
   type: 'state'
   lesson_id: string | null
+  run_id?: string | null // the run the Done screen scores; sent back with end_lesson
   step: number
   total: number
   status: Status
@@ -89,6 +100,10 @@ export interface StateMsg {
   check_interval_s?: number
   /** Live frames per second forwarded to each viewer, at most. Older servers omit it. */
   ui_fps?: number
+  /** Check backend. Older hubs omit it. */
+  check_mode?: CheckMode
+  /** The next clip to preload, or null when there is none. Older hubs omit it. */
+  next_clip?: NextClip | null
 }
 
 export interface AdvanceMsg {
@@ -106,31 +121,70 @@ export interface Job {
   id: string
 }
 
-/** A non 2xx response, with its status code. */
+/** A non 2xx response, with its status code and the hub's `detail` text when it sent one. */
 export class HttpError extends Error {
   status: number
-  constructor(status: number, statusText: string) {
-    super(`${status} ${statusText}`)
+  detail: string
+  constructor(status: number, statusText: string, detail = '') {
+    super(detail || `${status} ${statusText}`)
     this.status = status
+    this.detail = detail
+  }
+}
+
+/** The hub's FastAPI style `{"detail": "..."}` text, or ''. */
+async function errorDetail(res: Response): Promise<string> {
+  try {
+    const body = await res.json()
+    return typeof body?.detail === 'string' ? body.detail : ''
+  } catch {
+    return ''
   }
 }
 
 async function getJson<T>(url: string): Promise<T> {
   const res = await fetch(url)
-  if (!res.ok) throw new HttpError(res.status, res.statusText)
+  if (!res.ok) throw new HttpError(res.status, res.statusText, await errorDetail(res))
   return res.json() as Promise<T>
 }
 
 export const listLessons = () => getJson<LessonSummary[]>('/api/lessons')
-export const getLesson = (id: string) => getJson<Lesson>(`/api/lessons/${encodeURIComponent(id)}`)
+export const getLesson = (id: string) => getJson<Lesson>(`/api/lessons/${encodeURIComponent(id)}`).then(withDefaults)
 export const getJob = (job: string) => getJson<Job>(`/api/jobs/${encodeURIComponent(job)}`)
+
+/**
+ * Fills the defaults CONTRACT.md section 3 gives for fields a lesson.json may
+ * leave out, so a hand-written lesson never breaks the page.
+ */
+export function withDefaults(raw: Lesson): Lesson {
+  const steps = Array.isArray(raw.steps) ? raw.steps : []
+  return {
+    ...raw,
+    video: raw.video || 'norm.mp4',
+    steps: steps.map((s, i) => {
+      const nn = String(i + 1).padStart(2, '0')
+      return {
+        ...s,
+        n: s.n || i + 1,
+        title: s.title ?? '',
+        clip: s.clip || `clips/${nn}.mp4`,
+        captions: s.captions || `captions/${nn}.vtt`,
+        ref_frame: s.ref_frame || `frames/${nn}.jpg`,
+        check_type: s.check_type === 'manual' ? 'manual' : 'camera',
+      }
+    }),
+  }
+}
 
 export async function uploadLesson(file: File, title: string): Promise<{ job: string; id: string }> {
   const body = new FormData()
   body.append('file', file)
   body.append('title', title)
   const res = await fetch('/api/lesson', { method: 'POST', body })
-  if (!res.ok) throw new Error(`Upload failed (${res.status})`)
+  if (!res.ok) {
+    const detail = await errorDetail(res)
+    throw new HttpError(res.status, res.statusText, detail ? `Upload failed: ${detail}` : `Upload failed (${res.status})`)
+  }
   return res.json()
 }
 
