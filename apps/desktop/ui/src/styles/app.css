@@ -3319,7 +3319,7 @@ button.back:disabled {
   inset: 18px 0 0;
   z-index: 5;
   display: flex;
-  animation: rise 0.35s ease both;
+  animation: rise 0.6s ease both;
 }
 
 @keyframes rise {
@@ -3337,7 +3337,6 @@ button.back:disabled {
   border: 1px solid var(--border-strong);
   border-radius: 18px;
   overflow: hidden;
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.3);
 }
 
 .done-left {
@@ -3386,7 +3385,10 @@ button.back:disabled {
   font-size: 24px;
   font-weight: 650;
   letter-spacing: -0.02em;
+  text-align: center;
 }
+
+.done-pace { color: var(--muted); font-size: 15px; text-align: center; }
 
 .done-sub {
   color: var(--muted);
@@ -3526,12 +3528,16 @@ button.back:disabled {
 }
 
 .tb.you {
-  background: var(--accent);
+  background: var(--text);
 }
 
-.tb.you.fast {
+.tb.you.camera-checked {
   background: var(--green);
+  transform-origin: left;
+  animation: camera-bar 0.4s ease-out both;
 }
+
+@keyframes camera-bar { from { transform: scaleX(0); } to { transform: scaleX(1); } }
 
 .bd-meta {
   font-size: 12px;

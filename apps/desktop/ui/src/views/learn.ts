@@ -6,7 +6,7 @@
 
 import { frameUrl, lessonUrl, toSeconds, type Advance, type CameraLink, type HubState, type Lesson, type Mistake, type Step } from "../api";
 import { playChime, stopChime } from "../chime";
-import { empty, mmss, ring } from "../components";
+import { empty, mmss } from "../components";
 import { LiveCanvas, type LocalState } from "../frames";
 import type { CameraChoice } from "../state";
 import { icons } from "../icons";
@@ -177,6 +177,7 @@ export class LearnView {
   private summary: RunSummary | null = null;
   private lastListKey = "";
   private mistakeKey = "";
+  private doneKey = "";
   private layout: LearnLayout = readLearnLayout();
   private draggingLayout = false;
 
@@ -770,7 +771,13 @@ export class LearnView {
     // Done.
     const done = this.q<HTMLElement>(".done-layer");
     done.hidden = !(isDone && this.summary);
-    if (isDone && this.summary) paint(done, this.doneMarkup(this.summary, lesson));
+    if (isDone && this.summary) {
+      const key = JSON.stringify([this.summary, s?.rev]);
+      if (key !== this.doneKey) {
+        this.doneKey = key;
+        paint(done, this.doneMarkup(this.summary, lesson));
+      }
+    } else this.doneKey = "";
 
     // No lesson, or one on its way.
     const blank = this.q<HTMLElement>(".learn-empty");
@@ -821,8 +828,6 @@ export class LearnView {
   private doneMarkup(r: RunSummary, lesson: Lesson | null): Raw {
     const steps = lesson?.steps ?? [];
     const camTotal = steps.filter((s) => s.check_type === "camera").length;
-    const label = r.score === null ? "Not enough data" : r.score >= 85 ? "Excellent" : r.score >= 60 ? "Good" : "Keep practicing";
-    const tone = r.score === null ? "var(--panel-2)" : r.score >= 85 ? "var(--green)" : r.score >= 60 ? "var(--accent)" : "var(--amber)";
     // Section 20.3.
     const q = steps
       .map((s, i) => ({ i, s, r: r.steps[i], ratio: r.steps[i]?.ms ? r.steps[i].ms / 1000 / Math.max(0.1, expertOf(s)) : 0 }))
@@ -852,9 +857,9 @@ export class LearnView {
     const howWord = { camera: "Checked by camera", hand: "Marked done", skipped: "Skipped" } as Record<string, string>;
     return html`<div class="done-card">
       <div class="done-left scroll">
-        <div class="score">${ring(r.score === null ? 0 : r.score / 100, 120, tone)}
-          <span class="score-center">${r.score === null ? html`<span class="score-none">Not enough data</span>` : html`<span class="score-num">${r.score}</span><span class="score-label">${label}</span>`}</span></div>
-        <h1 class="done-title">Lesson complete</h1>
+        <p class="eyebrow">Lesson complete</p>
+        <h1 class="done-title">${r.camera} of ${camTotal} steps checked by camera</h1>
+        <p class="done-pace">${r.ms === null ? "Your time unavailable" : `Your time ${mmss(r.ms / 1000)}`} · Expert ${mmss(r.expert)}</p>
         <p class="done-sub">${r.title}</p>
         <dl class="done-stats">
           <div><dt>Your time</dt><dd>${r.ms === null ? html`<span class="muted small">Not enough data</span>` : mmss(r.ms / 1000)}</dd></div>
@@ -862,6 +867,7 @@ export class LearnView {
           <div><dt>Checked by camera</dt><dd>${r.camera} of ${camTotal}</dd></div>
           <div><dt>Marked done</dt><dd>${r.hand}</dd></div>
           <div><dt>Mistakes caught</dt><dd>${r.mistakes}</dd></div>
+          <div><dt>Score</dt><dd>${r.score === null ? "Not enough data" : r.score}</dd></div>
           ${r.skipped ? html`<div><dt>Skipped</dt><dd>${r.skipped}</dd></div>` : ""}
         </dl>
         ${best && weak && best.i !== weak.i
@@ -880,12 +886,11 @@ export class LearnView {
         <div class="breakdown scroll">${steps.map((s, i) => {
           const x = r.steps[i];
           const you = x?.ms ? x.ms / 1000 : 0;
-          const faster = you && you < expertOf(s);
           return html`<div class="bd-row">
             <span class="bd-num">${i + 1}</span>
             <div class="bd-main"><p class="bd-title">${s.title}</p>
               <div class="bd-bars"><span class="tb exp" style="width:${(expertOf(s) / maxT) * 100}%"></span>
-                ${you ? html`<span class="tb you ${faster ? "fast" : ""}" style="width:${(you / maxT) * 100}%"></span>` : ""}</div>
+                ${you ? html`<span class="tb you ${x?.how === "camera" ? "camera-checked" : ""}" style="width:${(you / maxT) * 100}%;animation-delay:${i * 60}ms"></span>` : ""}</div>
               <p class="bd-meta">${x?.how ? howWord[x.how] : "Not finished in order"}${x?.mistakes ? html` <span class="caution">${x.mistakes} ${x.mistakes === 1 ? "mistake" : "mistakes"}</span>` : ""}</p></div>
             <span class="bd-times">${you ? mmss(you, true) : "No time"}<br /><span class="muted">${mmss(expertOf(s), true)}</span></span>
           </div>`;
