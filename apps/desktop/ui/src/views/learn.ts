@@ -78,10 +78,15 @@ export interface RunSummary {
 }
 
 const TEMPLATE = html`<div class="learn">
-  <div class="progress" role="progressbar" aria-valuemin="0"></div>
-  <div class="learn-layout-tools" aria-label="Workspace layout">
-    <button class="quiet small layout-swap" type="button" title="Move the tutorial to the other side">${icons.swap}<span>Swap</span></button>
-    <button class="quiet small layout-reset" type="button" title="Restore the default workspace">Reset</button>
+  <div class="learn-workbar">
+    <div class="progress" role="progressbar" aria-valuemin="0">
+      <span class="progress-track" aria-hidden="true"><span class="progress-fill"></span></span>
+      <span class="progress-label">Getting ready</span>
+    </div>
+    <div class="learn-layout-tools" aria-label="Workspace layout">
+      <button class="quiet small layout-swap" type="button" title="Move the tutorial to the other side">${icons.swap}<span>Swap</span></button>
+      <button class="quiet small layout-reset" type="button" title="Restore the default workspace">Reset</button>
+    </div>
   </div>
   <main class="learn-grid">
     <div class="live-col">
@@ -102,6 +107,20 @@ const TEMPLATE = html`<div class="learn">
         <p class="goal-reason"></p>
       </div>
     </section>
+    <div class="badge-wrap feedback-card idle" role="status" aria-live="polite" aria-atomic="true">
+      <div class="feedback-head">
+        <span class="badge watching"><span class="badge-dot"></span><span class="badge-label">Getting ready</span></span>
+        <span class="feedback-metric"></span>
+      </div>
+      <div class="check-meta">
+        <strong class="meta-top">Loading this step</strong>
+        <span class="check-reason meta-bottom">The tutorial will begin in a moment.</span>
+      </div>
+      <div class="feedback-foot">
+        <span class="feedback-audio" title="Desktop audio follows the output selected in system sound settings">${icons.sound}<span>Audio · System output</span></span>
+      </div>
+    </div>
+    <div class="mistake-card" role="alert" hidden></div>
     </div>
     <button class="learn-divider" type="button" role="separator" aria-orientation="vertical" aria-label="Resize camera and tutorial panels" aria-valuemin="24" aria-valuemax="76"><span></span></button>
     <section class="side">
@@ -125,21 +144,10 @@ const TEMPLATE = html`<div class="learn">
         </div>
         <h1 class="step-title">&nbsp;</h1>
       </div>
-      <div class="badge-wrap feedback-card idle" role="status" aria-live="polite" aria-atomic="true">
-        <div class="feedback-head">
-          <span class="badge watching"><span class="badge-dot"></span><span class="badge-label">Getting ready</span></span>
-          <span class="feedback-metric"></span>
-        </div>
-        <div class="check-meta">
-          <strong class="meta-top">Loading this step</strong>
-          <span class="check-reason meta-bottom">The tutorial will begin in a moment.</span>
-        </div>
-        <div class="feedback-foot">
-          <span class="feedback-audio" title="Desktop audio follows the output selected in system sound settings">${icons.sound}<span>Audio · System output</span></span>
-        </div>
-      </div>
-      <div class="mistake-card" role="alert" hidden></div>
-      <div class="course-list scroll" aria-label="Steps"></div>
+      <details class="steps-disclosure">
+        <summary>All steps <span class="steps-summary-count"></span></summary>
+        <div class="course-list scroll" aria-label="Steps"></div>
+      </details>
       <div class="controls">
         <div class="next-wrap">
           <button class="back" type="button" title="Back (Left Arrow)">Back</button>
@@ -233,6 +241,9 @@ export class LearnView {
       this.layout = { ...DEFAULT_LEARN_LAYOUT };
       this.commitLayout();
     });
+    this.q<HTMLDetailsElement>(".steps-disclosure").addEventListener("toggle", (e) => {
+      if ((e.currentTarget as HTMLDetailsElement).open) this.q<HTMLElement>(".course-list .step-row.current")?.scrollIntoView({ block: "nearest" });
+    });
     const divider = this.q<HTMLButtonElement>(".learn-divider");
     divider.addEventListener("pointerdown", (e) => this.beginLayoutDrag(e));
     divider.addEventListener("keydown", (e) => this.resizeLayoutWithKeyboard(e));
@@ -249,7 +260,10 @@ export class LearnView {
         this.mistake = null;
         this.actions.goto(Number(t.dataset.step));
       } else if (act === "dismiss") this.dismissMistake();
-      else if (act === "learn-step") this.actions.goto(Number(t.dataset.step));
+      else if (act === "learn-step") {
+        this.q<HTMLDetailsElement>(".steps-disclosure").open = false;
+        this.actions.goto(Number(t.dataset.step));
+      }
       else if (act === "restart") {
         this.resetRun();
         this.actions.goto(0);
@@ -510,29 +524,22 @@ export class LearnView {
     if (first) this.render();
   }
 
-  /** Sizes the live frame to its own aspect. A wide frame leaves room under it, which the
-   *  "When this step is done" card uses; a tall frame takes the whole column. */
+  /** Fits the camera inside its own panel. Feedback and the goal keep stable space below it,
+   *  so resizing either column never creates a second, competing scroll region. */
   private fit() {
     const col = this.q<HTMLElement>(".live-col");
     const pane = this.q<HTMLElement>(".live");
     const box = this.q<HTMLElement>(".live-frame");
     const goal = this.q<HTMLElement>(".goal");
-    const W = col.clientWidth;
-    const H = col.clientHeight;
+    const showGoal = !!this.model.lesson && col.clientHeight >= 610;
+    goal.hidden = !showGoal;
+    pane.style.flex = "1 1 auto";
+    const W = pane.clientWidth;
+    const H = pane.clientHeight;
     if (!W || !H) return;
-    const GAP = 14;
-    const GOAL_MIN = 108;
-    let w = W;
-    let h = W / this.liveAspect;
-    const room = H - h - GAP;
-    const withGoal = room >= GOAL_MIN && !!this.model.lesson;
-    if (!withGoal && h > H) {
-      h = H;
-      w = H * this.liveAspect;
-    }
-    pane.style.flex = withGoal ? `0 0 ${Math.floor(h)}px` : "1 1 auto";
-    goal.hidden = !withGoal;
-    pane.classList.toggle("snug", withGoal && this.hasFrame);
+    const w = Math.min(W, H * this.liveAspect);
+    const h = w / this.liveAspect;
+    pane.classList.toggle("snug", this.hasFrame);
     box.style.width = `${Math.floor(w)}px`;
     box.style.height = `${Math.floor(h)}px`;
   }
@@ -669,15 +676,12 @@ export class LearnView {
 
     const bar = this.q<HTMLElement>(".progress");
     bar.setAttribute("aria-valuemax", String(total));
-    bar.setAttribute("aria-valuenow", String(isDone ? total : idx));
-    paint(
-      bar,
-      Array.from({ length: Math.max(total, 1) }, (_, i) => {
-        let cls = !total ? "upcoming" : isDone || i < idx ? "done" : i === idx ? "current" : "upcoming";
-        if (i === idx && activeMistake?.kind === "behind") cls = "mistake";
-        return `<span class="seg ${cls}"></span>`;
-      }).join(""),
-    );
+    const position = isDone ? total : total ? idx + 1 : 0;
+    bar.setAttribute("aria-valuenow", String(position));
+    const percent = total ? Math.max(0, Math.min(100, (position / total) * 100)) : 0;
+    this.q<HTMLElement>(".progress-fill").style.width = `${percent}%`;
+    this.q<HTMLElement>(".progress-fill").classList.toggle("mistake", activeMistake?.kind === "behind");
+    this.q(".progress-label").textContent = total ? (isDone ? `${total} of ${total} complete` : `Step ${idx + 1} of ${total}`) : "Getting ready";
 
     // Live camera: this computer's own preview, or the hub's frames. Never a frozen frame
     // while the hub is unreachable.
@@ -769,6 +773,7 @@ export class LearnView {
     this.q<HTMLElement>(".clip-ph").hidden = !!step;
 
     this.q(".step-count").textContent = step ? `Step ${idx + 1} of ${total}` : " ";
+    this.q(".steps-summary-count").textContent = total ? `${idx + 1}/${total}` : "";
     this.q(".step-title").textContent = step ? step.title : " ";
     const hold = this.q<HTMLButtonElement>(".hold-step");
     const held = !!s?.held && !isDone;

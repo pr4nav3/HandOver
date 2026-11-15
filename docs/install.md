@@ -19,8 +19,8 @@ The public download page is [handover.sohamaggarwal.com/install](https://handove
 Requirements: Python 3.12, [uv](https://docs.astral.sh/uv/), Node.js 20+, npm, and ffmpeg.
 
 ```sh
-git clone https://github.com/pr4nav3/MetaGlasses-ExpertKnowlegeTransfer.git
-cd MetaGlasses-ExpertKnowlegeTransfer
+git clone https://github.com/pr4nav3/HandOver.git
+cd HandOver
 
 uv venv --python 3.12 .venv
 uv pip install --python .venv/bin/python -r server/requirements.lock

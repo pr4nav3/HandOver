@@ -130,17 +130,65 @@ struct TeachTimelineScale: View {
 }
 
 /// Plays one clip on the stage color.
+enum TeachClipLoadPolicy {
+    /// The editor only needs enough data for an immediate first frame and a short scrub. Asking AVPlayer to
+    /// build its normal multi-second safety buffer made a local-hub clip feel much slower than the network is.
+    static let preferredForwardBufferDuration: TimeInterval = 0.35
+    static let waitsToMinimizeStalling = false
+}
+
+/// Reuses AVURLAssets while an editor session moves between steps. The URL includes the lesson revision, so a
+/// recut naturally gets a fresh asset while Back/Next and list selection keep the metadata and HTTP connection
+/// warm. AVPlayerItems are still new per player, as AVFoundation requires.
+@MainActor
+final class TeachClipAssetCache {
+    static let shared = TeachClipAssetCache()
+
+    private var assets: [URL: AVURLAsset] = [:]
+    private var order: [URL] = []
+    private let limit = 32
+
+    func asset(for url: URL) -> AVURLAsset {
+        if let asset = assets[url] { return asset }
+        let asset = AVURLAsset(url: url, options: [AVURLAssetPreferPreciseDurationAndTimingKey: false])
+        assets[url] = asset
+        order.append(url)
+        while order.count > limit { assets[order.removeFirst()] = nil }
+        return asset
+    }
+
+    /// Prime the selected clip and its neighbors. Loading `isPlayable` fetches the small metadata/range request
+    /// AVPlayer otherwise waits to make after the user changes steps.
+    func prepare(_ urls: [URL]) async {
+        for url in urls {
+            _ = try? await asset(for: url).load(.isPlayable)
+        }
+    }
+}
+
 struct TeachClipPlayer: View {
     var url: URL?
     var autoplay = true
+    var poster: URL?
     @State private var player: AVPlayer?
+    @State private var posterVisible = true
     @Environment(\.theme) private var theme
+
+    init(url: URL?, autoplay: Bool = true, poster: URL? = nil) {
+        self.url = url
+        self.autoplay = autoplay
+        self.poster = poster
+    }
 
     var body: some View {
         ZStack {
             theme.colors.stage
+            if posterVisible, let poster {
+                HubImage(poster, contentMode: .fit)
+            }
             if let player {
                 VideoPlayer(player: player)
+                    .opacity(posterVisible ? 0 : 1)
             } else {
                 Image(systemName: "play.rectangle").font(.largeTitle).foregroundStyle(.white.opacity(0.35))
                     .accessibilityHidden(true)
@@ -150,15 +198,39 @@ struct TeachClipPlayer: View {
         .clipShape(RoundedRectangle(cornerRadius: HORadius.card, style: .continuous))
         .task(id: url) {
             player?.pause()
+            posterVisible = poster != nil
             guard let url else {
                 player = nil
                 return
             }
-            let next = AVPlayer(url: url)
+            let asset = TeachClipAssetCache.shared.asset(for: url)
+            let item = AVPlayerItem(asset: asset, automaticallyLoadedAssetKeys: ["playable"])
+            item.preferredForwardBufferDuration = TeachClipLoadPolicy.preferredForwardBufferDuration
+            let next = AVPlayer(playerItem: item)
+            next.automaticallyWaitsToMinimizeStalling = TeachClipLoadPolicy.waitsToMinimizeStalling
             player = next
-            if autoplay { next.play() }
+            if autoplay {
+                posterVisible = false
+                next.playImmediately(atRate: 1)
+            } else {
+                // AVFoundation raises an Objective-C exception if preroll is requested (or cancelled) before
+                // the player item reaches readyToPlay. Keep the inexpensive poster up during that transition.
+                while item.status == .unknown {
+                    try? await Task.sleep(for: .milliseconds(20))
+                    guard !Task.isCancelled, player === next else { return }
+                }
+                guard item.status == .readyToPlay, player === next else { return }
+                next.preroll(atRate: 1) { ready in
+                    Task { @MainActor in
+                        guard player === next else { return }
+                        posterVisible = !ready && poster != nil
+                    }
+                }
+            }
         }
-        .onDisappear { player?.pause() }
+        .onDisappear {
+            player?.pause()
+        }
     }
 }
 

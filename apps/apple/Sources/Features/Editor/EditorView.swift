@@ -63,6 +63,9 @@ private struct EditorScreen: View {
             }
             await store.load()
         }
+        .task(id: mediaPreloadKey) {
+            await TeachClipAssetCache.shared.prepare(mediaPreloadURLs)
+        }
         .onDisappear { Task { await store.flushPending() } }
         .sheet(isPresented: $showInspector) {
             NavigationStack {
@@ -123,7 +126,7 @@ private struct EditorScreen: View {
             .frame(maxWidth: .infinity)
             Divider().overlay(theme.colors.line)
             EditorStepInspector(store: store, index: store.selection, hub: app.hub)
-                .frame(width: 320)
+                .frame(width: 390)
         }
     }
 
@@ -255,10 +258,30 @@ private struct EditorScreen: View {
 
     @ViewBuilder private var player: some View {
         if let step = store.selectedStep, let hub = app.hub {
-            TeachClipPlayer(url: hub.fileURL(lesson: store.lessonId, path: step.clip, rev: store.revision), autoplay: false)
+            TeachClipPlayer(
+                url: hub.fileURL(lesson: store.lessonId, path: step.clip, rev: store.revision),
+                autoplay: false,
+                poster: hub.fileURL(lesson: store.lessonId, path: step.refFrame, rev: store.revision)
+            )
         } else {
             TeachClipPlayer(url: nil)
         }
+    }
+
+    /// Selected, next, then previous: the paths a reviewer is most likely to open. Keeping this to three clips
+    /// avoids turning editor launch into a download of the whole lesson.
+    private var mediaPreloadURLs: [URL] {
+        guard let hub = app.hub, !store.lesson.steps.isEmpty else { return [] }
+        let indices = [store.selection, store.selection + 1, store.selection - 1]
+        return indices.compactMap { index in
+            guard store.lesson.steps.indices.contains(index) else { return nil }
+            let step = store.lesson.steps[index]
+            return hub.fileURL(lesson: store.lessonId, path: step.clip, rev: store.revision)
+        }
+    }
+
+    private var mediaPreloadKey: String {
+        "\(app.hub?.base.absoluteString ?? "none")|\(store.lessonId)|\(store.revision)|\(store.selection)"
     }
 
     @ViewBuilder private var selectedSummary: some View {

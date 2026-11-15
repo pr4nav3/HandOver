@@ -47,6 +47,19 @@ struct BoundarySnapTests {
     }
 }
 
+@MainActor
+struct TeachClipLoadingTests {
+    @Test func editorUsesAShortBufferWithoutStallWaiting() {
+        #expect(TeachClipLoadPolicy.preferredForwardBufferDuration < 0.5)
+        #expect(!TeachClipLoadPolicy.waitsToMinimizeStalling)
+    }
+
+    @Test func repeatedStepSelectionReusesTheAsset() {
+        let url = URL(string: "http://127.0.0.1:8000/lessons/example/clips/01.mp4?v=4")!
+        #expect(TeachClipAssetCache.shared.asset(for: url) === TeachClipAssetCache.shared.asset(for: url))
+    }
+}
+
 struct UndoStackTests {
     @Test func undoAndRedoWalkTheHistory() {
         var stack = EditorUndoStack<Int>()

@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// The step inspector (SCREENS.md 14.3): title, time, how it is checked with "Test This Question", the reference
-/// frame, the common mistake, captions, voiceover and Delete Step. Sections the hub cannot save are left out.
+/// The step inspector keeps the decisions needed for one step visible. Less frequent production controls stay
+/// collapsed so reviewing titles, timing and checks does not become a long settings form.
 struct EditorStepInspector: View {
     var store: EditorStore
     var index: Int
@@ -9,6 +9,8 @@ struct EditorStepInspector: View {
     @Environment(\.theme) private var theme
     @State private var confirmDelete = false
     @State private var voice: String?
+    @State private var showCaptions = false
+    @State private var showVoiceover = false
 
     var body: some View {
         if let step = store.lesson.steps[safe: index] {
@@ -17,8 +19,8 @@ struct EditorStepInspector: View {
                 timeSection(step)
                 checkSection(step)
                 mistakeSection
-                if store.capabilities.captions { captionsSection(step) }
-                if store.capabilities.voiceover { voiceoverSection(step) }
+                if store.capabilities.captions { captionsDisclosure(step) }
+                if store.capabilities.voiceover { voiceoverDisclosure(step) }
                 Section {
                     Button("Delete Step", systemImage: "trash", role: .destructive) { confirmDelete = true }
                         .disabled(store.lesson.steps.count < 2 || store.isBusy)
@@ -48,9 +50,7 @@ struct EditorStepInspector: View {
             TextField("Step title", text: binding(\.title) { EditorStepFields(title: $0) },
                       prompt: Text("Fold the corners to the center"))
         } header: {
-            Text("Step \(index + 1)").sectionHeaderStyle(theme)
-        } footer: {
-            Text("Short and doable. Start with a verb.")
+            Text("Step \(index + 1) of \(store.lesson.steps.count)").sectionHeaderStyle(theme)
         }
     }
 
@@ -62,8 +62,6 @@ struct EditorStepInspector: View {
             EditorTimeField(label: "End", seconds: step.endSeconds ?? 0, disabled: store.isBusy) { value in
                 Task { await store.setTimes(step: index, start: nil, end: value) }
             }
-            LabeledContent("Length", value: CourseFormat.duration(CourseFormat.expertSeconds(step)) ?? "0:00")
-                .monospacedDigit()
         }
     }
 
@@ -88,6 +86,7 @@ struct EditorStepInspector: View {
                 if let hub {
                     HubImage(hub.fileURL(lesson: store.lessonId, path: step.refFrame, rev: store.revision), contentMode: .fit)
                         .aspectRatio(16 / 9, contentMode: .fit)
+                        .frame(maxHeight: 128)
                         .clipShape(RoundedRectangle(cornerRadius: HORadius.small, style: .continuous))
                         .accessibilityLabel("Reference frame for step \(index + 1)")
                 }
@@ -95,8 +94,6 @@ struct EditorStepInspector: View {
             }
         } header: {
             Text("How It Is Checked").sectionHeaderStyle(theme)
-        } footer: {
-            if !step.isManual { Text("Ask about shape and folds you can see, not color.") }
         }
     }
 
@@ -124,79 +121,81 @@ struct EditorStepInspector: View {
                       prompt: Text("Flip it over first."), axis: .vertical)
                 .lineLimit(1...3)
         } header: {
-            Text("Common Mistake").sectionHeaderStyle(theme)
-        } footer: {
-            Text("Shown and spoken when the learner is still on the step before.")
+            Text("Feedback when stuck").sectionHeaderStyle(theme)
         }
     }
 
-    private func captionsSection(_ step: Step) -> some View {
+    private func captionsDisclosure(_ step: Step) -> some View {
+        Section {
+            DisclosureGroup(isExpanded: $showCaptions) {
+                captionsFields(step)
+            } label: {
+                Label("Captions", systemImage: "captions.bubble")
+            }
+        }
+    }
+
+    @ViewBuilder private func captionsFields(_ step: Step) -> some View {
         let list = store.cues[index] ?? []
-        return Section {
-            ForEach(Array(list.enumerated()), id: \.element.id) { cueIndex, cue in
-                HStack(alignment: .firstTextBaseline, spacing: HOSpace.s) {
-                    Text(TimeCode.format(cue.start))
-                        .font(theme.fonts.code)
-                        .foregroundStyle(theme.colors.ink2)
-                    TextField("Caption", text: Binding(
-                        get: { cue.text },
-                        set: { text in
-                            var next = list
-                            next[cueIndex].text = text
-                            store.update(captions: next, step: index)
-                        }), axis: .vertical)
-                }
-                .swipeActions {
-                    Button("Delete", role: .destructive) {
+        ForEach(Array(list.enumerated()), id: \.element.id) { cueIndex, cue in
+            HStack(alignment: .firstTextBaseline, spacing: HOSpace.s) {
+                Text(TimeCode.format(cue.start))
+                    .font(theme.fonts.code)
+                    .foregroundStyle(theme.colors.ink2)
+                TextField("Caption", text: Binding(
+                    get: { cue.text },
+                    set: { text in
                         var next = list
-                        next.remove(at: cueIndex)
+                        next[cueIndex].text = text
                         store.update(captions: next, step: index)
-                    }
-                }
-                .contextMenu {
-                    Button("Delete Line", systemImage: "trash", role: .destructive) {
-                        var next = list
-                        next.remove(at: cueIndex)
-                        store.update(captions: next, step: index)
-                    }
+                    }), axis: .vertical)
+            }
+            .swipeActions {
+                Button("Delete", role: .destructive) {
+                    var next = list
+                    next.remove(at: cueIndex)
+                    store.update(captions: next, step: index)
                 }
             }
-            Button("Add Line", systemImage: "plus") {
-                let length = CourseFormat.expertSeconds(step) ?? 2
-                let start = min(list.last.map { $0.end } ?? 0, max(0, length - 0.5))
-                var next = list
-                next.append(EditorCaptionCue(start: start, end: min(length, start + 2), text: ""))
-                store.update(captions: next, step: index)
+            .contextMenu {
+                Button("Delete Line", systemImage: "trash", role: .destructive) {
+                    var next = list
+                    next.remove(at: cueIndex)
+                    store.update(captions: next, step: index)
+                }
             }
-        } header: {
-            Text("Captions").sectionHeaderStyle(theme)
-        } footer: {
-            Text("Captions show under the expert's clip. Changing the step's times rewrites them from the narration.")
+        }
+        Button("Add Line", systemImage: "plus") {
+            let length = CourseFormat.expertSeconds(step) ?? 2
+            let start = min(list.last.map { $0.end } ?? 0, max(0, length - 0.5))
+            var next = list
+            next.append(EditorCaptionCue(start: start, end: min(length, start + 2), text: ""))
+            store.update(captions: next, step: index)
         }
     }
 
-    private func voiceoverSection(_ step: Step) -> some View {
+    private func voiceoverDisclosure(_ step: Step) -> some View {
         let info = store.voiceover
         return Section {
-            LabeledContent("Sound", value: info?.covers(step: index + 1) == true ? "Voiceover on" : "Original sound")
-            Picker("Voice", selection: $voice) {
-                Text("Hub Default").tag(String?.none)
-                ForEach(EditorVoiceCatalog.all) { Text($0.name).tag(String?.some($0.id)) }
-            }
-            HStack {
-                Button("Regenerate") { Task { await store.regenerateVoiceover(step: index, voice: voice) } }
-                Spacer()
-                if store.voiceBusy { ProgressView().controlSize(.small) }
-                if info != nil {
-                    Button("Remove", role: .destructive) { Task { await store.removeVoiceover() } }
+            DisclosureGroup(isExpanded: $showVoiceover) {
+                Picker("Voice", selection: $voice) {
+                    Text("Hub Default").tag(String?.none)
+                    ForEach(EditorVoiceCatalog.all) { Text($0.name).tag(String?.some($0.id)) }
                 }
+                HStack {
+                    Button("Regenerate") { Task { await store.regenerateVoiceover(step: index, voice: voice) } }
+                    Spacer()
+                    if store.voiceBusy { ProgressView().controlSize(.small) }
+                    if info != nil {
+                        Button("Remove", role: .destructive) { Task { await store.removeVoiceover() } }
+                    }
+                }
+                .buttonStyle(.borderless)
+                .disabled(store.voiceBusy || store.isBusy)
+            } label: {
+                Label(info?.covers(step: index + 1) == true ? "Voiceover on" : "Original sound",
+                      systemImage: "waveform")
             }
-            .buttonStyle(.borderless)
-            .disabled(store.voiceBusy || store.isBusy)
-        } header: {
-            Text("Voiceover").sectionHeaderStyle(theme)
-        } footer: {
-            Text("Regenerate writes and speaks new narration for this step. Remove goes back to the original sound for the whole lesson.")
         }
         .onAppear { voice = info?.voice }
     }

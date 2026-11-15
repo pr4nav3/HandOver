@@ -86,35 +86,41 @@ export function renderCourse(el: HTMLElement, id: string) {
     el,
     html`<div class="page detail">
       <div class="detail-left">
-        ${cover(course.cover_url, "cover detail-cover")}
-        <div class="detail-title">
-          ${course.status !== "published" ? html`<span class="badge-soft">${STATUS_WORD[course.status]}</span>` : ""}
-          <h1>${course.title || id}</h1>
-          ${course.owner ? html`<p class="detail-by">By ${course.owner.name}${course.org ? html` in ${course.org.name}` : ""}</p>` : ""}
-          ${course.description ? html`<p class="detail-desc">${course.description}</p>` : ""}
-          <p class="detail-meta">${meta.map((m, i) => html`${i ? html`<span class="dot-sep"></span>` : ""}${m}`)}</p>
+        <div class="detail-intro">
+          ${cover(course.cover_url, "cover detail-cover")}
+          <div class="detail-title">
+            ${course.status !== "published" ? html`<span class="badge-soft">${STATUS_WORD[course.status]}</span>` : ""}
+            <h1>${course.title || id}</h1>
+            ${course.owner ? html`<p class="detail-by">By ${course.owner.name}${course.org ? html` in ${course.org.name}` : ""}</p>` : ""}
+            ${course.description ? html`<p class="detail-desc">${course.description}</p>` : ""}
+            <p class="detail-meta">${meta.map((m, i) => html`${i ? html`<span class="dot-sep"></span>` : ""}${m}`)}</p>
+          </div>
         </div>
-        ${lesson.safety?.length || lesson.tools?.length
-          ? html`<div class="card before">
-              <p class="card-title">Before you start</p>
-              ${(lesson.safety ?? []).map((s) => html`<p class="safety">${icons.shield}<span>${s}</span></p>`)}
-              ${lesson.tools?.length ? html`<p class="tools"><strong>Tools</strong> ${lesson.tools.join(", ")}</p>` : ""}
-            </div>`
-          : ""}
-        ${steps.length ? cameraRow() : ""}
-        <div class="detail-actions">
-          ${p && !p.done && p.step > 0
-            ? html`<button class="primary large" data-act="course-continue">Continue at Step ${p.step + 1}</button>
-                <button class="secondary large" data-act="course-restart">Start Over</button>`
-            : html`<button class="primary large" data-act="course-start" ${steps.length ? "" : "disabled"}>Start Lesson</button>`}
+        <div class="detail-start">
+          ${lesson.safety?.length || lesson.tools?.length
+            ? html`<div class="card before">
+                <p class="card-title">Before you start</p>
+                ${(lesson.safety ?? []).map((s) => html`<p class="safety">${icons.shield}<span>${s}</span></p>`)}
+                ${lesson.tools?.length ? html`<p class="tools"><strong>Tools</strong> ${lesson.tools.join(", ")}</p>` : ""}
+              </div>`
+            : ""}
+          ${steps.length ? cameraRow() : ""}
+          <div class="detail-actions">
+            ${p && !p.done && p.step > 0
+              ? html`<button class="primary large" data-act="course-continue">Continue at Step ${p.step + 1}</button>
+                  <button class="secondary large" data-act="course-restart">Start Over</button>`
+              : html`<button class="primary large" data-act="course-start" ${steps.length ? "" : "disabled"}>Start Lesson</button>`}
+          </div>
+          <div class="detail-foot">
+            <div class="detail-quiet">
+              ${permissions.can_edit ? html`<button class="quiet" data-go="${JSON.stringify({ name: "editor", id })}">Edit Lesson</button>` : ""}
+              ${permissions.can_rate ? html`<button class="quiet" data-act="course-rate">${r?.mine ? "Edit Your Rating" : "Rate This Lesson"}</button>` : ""}
+            </div>
+            ${r && r.count
+              ? html`<p class="rating-line">${stars(r.average ?? 0)} <span>${(r.average ?? 0).toFixed(1)} from ${r.count} ${r.count === 1 ? "rating" : "ratings"}</span></p>`
+              : ""}
+          </div>
         </div>
-        <div class="detail-quiet">
-          ${permissions.can_edit ? html`<button class="quiet" data-go="${JSON.stringify({ name: "editor", id })}">Edit Lesson</button>` : ""}
-          ${permissions.can_rate ? html`<button class="quiet" data-act="course-rate">${r?.mine ? "Edit Your Rating" : "Rate This Lesson"}</button>` : ""}
-        </div>
-        ${r && r.count
-          ? html`<p class="rating-line">${stars(r.average ?? 0)} <span>${(r.average ?? 0).toFixed(1)} from ${r.count} ${r.count === 1 ? "rating" : "ratings"}</span></p>`
-          : ""}
       </div>
       <div class="detail-right">
         <div class="steps-head">

@@ -1,6 +1,6 @@
 # HandOver desktop (Windows and Linux)
 
-The HandOver app for macOS, Windows and Linux. It runs or pairs with a hub on the local network and has every desktop screen in `apps/design/SCREENS.md`: onboarding, Home, Browse All, lesson detail, Learn, Done with score and rating, Teach with honest processing, the course editor, Organizations, Profile and Settings.
+The HandOver app for macOS, Windows and Linux. It runs or pairs with a hub on the local network and has every desktop screen in `apps/design/SCREENS.md`: onboarding, Home, Lessons, lesson detail, Learn, Done with score and rating, Teach with honest processing, the course editor, Organizations, Profile and Settings.
 
 On macOS, **Use This Mac** is the shortest path: the app reuses a hub already running on `localhost:8000`, or starts the checkout's `.venv` hub itself. **Pair a Phone** and the Phone/Meta Glasses camera choices generate purpose-built QR codes. Scanning one connects the iPhone and opens the requested camera automatically.
 
@@ -41,9 +41,9 @@ The same stack as Vibeflux's Windows app (`vibeflux/windows`): a Tauri 2 window 
 | --- | --- |
 | Onboarding (25) | Four welcome pages with the bundled sample lesson (`ui/public/sample`, rendered, labeled as such), Connect with recent hubs and the 3.3 result states, owner setup or sign in, avatar color, join with a code, role, theme with a live preview. |
 | Home (21) | A dismissible "How it works" card in 3 steps, Learn a Lesson and Teach a Lesson, Pair a Phone, the lesson running on the hub with Open, then Continue Learning (this device), Your Lessons, one block per organization, Everyone on This Hub. Empty sections are left out. |
-| Browse All (5) | Search, and chips for Everyone, Mine, Shared with Me and each organization. |
+| Lessons (5) | Search, and chips for Everyone, Mine, Shared with Me and each organization. |
 | Lesson detail (6) | Cover, description, meta, safety and tools, Start or Continue, rating summary, the step list with this device's last results. |
-| Learn (7) | Live camera fitted to the frame's own shape. A wide frame leaves room under it for "When this step is done": the step's reference frame and its check question. Right column: the clip with captions, the step title, the mistake card, the course step list, and the badge with Back and Next at the bottom. Step result moments, chime, checks-off reasons (7.8), Recording chip for replays, camera lost state (the last frame dimmed until a camera is back), the mistake card spoken once with the system voice. |
+| Learn (7) | The tutorial owns the larger column. The learner camera, compact reference, and large live-feedback rail share the other column. One progress line replaces duplicate step navigation; the full list opens on demand without shrinking the tutorial. Step result moments, chime, checks-off reasons (7.8), Recording chip for replays, camera-lost overlay, and spoken corrections stay in context. |
 | Done (8, 9, 20) | Score from section 20 (checked, pace, clean), best and weakest step, the tip rules, the per-step time bars, Practice Step and Start Over. The rating sheet is offered once after 2 s when the hub allows this person to rate. |
 | Teach (11, 13) | Choose a File (native picker), title and organization, upload with real bytes sent, then only the stages the hub reports, its message verbatim, and the error copy from 13. |
 | Editor (14, 15) | Step list, the full video with a timeline whose boundaries drag (recut on release), split at the playhead, merge, delete, rename, check type, check question, common mistake, lesson details, undo and redo from the hub, and the publish sheet with organizations and Unlisted. |

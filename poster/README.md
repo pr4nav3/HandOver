@@ -23,7 +23,7 @@ Uses headless Google Chrome (`CHROME=/path/to/chrome` to override). It prints `p
 
 - `img/learn-mistake.png`: the real web UI (commit 3442003 styling) with the real `lessons/fortune-teller-v1` lesson, shot at 1280 x 860 with device scale 2.5 against the web mock server (`web/mock/mock-server.mjs`, run from a copy outside the repo). The mock feeds the lesson's own reference frames as the camera, so the "You" pane shows the step 2 reference frame and the mistake card is a mock `behind` message using step 3's `common_mistake`. The top bar (which said "Mock iPhone") is cropped off. To retake: run the mock and Vite as described at the top of `web/e2e/screenshots.mjs`, open `#/learn/fortune-teller-v1`, go to step 3, send a `behind` mistake, screenshot, crop the top 142 px.
 - `img/ft-frame-NN.jpg`: `lessons/fortune-teller-v1/frames/NN.jpg`, top 608 x 608 crop (the paper), `ffmpeg -i frames/NN.jpg -vf crop=608:608:0:0 -q:v 2`.
-- `img/qr-repo.svg`: made locally with segno (`segno.make(url, error='m')`) for `https://github.com/pr4nav3/MetaGlasses-ExpertKnowlegeTransfer`. The same SVG is pasted inline in the footer. It decodes from the 1800 px preview.
+- `img/qr-repo.svg`: made locally with segno (`segno.make(url, error='m')`) for `https://github.com/pr4nav3/HandOver`. The same SVG is pasted inline in the footer. It decodes from the 1800 px preview.
 
 ## Swap in later
 

@@ -24,3 +24,4 @@ rehearsal.log
 *.orig.vtt
 apps/desktop/app/icons/android/
 apps/desktop/app/icons/ios/
+.visualizations/

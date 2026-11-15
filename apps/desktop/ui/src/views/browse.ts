@@ -1,4 +1,4 @@
-// Browse All (section 5): search, filter chips (Everyone, Mine, Shared with Me, one per org)
+// Lessons (section 5): search, filter chips (Everyone, Mine, Shared with Me, one per org)
 // and the lesson grid. Hubs without the library get search over the plain lesson list.
 
 import { call, hub, type CourseSummary, type LessonSummary } from "../api";
@@ -64,7 +64,7 @@ export function renderBrowse(el: HTMLElement) {
   paint(
     el,
     html`<div class="page">
-      ${pageHead("Browse All")}
+      ${pageHead("Lessons")}
       <div class="browse-bar">
         <label class="search-field">${icons.search}<input id="browse-q" type="search" placeholder="Search lessons" spellcheck="false" /></label>
         ${chips.length > 1

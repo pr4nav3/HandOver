@@ -298,6 +298,14 @@ body[data-screen="editor"] #content {
   overflow: hidden;
 }
 
+body[data-screen="home"] #content {
+  overflow: hidden;
+}
+
+body[data-screen="course"] #content {
+  overflow: hidden;
+}
+
 /* Controls */
 
 .icon-button {
@@ -1005,22 +1013,52 @@ button.row:hover {
 /* Lesson detail */
 
 .detail {
+  width: 100%;
+  height: 100%;
+  max-width: 1540px;
   display: grid;
-  grid-template-columns: minmax(320px, 400px) minmax(0, 1fr);
-  gap: 40px;
-  align-items: start;
+  grid-template-columns: minmax(400px, 0.9fr) minmax(500px, 1.1fr);
+  gap: clamp(34px, 4vw, 64px);
+  align-items: stretch;
+  padding-top: clamp(22px, 3vh, 34px);
+  padding-bottom: clamp(22px, 3vh, 34px);
 }
 
 .detail-left {
+  min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 18px;
-  position: sticky;
-  top: 28px;
+  gap: clamp(16px, 2.2vh, 24px);
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  padding-right: 4px;
+}
+
+.detail-intro {
+  display: flex;
+  flex-direction: column;
+  gap: clamp(14px, 2vh, 20px);
+}
+
+.detail-cover {
+  width: 100%;
+  flex: none;
+}
+
+.detail-start {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: auto;
+}
+
+.detail-start .before {
+  padding: 14px 16px;
 }
 
 .detail-title h1 {
-  font-size: 26px;
+  font-size: clamp(26px, 2vw, 34px);
   font-weight: 650;
   letter-spacing: -0.02em;
   line-height: 1.2;
@@ -1055,8 +1093,20 @@ button.row:hover {
 
 .detail-quiet {
   display: flex;
+  align-items: center;
   gap: 4px;
-  margin-top: -8px;
+}
+
+.detail-foot {
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.detail-foot .rating-line {
+  flex: none;
 }
 
 .card-title {
@@ -1138,6 +1188,19 @@ button.row:hover {
   margin-bottom: 10px;
 }
 
+.detail-right {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.detail-right .steps-head {
+  flex: none;
+  min-height: 40px;
+  margin-bottom: 12px;
+}
+
 .steps-head h2 {
   font-size: 17px;
   font-weight: 600;
@@ -1155,6 +1218,57 @@ button.row:hover {
   display: flex;
   flex-direction: column;
   gap: 2px;
+}
+
+.detail-right .steps-list {
+  min-height: 0;
+  flex: 1;
+  display: grid;
+  grid-auto-rows: minmax(62px, 80px);
+  align-content: space-between;
+  gap: 8px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 6px;
+}
+
+.detail-right .step-row {
+  height: 100%;
+  min-height: 62px;
+  padding: 8px 12px 8px 10px;
+}
+
+.detail-right .step-thumb {
+  width: 88px;
+  height: 50px;
+}
+
+.detail-right .step-name {
+  font-size: 15px;
+}
+
+@media (max-width: 1100px) {
+  body[data-screen="course"] #content {
+    overflow: auto;
+  }
+
+  .detail {
+    height: auto;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 30px;
+  }
+
+  .detail-left {
+    overflow: visible;
+  }
+
+  .detail-start {
+    margin-top: 0;
+  }
+
+  .detail-right {
+    min-height: min(680px, calc(100vh - 64px));
+  }
 }
 
 /* Course step row (DESIGN 3.20), used in detail and Learn */
@@ -2179,13 +2293,19 @@ button.option-card:hover {
   gap: 14px;
 }
 
-.learn-layout-tools {
-  min-height: 26px;
-  margin-top: -6px;
+.learn-workbar {
+  min-height: 30px;
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  gap: 16px;
+  flex: none;
+}
+
+.learn-layout-tools {
+  display: flex;
+  align-items: center;
   gap: 4px;
+  flex: none;
   color: var(--faint);
 }
 
@@ -2207,29 +2327,42 @@ button.option-card:hover {
 }
 
 .progress {
+  min-width: 0;
+  flex: 1 1 auto;
   display: flex;
-  gap: 4px;
-  flex: none;
+  align-items: center;
+  gap: 10px;
 }
 
-.seg {
-  flex: 1;
+.progress-track {
+  position: relative;
+  flex: 1 1 auto;
   height: 4px;
-  border-radius: 2px;
+  overflow: hidden;
+  border-radius: 999px;
   background: var(--tint-2);
-  transition: background 0.4s;
 }
 
-.seg.done {
-  background: var(--green);
-}
-
-.seg.current {
+.progress-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 0;
+  border-radius: inherit;
   background: color-mix(in srgb, var(--text) 85%, transparent);
+  transition: width 300ms ease, background 200ms ease;
 }
 
-.seg.mistake {
+.progress-fill.mistake {
   background: var(--amber);
+}
+
+.progress-label {
+  min-width: 78px;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
 }
 
 .learn-grid {
@@ -2300,6 +2433,10 @@ button.option-card:hover {
   display: flex;
   flex-direction: column;
   gap: 14px;
+}
+
+.live-col > .feedback-card {
+  flex: 0 0 auto;
 }
 
 .live {
@@ -2724,17 +2861,69 @@ video::cue {
   border-color: color-mix(in srgb, var(--amber) 40%, transparent);
 }
 
+.steps-disclosure {
+  position: relative;
+  flex: none;
+  align-self: flex-end;
+  z-index: 8;
+}
+
+.steps-disclosure summary {
+  min-height: 30px;
+  padding: 5px 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 550;
+  cursor: pointer;
+  list-style: none;
+}
+
+.steps-disclosure summary::-webkit-details-marker {
+  display: none;
+}
+
+.steps-disclosure summary::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(45deg) translateY(-1px);
+  transition: transform 150ms ease;
+}
+
+.steps-disclosure[open] summary::before {
+  transform: rotate(225deg) translate(-1px, -1px);
+}
+
+.steps-summary-count {
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
 .course-list {
-  flex: 1 1 0;
-  min-height: 56px;
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  width: min(620px, calc(100vw - 72px));
+  max-height: min(46vh, 430px);
   overflow: auto;
   display: flex;
   flex-direction: column;
   gap: 2px;
-  margin: 0 -6px;
-  padding: 0 6px;
-  border-top: 1px solid var(--border);
-  padding-top: 8px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--panel) 96%, transparent);
+  box-shadow: 0 18px 52px color-mix(in srgb, #000 16%, transparent);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
 }
 
 .controls {
@@ -4184,7 +4373,29 @@ button.back:disabled {
   background: var(--bg);
 }
 
-/* Home: How it works, Learn and Teach, the running lesson. */
+/* Home: one viewport, two actions, three real activity values, and a short lesson shelf. */
+
+.home-page {
+  height: 100%;
+  max-width: 1240px;
+  padding-bottom: 24px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.home-page .page-head {
+  flex: none;
+  margin-bottom: clamp(14px, 2vh, 22px);
+}
+
+.home-main {
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+  align-content: start;
+  gap: clamp(10px, 1.6vh, 16px);
+}
 
 .how {
   padding: 18px 20px 20px;
@@ -4256,7 +4467,7 @@ button.back:disabled {
 }
 
 .home-actions {
-  margin-bottom: 24px;
+  margin-bottom: 0;
 }
 
 .home-actions .option-card {
@@ -4264,6 +4475,77 @@ button.back:disabled {
   align-items: center;
   gap: 14px;
   padding: 16px 18px;
+}
+
+.home-insights {
+  min-height: 58px;
+  display: flex;
+  align-items: center;
+  gap: clamp(16px, 2.5vw, 34px);
+  padding: 10px 16px;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.home-insights-title {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.home-insight {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.home-insight-value {
+  color: var(--text);
+  font-size: 18px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.home-insights .quiet {
+  margin-left: auto;
+}
+
+.home-lessons {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding-top: 2px;
+}
+
+.home-lessons .block-head {
+  flex: none;
+  margin-bottom: 10px;
+}
+
+.home-lessons-grid {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 18px;
+  overflow: hidden;
+}
+
+.home-lessons-grid .lesson-card {
+  align-self: start;
+}
+
+.home-empty,
+.home-error {
+  min-height: 96px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: var(--muted);
 }
 
 .home-actions .tile {
@@ -4280,7 +4562,45 @@ button.back:disabled {
   align-items: center;
   gap: 12px;
   padding: 12px 16px;
-  margin-bottom: 28px;
+  margin-bottom: 0;
+}
+
+@media (max-width: 980px) {
+  .home-lessons-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .home-lessons-grid .lesson-card:nth-child(n + 3) {
+    display: none;
+  }
+
+  .home-insights-title {
+    display: none;
+  }
+}
+
+@media (max-height: 700px) {
+  .home-page {
+    padding-top: 20px;
+    padding-bottom: 18px;
+  }
+
+  .home-actions .option-card {
+    padding-block: 11px;
+  }
+
+  .home-actions .option-line {
+    display: none;
+  }
+
+  .home-insights {
+    min-height: 48px;
+    padding-block: 7px;
+  }
+
+  .home-insight-value {
+    font-size: 16px;
+  }
 }
 
 .running-text {

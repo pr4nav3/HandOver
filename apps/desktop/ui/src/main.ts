@@ -1,4 +1,4 @@
-// The window: a navigation pane (Home, Browse All, Organizations, Teach, Profile, the person's
+// The window: a navigation pane (Home, Lessons, Organizations, Teach, Profile, the person's
 // organizations, Settings at the foot) and one screen at a time, or Learn, the editor and
 // onboarding using the whole window. The Rust core owns the hub connection; this file keeps the
 // screens in step with its events and turns clicks and keys into core calls.
@@ -137,7 +137,7 @@ function renderPane() {
     html`<div class="pane-brand"><span class="pane-mark">${icons.mark}</span><span>HandOver</span></div>
       <div class="pane-items">
         ${item({ name: "home" }, icons.home, "Home", r === "home")}
-        ${item({ name: "browse" }, icons.grid, "Browse All", r === "browse" || r === "course")}
+        ${item({ name: "browse" }, icons.grid, "Lessons", r === "browse" || r === "course")}
         ${app.library && signedIn() ? item({ name: "orgs" }, icons.people, "Organizations", r === "orgs") : ""}
         ${canTeach() ? item({ name: "teach" }, icons.teach, "Teach", r === "teach" || r === "processing") : ""}
         ${item({ name: "profile" }, icons.person, "Profile", r === "profile")}
