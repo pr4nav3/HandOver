@@ -15,3 +15,17 @@ scripts/run_server.sh   # http :8000, https :8443
 npm --prefix web run dev   # laptop UI at http://localhost:5173 during development
 ```
 Phone camera page: `https://<laptop IP>:8443/capture`. Replay a recording as the camera: `.venv/bin/python -m server.replay recordings/fold.mp4 --select fortune-teller-v1`.
+
+## Run (Windows)
+PowerShell, from the repo root. ffmpeg must be on PATH (`winget install Gyan.FFmpeg`).
+```
+uv venv --python 3.12 .venv            # or: py -3.12 -m venv .venv
+.venv\Scripts\pip install -r server\requirements.lock
+copy .env.example .env                 # add ANTHROPIC_API_KEY and/or GEMINI_API_KEY
+winget install FiloSottile.mkcert      # or: choco install mkcert   (once)
+mkcert -install                        # once; trusts the mkcert root on this PC
+mkcert -cert-file certs/cert.pem -key-file certs/key.pem <laptop IP> localhost 127.0.0.1
+npm --prefix web ci; npm --prefix web run build
+scripts\run_server.ps1                 # or scripts\run_server.cmd; http :8000, https :8443
+```
+With `web/dist` built, the hub serves the laptop UI itself at `http://<laptop IP>:8000/` (no Vite needed). The runner prints the LAN address and the phone camera page. Rerun the `mkcert -cert-file` line when the laptop IP changes; for the iPhone, trust the root from `mkcert -CAROOT` as `scripts/certs.sh` explains.

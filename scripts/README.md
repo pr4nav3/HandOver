@@ -5,6 +5,7 @@ Run everything from the repo root on the Mac. Python scripts use `.venv/bin/pyth
 | Script | What it does | Example |
 |---|---|---|
 | [run_server.sh](run_server.sh) | Starts the hub: http on 8000, https on 8443 when certs exist. Prints the phone camera address. | `scripts/run_server.sh` |
+| [run_server.ps1](run_server.ps1), [run_server.cmd](run_server.cmd) | Windows twins of run_server.sh (`.venv\Scripts\python.exe -m server.main`). Print the LAN and phone camera addresses. | `scripts\run_server.ps1` |
 | [certs.sh](certs.sh) | Makes the HTTPS certs the iPhone camera page needs. Rerun after a hotspot IP change. (Pranav) | `scripts/certs.sh` |
 | [make_demo_lesson.sh](make_demo_lesson.sh) | Rebuilds `lessons/demo-v1` from a generated test video, no Gemini. | `scripts/make_demo_lesson.sh` |
 | [new_lesson.sh](new_lesson.sh) | Turns one or more takes into a lesson (normalize, join, find steps, cut), then prints the step table and the recut command. Never overwrites an existing id. `--mock` skips Gemini. | `scripts/new_lesson.sh --id fortune-teller-v1 --title "Fold a fortune teller" take1.mov take2.mov` |

@@ -5,126 +5,295 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="theme-color" content="#000000">
-<title>HandOver Camera</title>
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" id="themeColor" content="#F0F1F2">
+<title>Be the Camera - HandOver</title>
 <style>
-  :root { color-scheme: dark; }
+  :root {
+    color-scheme: light dark;
+    --paper: #F0F1F2; --raised: #FBFBFC; --well: #E4E5E8;
+    --ink: #1A1B1E; --ink2: rgba(26,27,30,.70); --ink3: rgba(26,27,30,.50);
+    --line: rgba(26,27,30,.09);
+    --accent: #3E5FD9; --on-accent: #FFFFFF; --accent-soft: rgba(62,95,217,.12);
+    --good: #186629; --caution: #934000; --bad: #B80011; --idle: #6E6E73;
+    --stage: #000; --record: #D70015;
+    --glass: rgba(30,30,32,.55); --glass-line: rgba(255,255,255,.2);
+    --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #131416; --raised: #1D1E21; --well: #26272B;
+      --ink: #EDEEF0; --ink2: rgba(237,238,240,.68); --ink3: rgba(237,238,240,.46);
+      --line: rgba(255,255,255,.10);
+      --accent: #8AA8FF; --on-accent: #0E1630; --accent-soft: rgba(138,168,255,.16);
+      --good: #30D158; --caution: #FF9F0A; --bad: #FF6961; --idle: #8E8E93;
+    }
+  }
+  /* The live screen always uses the dark values. */
+  .live {
+    color-scheme: dark;
+    --paper: #131416; --raised: #1D1E21; --well: #26272B;
+    --ink: #EDEEF0; --ink2: rgba(237,238,240,.68); --ink3: rgba(237,238,240,.46);
+    --line: rgba(255,255,255,.10);
+    --accent: #8AA8FF; --on-accent: #0E1630; --accent-soft: rgba(138,168,255,.16);
+    --good: #30D158; --caution: #FF9F0A; --bad: #FF6961; --idle: #8E8E93;
+  }
+
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   /* Classes below set display, which would otherwise beat the hidden attribute. */
   [hidden] { display: none !important; }
-  html, body { margin: 0; height: 100%; background: #000; color: #f5f5f7;
-    font: 17px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif; }
-  body { display: flex; flex-direction: column;
-    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
-  header { padding: 16px 20px 8px; display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
-  h1 { margin: 0; font-size: 20px; font-weight: 600; letter-spacing: -0.01em; }
-  .sub { margin: 2px 0 0; font-size: 15px; color: #a1a1a6; font-variant-numeric: tabular-nums; }
-  .right { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
-  .pills { display: inline-flex; align-items: center; gap: 14px; }
-  .pill { display: inline-flex; align-items: center; gap: 8px; font-size: 15px; color: #a1a1a6; white-space: nowrap; }
-  .dot { width: 9px; height: 9px; border-radius: 50%; background: #636366; }
-  .dot.on { background: #30d158; }
-  .dot.wait { background: #ff9f0a; }
-  .rec { font-size: 13px; font-weight: 700; letter-spacing: 0.04em; color: #636366; gap: 6px; }
-  .rec .dot { width: 10px; height: 10px; }
-  .rec.live { color: #ff453a; }
-  .rec.live .dot { background: #ff453a; }
-  .cam { font-size: 13px; color: #8e8e93; }
-  .cam.active { color: #30d158; }
-  .cam.idle { color: #ff9f0a; }
-  main { flex: 1; display: flex; flex-direction: column; padding: 8px 16px 16px; gap: 12px; min-height: 0; }
-  .stage { position: relative; flex: 1; min-height: 200px; border-radius: 18px; overflow: hidden; background: #1c1c1e;
-    box-shadow: 0 0 0 0 rgba(48, 209, 88, 0); transition: box-shadow 0.4s ease-out; }
-  .stage.flash { box-shadow: inset 0 0 0 6px #30d158; transition: none; }
-  video { width: 100%; height: 100%; object-fit: cover; display: block; }
-  .placeholder { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-    color: #8e8e93; font-size: 15px; text-align: center; padding: 24px; }
-  .privacy { color: #8e8e93; font-size: 13px; margin: -4px 0 0; text-align: center; }
-  .idle { margin: 0; padding: 10px 12px; border-radius: 10px; font-size: 15px;
-    background: rgba(255, 159, 10, 0.15); color: #ff9f0a; }
-  button.primary { appearance: none; border: 0; border-radius: 14px; padding: 16px; width: 100%;
-    font: inherit; font-weight: 600; font-size: 18px; color: #fff; background: #0a84ff; }
-  button.primary:active { opacity: 0.8; }
-  button.primary.stop { background: #2c2c2e; color: #ff453a; }
-  .nav { display: flex; gap: 12px; }
-  .nav button { appearance: none; border: 0; border-radius: 14px; flex: 1; min-height: 64px;
-    font: inherit; font-weight: 600; font-size: 20px; color: #fff; background: #3a3a3c; }
-  .nav button.fwd { flex: 2; background: #30d158; color: #000; }
-  .nav button:active { opacity: 0.8; }
-  .nav button:disabled { opacity: 0.35; }
-  .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-  .seg { display: inline-flex; background: #1c1c1e; border-radius: 10px; padding: 2px; }
-  .seg button { appearance: none; border: 0; background: transparent; color: #f5f5f7; font: inherit;
-    font-size: 15px; padding: 7px 14px; border-radius: 8px; }
-  .seg button.sel { background: #3a3a3c; font-weight: 600; }
-  .label { color: #a1a1a6; font-size: 15px; }
-  .stats { color: #a1a1a6; font-size: 15px; font-variant-numeric: tabular-nums; }
-  .note { color: #8e8e93; font-size: 13px; margin: 0; }
-  .err { color: #ff453a; font-size: 15px; margin: 0; }
-  .mistake { margin: 0; padding: 10px 12px; border-radius: 10px; font-size: 17px; font-weight: 600;
-    background: rgba(255, 179, 64, 0.15); color: #ffb340; }
+  html, body { margin: 0; min-height: 100%; background: var(--paper); color: var(--ink);
+    font: 17px/1.35 var(--font); -webkit-text-size-adjust: 100%; }
+  body.on-live { background: var(--stage); overflow: hidden; }
+  h1, h2, p, ol { margin: 0; }
+  button { font: inherit; color: inherit; appearance: none; -webkit-appearance: none; border: 0; background: none;
+    padding: 0; cursor: pointer; transition: transform .08s ease-out; }
+  button:active:not(:disabled) { transform: scale(.98); }
+  button:disabled { cursor: default; }
+  .num { font-variant-numeric: tabular-nums; }
+
+  .dot { flex: none; width: 8px; height: 8px; border-radius: 999px; background: var(--idle); }
+  .dot.good { background: var(--good); }
+  .dot.caution { background: var(--caution); }
+  .dot.bad { background: var(--bad); }
+  .dot.record { background: var(--record); }
+
+  .primary { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; min-height: 52px;
+    padding: 0 20px; border-radius: 16px; background: var(--accent); color: var(--on-accent); font-size: 17px; font-weight: 600; }
+  .glass { background: var(--glass); -webkit-backdrop-filter: blur(20px) saturate(1.4); backdrop-filter: blur(20px) saturate(1.4);
+    border: .5px solid var(--glass-line); color: #EDEEF0; }
+
+  /* Screen A: Start */
+  .start { min-height: 100vh; min-height: 100dvh; display: flex; justify-content: center;
+    padding: calc(40px + env(safe-area-inset-top)) calc(20px + env(safe-area-inset-right))
+             calc(28px + env(safe-area-inset-bottom)) calc(20px + env(safe-area-inset-left)); }
+  .a-wrap { width: 100%; max-width: 480px; display: flex; flex-direction: column; gap: 16px; }
+  .tile { width: 64px; height: 64px; border-radius: 18px; background: var(--accent-soft); color: var(--accent);
+    display: flex; align-items: center; justify-content: center; }
+  .tile svg { width: 32px; height: 32px; }
+  .display { font-size: 28px; font-weight: 600; letter-spacing: -.01em; line-height: 1.15; margin-top: 4px; }
+  .lede { color: var(--ink2); font-size: 17px; margin-top: -8px; }
+  .card { background: var(--raised); border: .5px solid var(--line); border-radius: 18px; padding: 16px; }
+  .cards { display: flex; flex-direction: column; gap: 12px; }
+  .hub { display: flex; align-items: center; gap: 10px; font-size: 15px; color: var(--ink2); }
+  .hub b { font-weight: 600; color: var(--ink); }
+  .headline { font-size: 17px; font-weight: 600; }
+  .how ol { list-style: none; padding: 0; margin-top: 12px; display: flex; flex-direction: column; gap: 12px; }
+  .how li { display: flex; gap: 12px; align-items: flex-start; font-size: 15px; color: var(--ink2); }
+  .how li span.n { flex: none; width: 26px; height: 26px; border-radius: 999px; background: var(--accent-soft);
+    color: var(--accent); font-size: 13px; font-weight: 600; display: flex; align-items: center; justify-content: center;
+    margin-top: -2px; font-variant-numeric: tabular-nums; }
+  .problem { display: flex; flex-direction: column; gap: 6px; }
+  .problem .headline { color: var(--ink); }
+  .problem p { font-size: 15px; color: var(--ink2); }
+  .problem .tag { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 500; color: var(--bad); }
+  .foot { font-size: 13px; color: var(--ink3); }
+  .start .primary { margin-top: 4px; }
+  .start .foots { display: flex; flex-direction: column; gap: 8px; padding: 0 4px; }
+
+  /* Screen B: Live */
+  .live { position: fixed; inset: 0; background: var(--stage); color: var(--ink); overflow: hidden; }
+  .stage { position: absolute; inset: 0; background: var(--stage); }
+  .stage video { width: 100%; height: 100%; object-fit: contain; display: block; background: var(--stage); }
+  .stage::after { content: ""; position: absolute; inset: 0; border: 6px solid #30D158; opacity: 0;
+    pointer-events: none; transition: opacity .4s ease-out; }
+  .stage.flash::after { opacity: 1; transition: none; }
+
+  .top { position: absolute; left: 0; right: 0; top: 0; z-index: 3; display: flex; align-items: center; gap: 8px;
+    padding: calc(10px + env(safe-area-inset-top)) calc(12px + env(safe-area-inset-right)) 0 calc(12px + env(safe-area-inset-left)); }
+  .circle { flex: none; width: 44px; height: 44px; border-radius: 999px; display: flex; align-items: center; justify-content: center; }
+  .circle svg { width: 18px; height: 18px; }
+  .capsule { flex: 1 1 auto; min-width: 0; display: flex; justify-content: center; }
+  .capsule > div { display: inline-flex; align-items: center; gap: 8px; max-width: 100%; height: 36px; padding: 0 14px;
+    border-radius: 999px; font-size: 15px; }
+  .capsule .txt { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .chip { flex: none; height: 36px; padding: 0 12px; border-radius: 999px; font-size: 12px; font-weight: 500;
+    font-variant-numeric: tabular-nums; white-space: nowrap; color: rgba(237,238,240,.85); }
+  .chip .more { display: inline; }
+  .chip.min .more { display: none; }
+  @media (max-width: 560px) { .chip .more { display: none; } }
+
+  .banner { position: absolute; z-index: 3; left: 50%; transform: translateX(-50%); width: calc(100% - 24px); max-width: 560px;
+    top: calc(64px + env(safe-area-inset-top)); padding: 10px 14px; border-radius: 16px; font-size: 15px;
+    display: flex; gap: 10px; align-items: center; }
+
+  .sheet { position: absolute; z-index: 4; right: calc(12px + env(safe-area-inset-right)); top: calc(62px + env(safe-area-inset-top));
+    width: min(320px, calc(100% - 24px)); padding: 14px; border-radius: 18px; display: flex; flex-direction: column; gap: 10px;
+    background: rgba(30,30,32,.82); }
+  .sheet .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 15px; }
+  .sheet .foot { color: rgba(237,238,240,.6); }
+  .seg { display: inline-flex; background: rgba(255,255,255,.1); border-radius: 12px; padding: 2px; }
+  .seg button { font-size: 13px; padding: 6px 12px; border-radius: 10px; color: #EDEEF0; font-variant-numeric: tabular-nums; }
+  .seg button.sel { background: rgba(255,255,255,.22); font-weight: 600; }
+
+  .panel { position: absolute; z-index: 3; left: 50%; transform: translateX(-50%);
+    bottom: calc(12px + env(safe-area-inset-bottom)); width: calc(100% - 24px - env(safe-area-inset-left) - env(safe-area-inset-right));
+    max-width: 560px; padding: 16px; border-radius: 24px; display: flex; flex-direction: column; gap: 12px; }
+  .mistake { display: flex; align-items: flex-start; gap: 10px; padding: 10px 10px 10px 12px; border-radius: 16px;
+    background: rgba(255,159,10,.16); border: .5px solid rgba(255,159,10,.35); color: #FFD08A; }
+  .mistake .ic { flex: none; font-size: 15px; line-height: 22px; }
+  .mistake p { flex: 1; font-size: 15px; font-weight: 600; line-height: 22px; color: #FFE2B8; }
+  .mistake button { flex: none; height: 30px; padding: 0 12px; border-radius: 999px; background: rgba(255,255,255,.14);
+    font-size: 13px; font-weight: 600; color: #EDEEF0; }
+  .info { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+  .steprow { display: flex; align-items: flex-start; gap: 10px; }
+  .stepline { flex: 1; min-width: 0; font-size: 17px; font-weight: 600; line-height: 1.3; color: #EDEEF0;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .badge { flex: none; margin-top: 1px; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 500;
+    line-height: 16px; font-variant-numeric: tabular-nums; white-space: nowrap;
+    background: rgba(255,255,255,.12); color: var(--ink2); }
+  .badge.good { background: rgba(48,209,88,.18); color: var(--good); }
+  .badge.caution { background: rgba(255,159,10,.18); color: var(--caution); }
+  .badge.accent { background: var(--accent-soft); color: var(--accent); }
+  .live .foot { color: var(--ink2); }
+  .meta { font-size: 13px; color: var(--ink3); font-variant-numeric: tabular-nums; }
+  .nav { display: flex; gap: 10px; }
+  .back { flex: none; display: flex; align-items: center; gap: 4px; min-height: 52px; padding: 0 18px 0 12px;
+    border-radius: 16px; font-size: 17px; font-weight: 600; background: rgba(255,255,255,.12); }
+  .back svg { width: 18px; height: 18px; }
+  .next { flex: 1; width: auto; }
+  .next:disabled { background: rgba(255,255,255,.12); color: rgba(255,255,255,.40); }
+  .back:disabled { color: rgba(255,255,255,.40); }
+
+  .replaced { position: absolute; inset: 0; z-index: 5; display: flex; align-items: center; justify-content: center;
+    padding: 24px; background: var(--stage); }
+  .replaced .box { width: 100%; max-width: 400px; padding: 24px; border-radius: 24px; background: var(--raised);
+    border: .5px solid var(--line); display: flex; flex-direction: column; gap: 10px; text-align: center; }
+  .replaced .box p { font-size: 15px; color: var(--ink2); margin-bottom: 8px; }
+
+  .dim { position: absolute; inset: 0; z-index: 10; background: #000; opacity: .7; }
+
+  /* Landscape phones: the panel becomes one row. */
+  @media (max-height: 480px) {
+    .top { padding-top: calc(8px + env(safe-area-inset-top)); }
+    .banner { top: calc(58px + env(safe-area-inset-top)); }
+    .sheet { top: calc(58px + env(safe-area-inset-top)); }
+    .panel { flex-direction: row; flex-wrap: wrap; align-items: center; padding: 12px 12px 12px 16px; gap: 10px 14px;
+      bottom: calc(8px + env(safe-area-inset-bottom)); }
+    .panel .mistake { flex: 1 0 100%; }
+    .panel .info { flex: 1 1 0; }
+    .panel { max-width: 760px; }
+    .panel .nav { flex: none; width: 280px; }
+    .stepline { font-size: 15px; }
+    .back { padding: 0 14px 0 10px; }
+  }
+
+  .nosleep { position: fixed; left: 0; top: 0; width: 1px; height: 1px; opacity: .01; pointer-events: none; }
 </style>
 </head>
 <body>
-<header>
-  <div>
-    <h1>HandOver Camera</h1>
-    <p class="sub" id="step">No step yet</p>
-  </div>
-  <div class="right">
-    <div class="pills">
-      <span class="pill rec" id="rec"><span class="dot"></span>REC</span>
-      <span class="pill"><span id="dot" class="dot"></span><span id="conn">Not connected</span></span>
+
+<!-- Screen A: Start -->
+<section id="startScreen" class="start" aria-labelledby="title">
+  <div class="a-wrap">
+    <div class="tile" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M3 8.5A2.5 2.5 0 0 1 5.5 6h1.6l1.3-1.9A1.5 1.5 0 0 1 9.6 3.5h4.8a1.5 1.5 0 0 1 1.2.6L16.9 6h1.6A2.5 2.5 0 0 1 21 8.5v9a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z"/>
+        <circle cx="12" cy="13" r="3.6"/>
+      </svg>
     </div>
-    <span class="cam" id="cam"></span>
-  </div>
-</header>
-<main>
-  <div class="stage" id="stage">
-    <video id="video" playsinline muted autoplay></video>
-    <div id="placeholder" class="placeholder">Point the back camera at your hands and the work.</div>
-  </div>
-  <p class="privacy">Frames go to the hub on this network, which sends them to the AI model for each check. The hub never saves them.</p>
-  <p id="mistake" class="mistake" role="alert" hidden></p>
-  <p id="idle" class="idle" hidden>Not sending. Check the hub address and network.</p>
-  <div class="row">
-    <span class="label">Live view</span>
-    <div class="seg" id="seg">
-      <button data-fps="6">6 fps</button>
-      <button data-fps="12" class="sel">12 fps</button>
-      <button data-fps="15">15 fps</button>
+    <h1 id="title" class="display">Be the Camera</h1>
+    <p class="lede">Use this phone as the camera for someone else's lesson.</p>
+
+    <div id="problem" class="card problem" role="alert" hidden>
+      <span class="tag"><span class="dot bad"></span><span id="problemTag">Camera</span></span>
+      <h2 id="problemTitle" class="headline"></h2>
+      <p id="problemBody"></p>
+    </div>
+
+    <div id="cards" class="cards">
+      <div class="card hub" aria-live="polite"><span id="hubDot" class="dot caution"></span><span id="hubText">Connecting to the hub.</span></div>
+      <div class="card how">
+        <h2 class="headline">How to use it</h2>
+        <ol>
+          <li><span class="n">1</span><span>Prop this phone up so the back camera sees the learner's hands.</span></li>
+          <li><span class="n">2</span><span>Tap Start Camera.</span></li>
+          <li><span class="n">3</span><span>Start the lesson on the learner's screen. This screen shows the step and Next.</span></li>
+        </ol>
+      </div>
+    </div>
+
+    <button id="startBtn" class="primary">Start Camera</button>
+    <div class="foots">
+      <p class="foot">Frames go to the hub on this network, which sends them to the AI model for each check. The hub never saves them.</p>
+      <p class="foot">Keep this page open and on screen. If the screen still dims, turn off Auto-Lock in Settings, Display and Brightness.</p>
     </div>
   </div>
-  <p class="note" id="model" hidden></p>
-  <div class="row">
-    <span class="stats" id="stats">0 frames sent</span>
-    <span class="stats" id="wake"></span>
+</section>
+
+<!-- Screen B: Live -->
+<section id="liveScreen" class="live" hidden>
+  <div class="stage" id="stage"><video id="video" playsinline muted autoplay></video></div>
+
+  <div class="top">
+    <button id="closeBtn" class="glass circle" aria-label="Stop Camera">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+    <div class="capsule"><div class="glass" aria-live="polite"><span id="capDot" class="dot caution"></span><span id="capText" class="txt">Connecting</span></div></div>
+    <button id="statsChip" class="glass chip" aria-expanded="false" aria-controls="sheet"><span id="chipFps">0.0 fps</span><span class="more" id="chipMore"></span></button>
   </div>
-  <button id="start" class="primary">Start camera</button>
-  <p id="err" class="err" hidden></p>
-  <p class="note">Keep this page open and on screen. If the screen still dims, turn off Auto-Lock in Settings, Display and Brightness.</p>
-  <div class="nav">
-    <button id="back" disabled>Back</button>
-    <button id="next" class="fwd" disabled>Next</button>
+
+  <div id="standby" class="glass banner" role="status" hidden><span class="dot caution"></span><span>Another camera is active. This one takes over if it stops.</span></div>
+
+  <div id="sheet" class="glass sheet" hidden>
+    <div class="row"><span>Live view</span>
+      <div class="seg" id="seg">
+        <button data-fps="6">6 fps</button>
+        <button data-fps="12" class="sel">12 fps</button>
+        <button data-fps="15">15 fps</button>
+      </div>
+    </div>
+    <p class="foot" id="model" hidden></p>
+    <p class="foot num" id="detail">No frames sent yet</p>
+    <p class="foot num" id="counts"></p>
+    <p class="foot" id="wake"></p>
   </div>
-</main>
+
+  <div id="panel" class="glass panel">
+    <div id="mistake" class="mistake" role="alert" hidden>
+      <span class="ic" aria-hidden="true">⚠</span><p id="mistakeText"></p><button id="mistakeOk">OK</button>
+    </div>
+    <div class="info">
+      <div class="steprow"><p id="stepLine" class="stepline">No lesson started</p><span id="badge" class="badge" hidden></span></div>
+      <p id="stepFoot" class="foot" hidden></p>
+      <p id="meta" class="meta" hidden></p>
+    </div>
+    <div class="nav">
+      <button id="back" class="back" hidden>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>Back
+      </button>
+      <button id="next" class="primary next" disabled>Next</button>
+    </div>
+  </div>
+
+  <div id="replaced" class="replaced" hidden>
+    <div class="box">
+      <h2 class="headline">Another device took over</h2>
+      <p>This phone stopped sending. Tap to send again.</p>
+      <button id="sendAgain" class="primary">Send Again</button>
+    </div>
+  </div>
+
+  <div id="dim" class="dim" hidden></div>
+</section>
+
 <canvas id="canvas" hidden></canvas>
 <script>
 (() => {
   const $ = (id) => document.getElementById(id);
   const video = $("video"), canvas = $("canvas"), ctx = canvas.getContext("2d");
-  const startBtn = $("start"), dot = $("dot"), conn = $("conn"), stats = $("stats"), err = $("err");
-  const rec = $("rec"), idleEl = $("idle"), camEl = $("cam"), stepEl = $("step"), stage = $("stage");
-  const nextBtn = $("next"), backBtn = $("back"), mistakeEl = $("mistake");
+  const startBtn = $("startBtn"), stage = $("stage"), nextBtn = $("next"), backBtn = $("back");
+  const host = location.hostname || "this hub";
   const wsUrl = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws/camera`;
-  // About 12 small frames a second by default (6/12/15 in the Live view row): smooth on the learn screen, light on the network.
+  // About 12 small frames a second by default (6/12/15 in the Live view sheet): smooth on the learn screen, light on the network.
   // The long side is at most MAX_SIDE before JPEG encoding: fewer bytes to upload
   // and less for the hub to decode.
   const DEFAULT_FPS = 12, MAX_SIDE = 640, JPEG_QUALITY = 0.55;
   const bitmapPath = typeof createImageBitmap === "function" && typeof OffscreenCanvas === "function"
     && typeof OffscreenCanvas.prototype.convertToBlob === "function";
   let offscreen = null;
-  const IDLE_MS = 5000, BACKOFF_MIN = 500, BACKOFF_MAX = 5000;
+  const IDLE_MS = 5000, BACKOFF_MIN = 500, BACKOFF_MAX = 10000, FPS_WINDOW_MS = 5000, DIM_MS = 30000;
+  const secure = !!(window.isSecureContext && navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
 
   // Stable device id and label, kept in localStorage (falls back to per-page values if storage is blocked).
   function stored(key, make) {
@@ -153,61 +322,152 @@
     return browser ? `${device} ${browser}` : device;
   }
   const deviceName = stored("handover.device_name_v2", guessName);
-  const STATUS_WORDS = { watching: "Watching", checking: "Watching", verified: "Verified", manual: "Manual step", done: "Done" };
 
   let stream = null, ws = null, timer = null, reconnectTimer = null, wakeLock = null, flashTimer = null;
-  let running = false, sent = 0, skipped = 0, sentBytes = 0, intervalMs = 1000 / DEFAULT_FPS, encoding = false, sentTimes = [];
-  let backoff = BACKOFF_MIN, lastSentAt = 0, helloSent = false, hubState = null;
+  let running = false, suspended = false, replaced = false, reconnecting = false;
+  let sent = 0, skipped = 0, sentBytes = 0, intervalMs = 1000 / DEFAULT_FPS, encoding = false, sentTimes = [];
+  let backoff = BACKOFF_MIN, lastSentAt = 0, sendingSince = 0, helloSent = false, hubState = null;
+  let camActive = null, frameW = 0, frameH = 0;
+  let lesson = { key: "", steps: null }, verifiedUntil = 0, verifiedTimer = null, navLockUntil = 0;
+  let mistakeKey = null, dismissedKey = null, lastPointer = Date.now();
 
-  function setConn(state, text) {
-    dot.className = "dot" + (state === "on" ? " on" : state === "wait" ? " wait" : "");
-    conn.textContent = text;
+  function socketOpen() { return !!ws && ws.readyState === WebSocket.OPEN; }
+  function connected() { return socketOpen() && helloSent; }
+
+  // ---------- Screens ----------
+  function showScreen(which) {
+    const live = which === "live";
+    $("startScreen").hidden = live;
+    $("liveScreen").hidden = !live;
+    document.body.classList.toggle("on-live", live);
+    $("themeColor").content = live ? "#000000" : getComputedStyle(document.documentElement).getPropertyValue("--paper").trim() || "#F0F1F2";
+    if (live) { lastPointer = Date.now(); $("dim").hidden = true; }
+    else { $("sheet").hidden = true; probeHub(); }
   }
-  function showError(text) { err.textContent = text; err.hidden = !text; }
-  function updateStats() {
+
+  const PROBLEMS = {
+    https: ["Camera needs a secure page", "Open this page with https:// and trust the hub's certificate. Phone browsers only allow the camera there."],
+    denied: ["HandOver cannot use the camera", "Allow it in Settings to send your work to the hub."],
+    nocam: ["No camera found", "This device has no camera HandOver can use. Try another phone."],
+    busy: ["The camera is busy", "Another app is using the camera. Close it, then tap Try Again."],
+  };
+  function showProblem(kind, extra) {
+    const p = kind && (PROBLEMS[kind] || ["Could not start the camera", extra ? `The browser said ${extra}. Tap Try Again.` : "Tap Try Again."]);
+    $("problem").hidden = !p;
+    $("cards").hidden = !!p;
+    if (p) { $("problemTitle").textContent = p[0]; $("problemBody").textContent = p[1]; $("problemTag").textContent = kind === "https" ? "Not secure" : "Camera"; }
+    startBtn.hidden = kind === "https";
+    startBtn.textContent = p ? "Try Again" : "Start Camera";
+  }
+
+  // Hub status on the Start screen: a light HTTP probe (opening /ws/camera here would register a camera).
+  let probeTimer = null, probing = false;
+  function setHub(state) {
+    $("hubDot").className = "dot " + (state === "on" ? "good" : state === "wait" ? "caution" : "bad");
+    $("hubText").innerHTML = "";
+    if (state === "off") { $("hubText").textContent = "Not connected"; return; }
+    const b = document.createElement("b"); b.textContent = host;
+    $("hubText").append(state === "on" ? "Connected to the hub at " : "Connecting to the hub at ", b, ".");
+  }
+  async function probeHub() {
+    clearTimeout(probeTimer);
+    if (!$("liveScreen").hidden || document.visibilityState !== "visible") return;
+    if (!probing) {
+      probing = true;
+      const ac = typeof AbortController === "function" ? new AbortController() : null;
+      const t = setTimeout(() => ac && ac.abort(), 4000);
+      try {
+        const r = await fetch("/api/hub-info", { cache: "no-store", signal: ac ? ac.signal : undefined });
+        setHub(r.ok ? "on" : "off");
+      } catch (_) { setHub("off"); }
+      clearTimeout(t);
+      probing = false;
+    }
+    probeTimer = setTimeout(probeHub, 5000);
+  }
+
+  // ---------- Live screen rendering ----------
+  function fpsNow() {
     const now = Date.now();
-    while (sentTimes.length && now - sentTimes[0] > 1000) sentTimes.shift();
-    const fps = running && sent ? `${sentTimes.length} fps, ` : "";
-    stats.textContent = fps + `${sent} frame${sent === 1 ? "" : "s"} sent` + (skipped ? `, ${skipped} skipped` : "")
+    while (sentTimes.length && now - sentTimes[0] > FPS_WINDOW_MS) sentTimes.shift();
+    if (!sendingSince) return 0;
+    const span = Math.min(FPS_WINDOW_MS, now - sendingSince) / 1000;
+    return span >= 0.5 ? sentTimes.length / span : 0;
+  }
+  function renderStats() {
+    const fps = fpsNow().toFixed(1) + " fps";
+    const size = frameW ? `${frameW} x ${frameH}` : "";
+    const role = camActive === null ? "" : camActive ? "Active camera" : "Standby";
+    $("chipFps").textContent = fps;
+    $("chipMore").textContent = [size, role].filter(Boolean).map((s) => ", " + s).join("");
+    $("detail").textContent = [fps, size, role].filter(Boolean).join(", ");
+    $("counts").textContent = `${sent} frame${sent === 1 ? "" : "s"} sent` + (skipped ? `, ${skipped} skipped` : "")
       + (sent ? `, ${Math.round(sentBytes / sent / 1024)} KB each` : "");
   }
-  function setCam(active) {
-    if (active === null) { camEl.textContent = ""; camEl.className = "cam"; return; }
-    camEl.textContent = active ? "Active" : "Idle: another camera is active";
-    camEl.className = "cam " + (active ? "active" : "idle");
+  function renderCapsule() {
+    const fresh = running && lastSentAt && Date.now() - lastSentAt < IDLE_MS && connected();
+    let dot = "", text;
+    if (replaced || !running) text = "Paused";
+    else if (reconnecting) { dot = "caution"; text = "Reconnecting"; }
+    else if (!connected()) { dot = "caution"; text = `Connecting to ${host}`; }
+    else if (fresh) { dot = "record"; text = `Sending to ${host}`; }
+    else text = "Paused";
+    $("capDot").className = "dot " + dot;
+    $("capText").textContent = text;
+    $("standby").hidden = !(running && connected() && camActive === false);
   }
-  function socketOpen() { return !!ws && ws.readyState === WebSocket.OPEN; }
-
-  // REC dot and idle notice, re-evaluated on every send and once a second.
-  function updateSending() {
-    const fresh = running && lastSentAt && Date.now() - lastSentAt < IDLE_MS;
-    rec.classList.toggle("live", !!(fresh && socketOpen()));
-    idleEl.hidden = !(running && Date.now() - lastSentAt >= IDLE_MS);
-  }
-  setInterval(() => { updateSending(); updateStats(); }, 1000);
-
-  function updateNav() {
-    const ok = running && helloSent && socketOpen() && !!hubState && hubState.total > 0;
-    nextBtn.disabled = !ok;
-    backBtn.disabled = !ok;
+  const OFFLINE_WHY = { no_key: "No check key on the hub.", rate_limited: "Too many checks. Trying again soon.",
+    errors: "Checks failed. Trying again soon.", budget: "Check spending limit reached." };
+  function renderStep() {
+    const s = connected() ? hubState : null;
+    const hasLesson = !!(s && s.lesson_id && s.total > 0);
+    const done = hasLesson && (s.status === "done" || s.step >= s.total);
+    let line, foot = "", badge = null, meta = "";
+    if (!hasLesson) { line = "No lesson started"; foot = "Start a lesson on any screen connected to this hub."; }
+    else if (done) { line = "Lesson done"; badge = ["Done", "good"]; }
+    else {
+      const title = lesson.key === lessonKey(s) && lesson.steps && lesson.steps[s.step] && lesson.steps[s.step].title;
+      line = `Step ${s.step + 1} of ${s.total}` + (title ? `: ${title}` : "");
+      if (s.status === "verified" || Date.now() < verifiedUntil) badge = ["Verified", "good"];
+      else if (s.status === "manual") badge = ["Tap Next when done", "accent"];
+      else if (s.check_offline) { badge = ["Checks off, use Next", "caution"]; foot = OFFLINE_WHY[s.check_offline_reason] || "Checks are off. Use Next to move on."; }
+      else if (!s.camera_connected) badge = ["No camera", ""];
+      else if (s.status === "checking") badge = ["Checking", ""];
+      else badge = ["Watching", ""];
+      const lc = s.last_check;
+      if (lc && typeof lc.latency_ms === "number" && s.status !== "manual") {
+        meta = `Last check ${(lc.latency_ms / 1000).toFixed(1)} s`;
+        if (lc.done === "no" && lc.confidence >= 0.7 && typeof lc.reason === "string" && lc.reason) meta += ` · ${lc.reason}`;
+      }
+    }
+    if (!running) { line = "Camera stopped"; foot = ""; badge = null; meta = ""; }
+    $("stepLine").textContent = line;
+    $("stepFoot").textContent = foot; $("stepFoot").hidden = !foot;
+    $("meta").textContent = meta; $("meta").hidden = !meta;
+    const b = $("badge");
+    b.hidden = !badge;
+    if (badge) { b.textContent = badge[0]; b.className = "badge " + badge[1]; }
+    nextBtn.disabled = !(running && hasLesson && !done);
+    backBtn.hidden = !(running && hasLesson && s.step > 0);
+    backBtn.disabled = !running || !hasLesson;
   }
   function showModelRate() {
-    const el = $("model"), s = hubState && hubState.checkInterval;
-    el.hidden = !s;
-    if (s) el.textContent = `Model sees 1 frame every ${Number(s.toFixed(2))} s`;
+    const el = $("model"), sec = hubState && hubState.check_interval_s;
+    el.hidden = !sec;
+    if (sec) el.textContent = `Model sees 1 frame every ${Number(sec.toFixed(2))} s`;
   }
-  function showState() {
-    showModelRate();
-    if (!hubState) { stepEl.textContent = "No step yet"; return; }
-    const { step, total, status } = hubState;
-    const word = STATUS_WORDS[status] || "";
-    if (total <= 0) stepEl.textContent = "No lesson selected";
-    else if (status === "done") stepEl.textContent = "Done";
-    else stepEl.textContent = `Step ${step + 1} of ${total}` + (word ? ` · ${word}` : "");
-  }
-  function showMistake(text) {
-    mistakeEl.textContent = text || "";
-    mistakeEl.hidden = !text;
+  function renderWake(text) { $("wake").textContent = text || ""; $("wake").hidden = !text; }
+  function render() { renderStats(); renderCapsule(); renderStep(); showModelRate(); }
+  setInterval(() => {
+    if (!$("liveScreen").hidden) render();
+    // Idle dim: after 30 s without a touch, darken the screen; the first touch only lifts it.
+    if (!$("liveScreen").hidden && running && !replaced && Date.now() - lastPointer > DIM_MS) $("dim").hidden = false;
+  }, 1000);
+
+  function showMistake(text, key) {
+    $("mistakeText").textContent = text || "";
+    $("mistake").hidden = !text;
+    mistakeKey = text ? key : null;
   }
   function flashStage() {
     clearTimeout(flashTimer);
@@ -215,6 +475,20 @@
     flashTimer = setTimeout(() => stage.classList.remove("flash"), 700);
   }
 
+  // ---------- Lesson titles ----------
+  function lessonKey(s) { return s && s.lesson_id ? `${s.lesson_id}@${s.rev}` : ""; }
+  async function loadLesson(s) {
+    const key = lessonKey(s);
+    if (!key || key === lesson.key) return;
+    lesson = { key, steps: null };
+    try {
+      const r = await fetch(`/api/lessons/${encodeURIComponent(s.lesson_id)}?v=${encodeURIComponent(s.rev)}`, { cache: "no-store" });
+      const j = r.ok ? await r.json() : null;
+      if (lesson.key === key && j && Array.isArray(j.steps)) { lesson.steps = j.steps; renderStep(); }
+    } catch (_) { if (lesson.key === key) lesson.key = ""; }  // try again on the next state
+  }
+
+  // ---------- Hub messages ----------
   function onHubMessage(e) {
     if (typeof e.data !== "string") return;
     let m;
@@ -223,21 +497,40 @@
     if (m.type === "state") {
       if (!Number.isInteger(m.step) || !Number.isInteger(m.total)) return;
       const ci = m.check_interval_s;
-      hubState = { step: m.step, total: m.total, status: typeof m.status === "string" ? m.status : "",
-        checkInterval: typeof ci === "number" && isFinite(ci) && ci > 0 ? ci : null };
-      showState(); updateNav();
+      const prev = hubState;
+      hubState = {
+        lesson_id: typeof m.lesson_id === "string" ? m.lesson_id : null, rev: m.rev, step: m.step, total: m.total,
+        status: typeof m.status === "string" ? m.status : "",
+        last_check: m.last_check && typeof m.last_check === "object" ? m.last_check : null,
+        camera_connected: m.camera_connected !== false, check_offline: !!m.check_offline,
+        check_offline_reason: m.check_offline_reason || null,
+        check_interval_s: typeof ci === "number" && isFinite(ci) && ci > 0 ? ci : null,
+      };
+      navLockUntil = 0;
+      if (!prev || prev.step !== hubState.step || prev.lesson_id !== hubState.lesson_id) { showMistake(""); dismissedKey = null; }
       // Older hubs omit `mistake`; null clears the card.
-      if (m.mistake === null) showMistake("");
-      else if (m.mistake && typeof m.mistake.message === "string") showMistake(m.mistake.message);
+      if (m.mistake === null) { showMistake(""); dismissedKey = null; }
+      else if (m.mistake && typeof m.mistake.message === "string") {
+        const key = `${hubState.lesson_id}:${hubState.step}:${m.mistake.message}`;
+        if (key !== dismissedKey) showMistake(m.mistake.message, key);
+      }
+      loadLesson(hubState);
+      render();
     } else if (m.type === "advance") {
-      showMistake("");
-      if (m.reason === "camera") flashStage();
+      showMistake(""); dismissedKey = null;
+      if (m.reason === "camera") {
+        flashStage();
+        verifiedUntil = Date.now() + 1800;
+        clearTimeout(verifiedTimer); verifiedTimer = setTimeout(renderStep, 1850);
+        // Android only: iOS Safari has no vibration.
+        if (typeof navigator.vibrate === "function") { try { navigator.vibrate(40); } catch (_) {} }
+      }
     } else if (m.type === "mistake") {
-      if (typeof m.message === "string") showMistake(m.message);
+      if (typeof m.message === "string") showMistake(m.message, `${hubState && hubState.lesson_id}:${m.step}:${m.message}`);
     } else if (m.type === "camera_status") {
-      if (typeof m.active === "boolean") setCam(m.active);
+      if (typeof m.active === "boolean") { camActive = m.active; render(); }
     } else if (m.type === "error") {
-      if (typeof m.message === "string" && m.message === "no lesson selected") stepEl.textContent = "No lesson selected";
+      if (m.message === "no lesson selected" && hubState) { hubState.total = 0; hubState.lesson_id = null; renderStep(); }
     }
   }
 
@@ -246,46 +539,54 @@
     try { ws.send(JSON.stringify(obj)); return true; } catch (_) { return false; }
   }
 
+  // ---------- Socket ----------
   function connect() {
     clearTimeout(reconnectTimer);
-    if (!running) return;
-    setConn("wait", "Connecting");
+    if (!running || suspended) return;
     // Each handler checks it still belongs to the current socket, so a late close from an old socket
     // cannot clear the new one or start a second reconnect loop.
     const sock = new WebSocket(wsUrl);
     ws = sock;
     sock.binaryType = "arraybuffer";
+    render();
     sock.onopen = () => {
       if (ws !== sock) return;
       backoff = BACKOFF_MIN;
+      reconnecting = false;
       // hello goes first on every open, before any frame.
       try {
         sock.send(JSON.stringify({ type: "hello", device_id: deviceId, name: deviceName, platform: "web", source: "browser" }));
         helloSent = true;
       } catch (_) { helloSent = false; }
-      setConn("on", "Connected");
-      updateNav();
+      sendingSince = Date.now(); sentTimes = [];
+      render();
     };
     sock.onmessage = (e) => { if (ws === sock) onHubMessage(e); };
     sock.onclose = (e) => {
       if (ws !== sock) return;
-      ws = null; helloSent = false; hubState = null;
-      setCam(null); showState(); showMistake(""); updateNav(); updateSending();
+      ws = null; helloSent = false; hubState = null; camActive = null; sendingSince = 0;
+      showMistake("");
       if (e.code === 4000) {
         // A newer connection with our device_id took over; never auto-reconnect.
-        stop("Replaced by another camera");
+        stopCapture();
+        replaced = true;
+        $("replaced").hidden = false; $("panel").hidden = true; $("dim").hidden = true;
+        render();
         return;
       }
-      if (running) {
-        setConn("wait", "Reconnecting");
-        reconnectTimer = setTimeout(connect, backoff);
+      if (running && !suspended) {
+        reconnecting = true;
+        const delay = backoff * (0.8 + Math.random() * 0.4);  // 20% jitter
+        reconnectTimer = setTimeout(connect, delay);
         backoff = Math.min(backoff * 2, BACKOFF_MAX);
-      } else setConn("off", "Not connected");
+      }
+      render();
     };
     sock.onerror = () => { try { sock.close(); } catch (_) {} };
   }
 
-  // One JPEG of the current video frame, long side at most MAX_SIDE.
+  // ---------- Frames ----------
+  // One JPEG of the current video frame, long side at most MAX_SIDE. Never mirrored.
   async function encodeFrame(w, h) {
     if (bitmapPath) {
       try {
@@ -302,9 +603,9 @@
   }
 
   async function sendFrame() {
-    if (!socketOpen() || !helloSent || encoding) return;
-    // Never queue: if the last frame has not left yet, skip this one.
-    if (ws.bufferedAmount > 0) { skipped++; updateStats(); return; }
+    if (!connected() || encoding || suspended) return;
+    // Never queue: if the last frame has not left yet, skip this one (newest frame only).
+    if (ws.bufferedAmount > 0) { skipped++; return; }
     // A muted or ended track gives black or frozen frames; send nothing until it is back.
     const track = stream && stream.getVideoTracks()[0];
     if (!track || track.readyState !== "live" || track.muted) return;
@@ -316,44 +617,66 @@
     let blob = null;
     try { blob = await encodeFrame(w, h); } catch (_) {}
     encoding = false;
-    if (!blob || !socketOpen() || !helloSent || ws.bufferedAmount > 0) return;
+    if (!blob || !connected() || ws.bufferedAmount > 0) return;
     ws.send(blob);
+    const first = !lastSentAt || Date.now() - lastSentAt >= IDLE_MS;
     sent++; sentBytes += blob.size; lastSentAt = Date.now(); sentTimes.push(lastSentAt);
-    updateStats(); updateSending();
+    frameW = w; frameH = h;
+    if (first) renderCapsule();
   }
 
   function restartTimer() {
     clearInterval(timer);
-    if (running) timer = setInterval(sendFrame, Math.round(intervalMs));
+    if (running && !suspended) timer = setInterval(sendFrame, Math.round(intervalMs));
   }
 
+  // ---------- Keep awake ----------
+  // Wake Lock where the browser has it; otherwise a tiny muted looping video started inside the Start tap (NoSleep.js approach).
+  const NOSLEEP_MP4 = "data:video/mp4;base64,AAAAIGZ0eXBpc29tAAACAGlzb21pc28yYXZjMW1wNDEAAAMqbW9vdgAAAGxtdmhkAAAAAAAAAAAAAAAAAAAD6AAAB9AAAQAAAQAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAlV0cmFrAAAAXHRraGQAAAADAAAAAAAAAAAAAAABAAAAAAAAB9AAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAABAAAAAQAAAAAAAkZWR0cwAAABxlbHN0AAAAAAAAAAEAAAfQAAAAAAABAAAAAAHNbWRpYQAAACBtZGhkAAAAAAAAAAAAAAAAAABAAAAAgABVxAAAAAAALWhkbHIAAAAAAAAAAHZpZGUAAAAAAAAAAAAAAABWaWRlb0hhbmRsZXIAAAABeG1pbmYAAAAUdm1oZAAAAAEAAAAAAAAAAAAAACRkaW5mAAAAHGRyZWYAAAAAAAAAAQAAAAx1cmwgAAAAAQAAAThzdGJsAAAAuHN0c2QAAAAAAAAAAQAAAKhhdmMxAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAABAAEABIAAAASAAAAAAAAAABFUxhdmM2Mi4xMS4xMDAgbGlieDI2NAAAAAAAAAAAAAAAGP//AAAALmF2Y0MBQsAK/+EAFmdCwArZHsBEAAADAAQAAAMACDxImSABAAVoy4PEyAAAABBwYXNwAAAAAQAAAAEAAAAUYnRydAAAAAAAAApQAAAAAAAAABhzdHRzAAAAAAAAAAEAAAACAABAAAAAABRzdHNzAAAAAAAAAAEAAAABAAAAHHN0c2MAAAAAAAAAAQAAAAEAAAACAAAAAQAAABxzdHN6AAAAAAAAAAAAAAACAAACiQAAAAsAAAAUc3RjbwAAAAAAAAABAAADWgAAAGF1ZHRhAAAAWW1ldGEAAAAAAAAAIWhkbHIAAAAAAAAAAG1kaXJhcHBsAAAAAAAAAAAAAAAALGlsc3QAAAAkqXRvbwAAABxkYXRhAAAAAQAAAABMYXZmNjIuMy4xMDAAAAAIZnJlZQAAApxtZGF0AAACcgYF//9u3EXpvebZSLeWLNgg2SPu73gyNjQgLSBjb3JlIDE2NSByMzIyMyAwNDgwY2IwIC0gSC4yNjQvTVBFRy00IEFWQyBjb2RlYyAtIENvcHlsZWZ0IDIwMDMtMjAyNSAtIGh0dHA6Ly93d3cudmlkZW9sYW4ub3JnL3gyNjQuaHRtbCAtIG9wdGlvbnM6IGNhYmFjPTAgcmVmPTMgZGVibG9jaz0xOi0zOi0zIGFuYWx5c2U9MHgxOjB4MTExIG1lPWhleCBzdWJtZT03IHBzeT0xIHBzeV9yZD0yLjAwOjAuNzAgbWl4ZWRfcmVmPTEgbWVfcmFuZ2U9MTYgY2hyb21hX21lPTEgdHJlbGxpcz0xIDh4OGRjdD0wIGNxbT0wIGRlYWR6b25lPTIxLDExIGZhc3RfcHNraXA9MSBjaHJvbWFfcXBfb2Zmc2V0PS00IHRocmVhZHM9MSBsb29rYWhlYWRfdGhyZWFkcz0xIHNsaWNlZF90aHJlYWRzPTAgbnI9MCBkZWNpbWF0ZT0xIGludGVybGFjZWQ9MCBibHVyYXlfY29tcGF0PTAgY29uc3RyYWluZWRfaW50cmE9MCBiZnJhbWVzPTAgd2VpZ2h0cD0wIGtleWludD0yNTAga2V5aW50X21pbj0xIHNjZW5lY3V0PTQwIGludHJhX3JlZnJlc2g9MCByY19sb29rYWhlYWQ9NDAgcmM9Y3JmIG1idHJlZT0xIGNyZj0yMy4wIHFjb21wPTAuNjAgcXBtaW49MCBxcG1heD02OSBxcHN0ZXA9NCBpcF9yYXRpbz0xLjQwIGFxPTE6MS4yMACAAAAAD2WIhAXzn///D0UAAVefgAAAAAdBmjgL5zqA";
+  let noSleep = null;
+  function startNoSleep() {
+    if ("wakeLock" in navigator) return;
+    if (!noSleep) {
+      noSleep = document.createElement("video");
+      noSleep.className = "nosleep";
+      noSleep.setAttribute("playsinline", ""); noSleep.setAttribute("muted", ""); noSleep.setAttribute("aria-hidden", "true");
+      noSleep.muted = true; noSleep.loop = true; noSleep.playsInline = true;
+      noSleep.src = NOSLEEP_MP4;
+      document.body.appendChild(noSleep);
+    }
+    const p = noSleep.play();
+    if (p && p.then) p.then(() => renderWake("Screen stays on"), () => renderWake(""));
+  }
+  function stopNoSleep() { if (noSleep) noSleep.pause(); }
   async function requestWakeLock() {
-    if (!("wakeLock" in navigator)) { $("wake").textContent = ""; return; }
+    if (!("wakeLock" in navigator)) return;
     try {
       wakeLock = await navigator.wakeLock.request("screen");
-      $("wake").textContent = "Screen stays on";
-      wakeLock.addEventListener("release", () => { $("wake").textContent = ""; });
-    } catch (_) { $("wake").textContent = ""; }
+      renderWake("Screen stays on");
+      wakeLock.addEventListener("release", () => renderWake(""));
+    } catch (_) { renderWake(""); }
   }
 
+  // ---------- Camera ----------
   async function openCamera() {
+    let next;
     try {
-      const next = await navigator.mediaDevices.getUserMedia({
+      next = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } },
         audio: false,
       });
-      if (stream) stream.getTracks().forEach((t) => t.stop());
-      stream = next;
-      watchTrack(next.getVideoTracks()[0]);
     } catch (e) {
-      showError(e && e.name === "NotAllowedError"
-        ? "Camera access was blocked. Allow it in Settings, Safari, Camera, then try again."
-        : `Could not start the camera (${(e && e.name) || "error"}).`);
-      return false;
+      const n = (e && e.name) || "error";
+      return n === "NotAllowedError" || n === "SecurityError" ? { kind: "denied" }
+        : n === "NotFoundError" || n === "OverconstrainedError" || n === "DevicesNotFoundError" ? { kind: "nocam" }
+        : n === "NotReadableError" || n === "TrackStartError" ? { kind: "busy" } : { kind: "other", name: n };
     }
+    if (stream) stream.getTracks().forEach((t) => t.stop());
+    stream = next;
+    watchTrack(next.getVideoTracks()[0]);
     video.srcObject = stream;
     try { await video.play(); } catch (_) {}
-    return true;
+    return null;
   }
 
   // iOS can end or mute the camera track (background, a phone call, another app taking the camera).
@@ -378,68 +701,105 @@
     const track = stream && stream.getVideoTracks()[0];
     if (reviving || (track && track.readyState === "live" && !track.muted)) return;
     reviving = true;
-    showError("");
     if (stream) { stream.getTracks().forEach((t) => t.stop()); stream = null; }  // iOS allows one capture at a time
-    const ok = await openCamera();
+    const problem = await openCamera();
     reviving = false;
-    if (!ok) {
-      // openCamera already says why; stop so the page does not claim to be running without a camera.
-      const why = err.textContent;
+    if (problem) {
+      // Stop so the page does not claim to be running without a camera; the Start screen says why.
       if (running) stop();
-      showError(why);
+      showProblem(problem.kind, problem.name);
       return;
     }
     if (!running) { stream.getTracks().forEach((t) => t.stop()); stream = null; video.srcObject = null; }
   }
 
+  // ---------- Start / stop ----------
   async function start() {
-    showError("");
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      showError("Camera needs HTTPS. Open this page with https:// and trust the certificate.");
-      return;
-    }
-    if (!(await openCamera())) return;
-    $("placeholder").hidden = true;
+    if (!secure) { showProblem("https"); showScreen("start"); return; }
+    startNoSleep();  // must run inside the tap
+    startBtn.disabled = true; $("sendAgain").disabled = true;
+    const problem = await openCamera();
+    startBtn.disabled = false; $("sendAgain").disabled = false;
+    if (problem) { stopNoSleep(); showProblem(problem.kind, problem.name); showScreen("start"); return; }
+    showProblem(null);
+    replaced = false; suspended = false; reconnecting = false;
+    $("replaced").hidden = true; $("panel").hidden = false;
+    showScreen("live");
     running = true;
     backoff = BACKOFF_MIN;
-    lastSentAt = Date.now();  // idle clock starts now, so the notice waits 5 s for the first frame
-    startBtn.textContent = "Stop camera";
-    startBtn.classList.add("stop");
+    lastSentAt = 0; sentTimes = []; sent = 0; skipped = 0; sentBytes = 0; frameW = frameH = 0;
     connect();
     restartTimer();
     requestWakeLock();
-    updateSending();
+    render();
   }
 
-  function stop(reason) {
-    running = false;
+  // Stops frames, socket and camera; the caller decides which screen to show.
+  function stopCapture() {
+    running = false; reconnecting = false;
+    clearInterval(timer); clearTimeout(reconnectTimer); clearTimeout(muteTimer);
+    if (ws) { const s = ws; ws = null; try { s.close(); } catch (_) {} }
+    helloSent = false; hubState = null; camActive = null; lastSentAt = 0; sendingSince = 0; sentTimes = [];
+    if (stream) { stream.getTracks().forEach((t) => t.stop()); stream = null; }
+    video.srcObject = null;
+    showMistake(""); dismissedKey = null;
+    if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
+    stopNoSleep();
+  }
+  function stop() {
+    stopCapture();
+    replaced = false;
+    showScreen("start");
+    render();
+  }
+
+  // Hidden or leaving: stop sending and close the socket. Visible again: reconnect.
+  function suspend() {
+    if (!running || suspended) return;
+    suspended = true; reconnecting = false;
     clearInterval(timer); clearTimeout(reconnectTimer);
     if (ws) { const s = ws; ws = null; try { s.close(); } catch (_) {} }
-    helloSent = false; hubState = null; lastSentAt = 0; sentTimes = [];
-    if (stream) { stream.getTracks().forEach((t) => t.stop()); stream = null; }
-    clearTimeout(muteTimer);
-    video.srcObject = null;
-    $("placeholder").hidden = false;
-    showMistake("");
-    if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
-    startBtn.textContent = "Start camera";
-    startBtn.classList.remove("stop");
-    if (reason) { setConn("wait", reason); showError(reason + ". Tap Start camera to take over again."); }
-    else setConn("off", "Not connected");
-    setCam(null); showState(); updateNav(); updateSending();
+    helloSent = false; hubState = null; camActive = null; sendingSince = 0;
+    render();
+  }
+  function resume() {
+    if (!running) return;
+    suspended = false;
+    requestWakeLock();
+    if (noSleep && !("wakeLock" in navigator)) noSleep.play().catch(() => {});
+    if (!ws) { backoff = BACKOFF_MIN; connect(); }
+    restartTimer();
+    reviveCamera();
+    lastPointer = Date.now();
+    render();
   }
 
-  startBtn.addEventListener("click", () => (running ? stop() : start()));
+  // ---------- Events ----------
+  startBtn.addEventListener("click", () => { if (!running) start(); });
+  $("closeBtn").addEventListener("click", () => stop());
+  $("sendAgain").addEventListener("click", () => start());
 
+  function navAllowed() {
+    if (Date.now() < navLockUntil || !hubState) return false;
+    navLockUntil = Date.now() + 1000;  // one press per position until a new state arrives or 1 s passes
+    return true;
+  }
   nextBtn.addEventListener("click", () => {
-    if (nextBtn.disabled || !hubState) return;
+    if (nextBtn.disabled || !navAllowed()) return;
     sendJson({ type: "next", reason: "button", from: hubState.step });
   });
   backBtn.addEventListener("click", () => {
-    if (backBtn.disabled || !hubState) return;
+    if (backBtn.disabled || backBtn.hidden || !navAllowed()) return;
     sendJson({ type: "back", from: hubState.step });
   });
+  $("mistakeOk").addEventListener("click", () => { dismissedKey = mistakeKey; showMistake(""); });
 
+  $("statsChip").addEventListener("click", () => {
+    const sheet = $("sheet");
+    sheet.hidden = !sheet.hidden;
+    $("statsChip").setAttribute("aria-expanded", String(!sheet.hidden));
+    renderStats();
+  });
   $("seg").addEventListener("click", (e) => {
     const b = e.target.closest("button[data-fps]");
     if (!b) return;
@@ -447,15 +807,30 @@
     for (const x of $("seg").querySelectorAll("button")) x.classList.toggle("sel", x === b);
     restartTimer();
   });
+  $("stage").addEventListener("click", () => { $("sheet").hidden = true; $("statsChip").setAttribute("aria-expanded", "false"); });
+
+  document.addEventListener("pointerdown", () => { lastPointer = Date.now(); }, true);
+  $("dim").addEventListener("click", (e) => { e.stopPropagation(); $("dim").hidden = true; lastPointer = Date.now(); });
 
   // Wake locks drop when the page is hidden; take it again on return.
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible" && running) {
-      requestWakeLock();
-      if (!ws) { backoff = BACKOFF_MIN; connect(); }
-      reviveCamera();
-    }
+    if (document.visibilityState === "hidden") suspend();
+    else if (running) resume();
+    else if (!$("startScreen").hidden) probeHub();
   });
+  window.addEventListener("pagehide", suspend);
+  window.addEventListener("pageshow", (e) => { if (e.persisted && running) resume(); });
+  if (window.matchMedia) {
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    const onScheme = () => { if (!$("startScreen").hidden) showScreen("start"); };
+    if (mq.addEventListener) mq.addEventListener("change", onScheme);
+  }
+
+  // ---------- Boot ----------
+  setHub("wait");
+  if (!secure) showProblem("https");
+  showScreen("start");
+  render();
 })();
 </script>
 </body>

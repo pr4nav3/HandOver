@@ -1,0 +1,194 @@
+{
+  "id": "fortune-teller-v1",
+  "title": "Fold a fortune teller",
+  "video": "norm.mp4",
+  "safety": [],
+  "tools": [
+    "sheet of paper",
+    "table surface"
+  ],
+  "steps": [
+    {
+      "n": 1,
+      "title": "Fold the strip in half again",
+      "start": "00:00",
+      "end": "00:09.2",
+      "clip": "clips/01.mp4",
+      "captions": "captions/01.vtt",
+      "ref_frame": "frames/01.jpg",
+      "ref_time": "00:08.8",
+      "check_type": "manual",
+      "check_question": "",
+      "prerequisites": [],
+      "common_mistake": "Keep the folded edges aligned."
+    },
+    {
+      "n": 2,
+      "title": "Fold the square diagonally into a triangle",
+      "start": "00:09.2",
+      "end": "00:24.9",
+      "clip": "clips/02.mp4",
+      "captions": "captions/02.vtt",
+      "ref_frame": "frames/02.jpg",
+      "ref_time": "00:22.5",
+      "check_type": "camera",
+      "check_question": "Is the paper now a rectangle with a single crease down its middle?",
+      "prerequisites": [
+        1
+      ],
+      "common_mistake": "Match corners exactly to form the triangle.",
+      "self_test": {
+        "own": "yes",
+        "prev": "yes",
+        "ok": false
+      }
+    },
+    {
+      "n": 3,
+      "title": "Fold the triangle into a smaller triangle",
+      "start": "00:24.9",
+      "end": "00:31.4",
+      "clip": "clips/03.mp4",
+      "captions": "captions/03.vtt",
+      "ref_frame": "frames/03.jpg",
+      "ref_time": null,
+      "check_type": "camera",
+      "check_question": "Is the paper now a single triangle with exactly three corners?",
+      "prerequisites": [
+        2
+      ],
+      "common_mistake": "Press along the crease firmly.",
+      "self_test": {
+        "own": "yes",
+        "prev": "no",
+        "ok": true
+      }
+    },
+    {
+      "n": 4,
+      "title": "Fold the triangle corners into a flat shape",
+      "start": "00:31.4",
+      "end": "00:43.2",
+      "clip": "clips/04.mp4",
+      "captions": "captions/04.vtt",
+      "ref_frame": "frames/04.jpg",
+      "ref_time": null,
+      "check_type": "camera",
+      "check_question": "Is the paper a triangle with a visible fold line running across its middle?",
+      "prerequisites": [
+        3
+      ],
+      "common_mistake": "Keep the folded layers aligned.",
+      "self_test": {
+        "own": "yes",
+        "prev": "yes",
+        "ok": false
+      }
+    },
+    {
+      "n": 5,
+      "title": "Fold the wide corners over the center",
+      "start": "00:43.2",
+      "end": "00:53.7",
+      "clip": "clips/05.mp4",
+      "captions": "captions/05.vtt",
+      "ref_frame": "frames/05.jpg",
+      "ref_time": null,
+      "check_type": "camera",
+      "check_question": "Are the two side corners folded inward so the triangle has a central seam?",
+      "prerequisites": [
+        4
+      ],
+      "common_mistake": "Fold both sides symmetrically.",
+      "self_test": {
+        "own": "yes",
+        "prev": "yes",
+        "ok": false
+      }
+    },
+    {
+      "n": 6,
+      "title": "Open the folded shape into a square",
+      "start": "00:53.7",
+      "end": "01:06.8",
+      "clip": "clips/06.mp4",
+      "captions": "captions/06.vtt",
+      "ref_frame": "frames/06.jpg",
+      "ref_time": "01:06.6",
+      "check_type": "camera",
+      "check_question": "Is the paper a four-cornered diamond with a flap folded over one side?",
+      "prerequisites": [
+        5
+      ],
+      "common_mistake": "Open the flaps gently to avoid tearing.",
+      "self_test": {
+        "own": "yes",
+        "prev": "no",
+        "ok": true
+      }
+    },
+    {
+      "n": 7,
+      "title": "Fold the corners to the center to form a kite",
+      "start": "01:06.8",
+      "end": "01:27.8",
+      "clip": "clips/07.mp4",
+      "captions": "captions/07.vtt",
+      "ref_frame": "frames/07.jpg",
+      "ref_time": "01:25.8",
+      "check_type": "manual",
+      "check_question": "",
+      "prerequisites": [
+        6
+      ],
+      "common_mistake": "Fold each corner to the exact center point.",
+      "self_test": {
+        "own": "unsure",
+        "prev": "no",
+        "ok": false
+      }
+    },
+    {
+      "n": 8,
+      "title": "Fold the flaps into a small square packet",
+      "start": "01:27.8",
+      "end": "02:09.7",
+      "clip": "clips/08.mp4",
+      "captions": "captions/08.vtt",
+      "ref_frame": "frames/08.jpg",
+      "ref_time": "02:09.5",
+      "check_type": "camera",
+      "check_question": "Is the paper a small flat rectangle with a vertical crease down its center?",
+      "prerequisites": [
+        7
+      ],
+      "common_mistake": "Keep the folds crisp and aligned.",
+      "self_test": {
+        "own": "yes",
+        "prev": "unsure",
+        "ok": false
+      }
+    },
+    {
+      "n": 9,
+      "title": "Tuck the flaps to form a pocket",
+      "start": "02:09.7",
+      "end": "02:35.9",
+      "clip": "clips/09.mp4",
+      "captions": "captions/09.vtt",
+      "ref_frame": "frames/09.jpg",
+      "ref_time": "02:35.7",
+      "check_type": "camera",
+      "check_question": "Is the paper now a three-dimensional pocket with an open top and a pointed flap?",
+      "prerequisites": [
+        8
+      ],
+      "common_mistake": "Tuck the flap fully into the pocket.",
+      "self_test": {
+        "own": "yes",
+        "prev": "no",
+        "ok": true
+      }
+    }
+  ]
+}
