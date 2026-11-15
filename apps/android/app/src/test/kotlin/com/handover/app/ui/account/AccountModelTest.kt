@@ -1,7 +1,8 @@
 package com.handover.app.ui.account
 
 import com.handover.app.core.HubUrl
-import com.handover.app.ui.settings.MemoryKeyValue
+import com.handover.app.core.MemoryTokenStore
+import com.handover.app.core.OrgRole
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -31,7 +32,7 @@ class AccountModelTest {
         server.start()
     }
 
-    private fun model(kv: MemoryKeyValue = MemoryKeyValue()) = AccountModel(TokenStore(kv), OkHttpClient(), scope)
+    private fun model(kv: MemoryTokenStore = MemoryTokenStore()) = AccountModel(kv, OkHttpClient(), scope)
     private fun hub() = HubUrl(server.hostName, server.port)
     private val notFound = MockResponse().setResponseCode(404).setBody("""{"detail":"Not Found"}""")
 
@@ -64,7 +65,7 @@ class AccountModelTest {
                 else -> notFound
             }
         }
-        val kv = MemoryKeyValue()
+        val kv = MemoryTokenStore()
         val m = model(kv).apply { attach(hub()) }
         assertTrue(m.await { it.support == AccountSupport.Available }.setupNeeded)
         m.setupOwner(" Sam ", "4821")
@@ -74,7 +75,7 @@ class AccountModelTest {
         assertEquals(listOf("a"), s.completed.map { it.id })
         assertEquals(listOf("b"), s.inProgress.map { it.id })
         assertNull("orgs stay hidden on a hub without them", s.orgs)
-        assertEquals("t1", TokenStore(kv).token(hub().display))
+        assertEquals("t1", kv.token(hub().display))
         assertTrue(server.takeRequest().path == "/api/me")
     }
 
@@ -96,28 +97,40 @@ class AccountModelTest {
         serve { r ->
             when (r.path) {
                 "/api/me" -> MockResponse().setBody("""{"user":{"id":"u1","name":"Sam"},"auth":"optional"}""")
-                "/api/orgs" -> MockResponse().setBody("""[{"id":"o1","name":"Bike Shop","role":"admin","members":4,"lessons":2}]""")
+                "/api/orgs" -> MockResponse().setBody(
+                    """{"orgs":[{"id":"o1","name":"Bike Shop","slug":"bike-shop","created":"2026-11-14T10:00:00Z","members":4,"role":"org_admin"}],
+                        "invites":[{"id":"i1","kind":"user","role":"teacher","created":"2026-11-14T10:00:00Z","created_by":"Ana","expires":"2026-12-14T10:00:00Z","user":{"id":"u1","name":"Sam"},"org":{"id":"o2","name":"Origami","slug":"origami"}}]}""",
+                )
                 "/api/courses" -> MockResponse().setBody("[]")
                 else -> notFound
             }
         }
         val m = model().apply { attach(hub()) }
         val s = m.await { it.orgs != null }
-        assertTrue(s.orgs!!.single().isAdmin)
+        val org = s.orgs!!.single()
+        assertTrue(org.isAdmin)
+        assertEquals(4, org.members)
+        assertEquals(OrgRole.Teacher, OrgRole.from(s.invites.single().role))
+        assertEquals("Origami", s.invites.single().org?.name)
+        assertTrue("signed in people may create orgs (library.md)", s.capabilities.canCreateOrg)
         val e = com.handover.app.core.HubException(410, "invite expired")
         assertEquals("That code has expired. Ask the admin for a new one.", AccountModel.inviteError(e))
-        assertEquals("That code does not work. Check it with the admin.", AccountModel.inviteError(com.handover.app.core.HubException(404, "invite not found")))
+        assertEquals("That code does not work. Check it with the admin.", AccountModel.inviteError(com.handover.app.core.HubException(404, "invite code is not valid")))
+        assertEquals("You are already in this organization.", AccountModel.inviteError(com.handover.app.core.HubException(409, "you are already a member of this organization")))
+        assertEquals("Too many tries. Wait a minute, then try again.", AccountModel.inviteError(com.handover.app.core.HubException(429, "too many join attempts; try again in a minute")))
+        assertEquals(7.0, AccountModel.inviteDays(168), 0.0001)
+        assertEquals(90.0, AccountModel.inviteDays(null), 0.0001)
     }
 
     @Test fun refusedTokenIsDropped() {
-        val kv = MemoryKeyValue()
+        val kv = MemoryTokenStore()
         serve { r ->
             if (r.path == "/api/me" && r.getHeader("Authorization") != null) MockResponse().setResponseCode(401).setBody("""{"detail":"sign in required"}""")
             else if (r.path == "/api/me") MockResponse().setBody("""{"user":null}""") else notFound
         }
-        TokenStore(kv).save(hub().display, "old")
+        kv.save(hub().display, "old")
         val m = model(kv).apply { attach(hub()) }
         m.await { it.support == AccountSupport.Available }
-        assertNull(TokenStore(kv).token(hub().display))
+        assertNull(kv.token(hub().display))
     }
 }

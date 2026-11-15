@@ -53,7 +53,10 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import com.handover.app.core.AppViewModel
+import com.handover.app.core.AccountSession
+import com.handover.app.core.HubClient
+import com.handover.app.core.HubUser
+import com.handover.app.core.CourseItem
 import com.handover.app.ui.components.ButtonSize
 import com.handover.app.ui.components.EmptyState
 import com.handover.app.ui.components.HOCard
@@ -66,7 +69,6 @@ import com.handover.app.ui.settings.FormGroup
 import com.handover.app.ui.settings.FormSection
 import com.handover.app.ui.settings.HOField
 import com.handover.app.ui.settings.SettingsRow
-import com.handover.app.ui.settings.SharedKeyValue
 import com.handover.app.ui.theme.HOSpace
 import com.handover.app.ui.theme.HandOver
 import kotlinx.coroutines.CoroutineScope
@@ -79,8 +81,8 @@ object Accounts {
 
     fun get(context: Context): AccountModel = model ?: synchronized(this) {
         model ?: AccountModel(
-            TokenStore(SharedKeyValue(context, "handover_account")),
-            AppViewModel.defaultHttpClient(),
+            AccountSession.apply { install(context) }.tokens,
+            HubClient.sharedHttp,
             CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate),
         ).also { model = it }
     }

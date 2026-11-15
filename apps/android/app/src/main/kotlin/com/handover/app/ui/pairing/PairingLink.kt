@@ -57,15 +57,17 @@ sealed interface PairingLink {
 }
 
 /**
- * An org invite code. People see it in groups of four ("K7QM 2XPA") and may type it with spaces,
- * dashes or lowercase; the hub gets it uppercase with only letters and digits.
+ * An org invite code. The hub makes them with `secrets.token_urlsafe(12)`: 16 characters of letters
+ * (upper and lower case matter), digits, `-` and `_`, and keeps only a hash, so the code must reach it
+ * exactly. People see it in groups of four and may paste it with spaces; only the spaces are dropped.
  */
 object InviteCode {
     const val MIN = 4
-    const val MAX = 32
+    const val MAX = 64
 
     fun normalize(raw: String?): String? {
-        val code = raw.orEmpty().filter { it.isLetterOrDigit() && it.code < 128 }.uppercase()
+        val code = raw.orEmpty().filterNot(Char::isWhitespace)
+        if (code.any { !(it.isLetterOrDigit() && it.code < 128) && it != '-' && it != '_' }) return null
         return code.takeIf { it.length in MIN..MAX }
     }
 

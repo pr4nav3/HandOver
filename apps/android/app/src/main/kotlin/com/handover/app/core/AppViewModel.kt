@@ -20,7 +20,6 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 import java.io.IOException
-import java.util.concurrent.TimeUnit
 
 /**
  * The app's one source of truth. Holds [AppState] in a StateFlow, keeps the viewer socket to the
@@ -52,6 +51,9 @@ class AppViewModel(
     private var uploadJob: Job? = null
     private var camera: CameraSocket? = null
 
+    /** True while this phone sends its own camera to the hub; the viewer socket then skips live frames. */
+    private var phoneIsCamera = false
+
     init {
         HubUrl.parse(prefs.hubAddress)?.let { connect(it) }
     }
@@ -70,12 +72,28 @@ class AppViewModel(
     private fun connect(hub: HubUrl) {
         disconnect()
         prefs.hubAddress = hub.display
-        val socket = UiSocket(hub, http, viewModelScope)
         client = HubClient(hub, http)
-        ui = socket
         _state.value = AppState(hub = hub, upload = _state.value.upload)
+        openUi(hub)
+        refreshLessons()
+    }
+
+    /**
+     * Opens the viewer socket. While this phone is the hub's camera it asks for `/ws/ui?frames=0`
+     * (contract-proposals P27): every text message, none of the live pictures it is itself sending.
+     * A hub that does not know the query ignores it and sends frames as before.
+     */
+    private fun openUi(hub: HubUrl) {
+        val socket = UiSocket(hub, http, viewModelScope, frames = !phoneIsCamera)
+        ui = socket
         connection = viewModelScope.launch {
-            launch { socket.status.collect { s -> _state.update { it.copy(connection = s) } } }
+            launch {
+                socket.status.collect { s ->
+                    // A lost connection drops the session; while connecting the last one stays on screen.
+                    val lost = s.phase == SocketPhase.Waiting || s.phase == SocketPhase.Replaced
+                    _state.update { it.copy(connection = s, session = if (lost) null else it.session) }
+                }
+            }
             launch { socket.frame.collect { _frame.value = it } }
             launch {
                 // Everything except state, which comes from socket.state below.
@@ -88,24 +106,38 @@ class AppViewModel(
             launch {
                 // The newest state only (the hub may skip states too, P17). A dropped connection clears the
                 // session; the first state after reconnecting is a full one.
+                // The new socket's empty start is skipped, so a reopen (frames on or off) keeps the session until
+                // the hub resends it.
+                var started = false
                 socket.state.collect { s ->
+                    if (!started && s == null) {
+                        started = true
+                        return@collect
+                    }
+                    started = true
                     _state.update { if (s == null) it.copy(session = null) else it.reduce(HubMessage.State(s)) }
                     if (s != null) fetchLessonIfNeeded()
                 }
             }
         }
         socket.start()
-        refreshLessons()
+    }
+
+    private fun closeUi() {
+        connection?.cancel()
+        connection = null
+        ui?.stop()
+        ui = null
+        _frame.value = null
     }
 
     fun disconnect() {
-        connection?.cancel()
         lessonFetch?.cancel()
-        ui?.stop()
-        stopCamera()
-        ui = null
+        closeUi()
+        camera?.stop()
+        camera = null
+        phoneIsCamera = false
         client = null
-        _frame.value = null
         _state.update { AppState(hub = it.hub, upload = it.upload) }
     }
 
@@ -123,8 +155,9 @@ class AppViewModel(
         }
     }
 
+    /** Chooses the lesson on the hub. Signed in, the sign-in token goes along so the hub tags the run with this learner. */
     fun selectLesson(id: String) {
-        if (ui?.selectLesson(id) != true) notConnected()
+        if (ui?.selectLesson(id, AccountSession.token(_state.value.hub)) != true) notConnected()
     }
 
     /** Next from the step on screen. Nothing is sent on the done screen or with no lesson. */
@@ -153,14 +186,17 @@ class AppViewModel(
         return client?.lessonFile(id, path, s.session.rev)?.toString()
     }
 
-    /** Uploads a video as a new lesson and follows its job until done or error. */
-    fun upload(video: UploadSource, title: String, id: String? = null) {
+    /**
+     * Uploads a video as a new lesson and follows its job until done or error. Signed in, it becomes a
+     * course owned by this person (in [orgId] when given); see [HubClient.upload].
+     */
+    fun upload(video: UploadSource, title: String, id: String? = null, orgId: String? = null) {
         val c = client ?: return notConnected()
         uploadJob?.cancel()
         _state.update { it.copy(upload = UploadState(title = title, total = video.length)) }
         uploadJob = viewModelScope.launch {
             val accepted = runHub {
-                c.upload(video, title, id) { sent, total -> _state.update { s -> s.copy(upload = s.upload?.copy(sent = sent, total = total)) } }
+                c.upload(video, title, id, orgId) { sent, total -> _state.update { s -> s.copy(upload = s.upload?.copy(sent = sent, total = total)) } }
             }
             val response = accepted.getOrElse { e ->
                 _state.update { s -> s.copy(upload = s.upload?.copy(error = e)) }
@@ -189,12 +225,24 @@ class AppViewModel(
         return CameraSocket(hub, http, viewModelScope, prefs.deviceId, name).also {
             camera = it
             it.start()
+            setPhoneIsCamera(true)
         }
     }
 
     fun stopCamera() {
         camera?.stop()
         camera = null
+        setPhoneIsCamera(false)
+    }
+
+    /** Reopens the viewer socket with or without live frames. The session stays on screen; the hub resends state on connect. */
+    private fun setPhoneIsCamera(on: Boolean) {
+        if (phoneIsCamera == on) return
+        phoneIsCamera = on
+        val hub = _state.value.hub ?: return
+        if (ui == null) return
+        closeUi()
+        openUi(hub)
     }
 
     override fun onCleared() {
@@ -248,13 +296,8 @@ class AppViewModel(
     }
 
     companion object {
-        fun defaultHttpClient(): OkHttpClient = OkHttpClient.Builder()
-            .connectTimeout(5, TimeUnit.SECONDS)
-            .readTimeout(30, TimeUnit.SECONDS)
-            .writeTimeout(30, TimeUnit.SECONDS)
-            // The hub pings every 10 s; this side pings too, so a hub that vanished is noticed.
-            .pingInterval(15, TimeUnit.SECONDS)
-            .build()
+        /** The app's one client ([HubClient.sharedHttp]). */
+        fun defaultHttpClient(): OkHttpClient = HubClient.sharedHttp
 
         fun defaultCameraName(): String = "${Build.MODEL ?: "Android"} camera".trim()
 

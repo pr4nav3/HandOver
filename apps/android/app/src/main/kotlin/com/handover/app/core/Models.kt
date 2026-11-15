@@ -130,14 +130,33 @@ data class JobStatus(
     val finished: Boolean get() = status == JobPhase.Done || status == JobPhase.Error
 }
 
-@Serializable
-enum class JobPhase {
-    @SerialName("queued") Queued,
-    @SerialName("normalizing") Normalizing,
-    @SerialName("extracting") Extracting,
-    @SerialName("cutting") Cutting,
-    @SerialName("done") Done,
-    @SerialName("error") Error,
+/**
+ * A job stage as the hub spells it. The known ones have names; any other status the hub adds later
+ * ("transcribing", "voicing") is kept as its text, so a new stage shows instead of being lost.
+ */
+@Serializable(with = JobPhaseSerializer::class)
+data class JobPhase(val wire: String) {
+    val known: Boolean get() = wire in KNOWN
+
+    companion object {
+        val Queued = JobPhase("queued")
+        val Normalizing = JobPhase("normalizing")
+        val Extracting = JobPhase("extracting")
+        val Cutting = JobPhase("cutting")
+        val Done = JobPhase("done")
+        val Error = JobPhase("error")
+        private val KNOWN = setOf("queued", "normalizing", "extracting", "cutting", "done", "error")
+    }
+}
+
+object JobPhaseSerializer : KSerializer<JobPhase> {
+    override val descriptor: SerialDescriptor = PrimitiveSerialDescriptor("HandOverJobPhase", PrimitiveKind.STRING)
+    override fun serialize(encoder: Encoder, value: JobPhase) = encoder.encodeString(value.wire)
+    override fun deserialize(decoder: Decoder): JobPhase {
+        val element = (decoder as? JsonDecoder)?.decodeJsonElement()
+        val text = if (element == null) decoder.decodeString() else (element as? JsonPrimitive)?.takeIf { it !is JsonNull }?.content
+        return text?.trim()?.lowercase()?.takeIf { it.isNotEmpty() }?.let(::JobPhase) ?: JobPhase.Queued
+    }
 }
 
 /** `DELETE /api/lessons/{id}`. */
@@ -165,6 +184,12 @@ data class HubState(
     @SerialName("check_mode") val checkMode: String? = null,
     /** The next step's clip path, once this step has one confident yes, so it can be preloaded. Hub branch only. */
     @SerialName("next_clip") val nextClip: String? = null,
+    /** How far the current step looks, 0 to 1, from the hub's understanding; null when it is off. Reset on step change. */
+    val progress: Double? = null,
+    /** The current stage inside the step, from the same source as [progress]. */
+    val stage: StepStage? = null,
+    /** The current run, for `GET /api/runs/{run_id}/score` on the Done screen. New on every select; kept on the done screen. */
+    @SerialName("run_id") val runId: String? = null,
 ) {
     val done: Boolean get() = status == StepStatus.Done
 
@@ -174,6 +199,10 @@ data class HubState(
     /** True when the UI should show the "Recording" banner. */
     val isRecording: Boolean get() = camera?.source == CameraSource.File
 }
+
+/** `state.stage`: the stage [index] of [count] inside the step, with the rubric's [label]. */
+@Serializable
+data class StepStage(val index: Int = 0, val count: Int = 0, val label: String = "")
 
 @Serializable
 enum class StepStatus {
@@ -218,6 +247,8 @@ enum class OfflineReason {
     @SerialName("no_key") NoKey,
     @SerialName("rate_limited") RateLimited,
     @SerialName("errors") Errors,
+    /** A Claude spending cap on the hub is reached; no call is made until it resets. */
+    @SerialName("budget") Budget,
 }
 
 /** The mistake object, both as `state.mistake` and (with `type`) as the `mistake` message. */
@@ -225,17 +256,22 @@ enum class OfflineReason {
 data class Mistake(
     val step: Int = 0,
     val kind: MistakeKind = MistakeKind.Behind,
-    @SerialName("looks_like") val looksLike: Int = 0,
+    /** The 0-based step the picture looks like. `behind` and `ahead` carry it; `live` does not. */
+    @SerialName("looks_like") val looksLike: Int? = null,
     val message: String = "",
     val confidence: Double = 0.0,
     /** "gemini", "claude" or "mock". */
     val source: String = "",
+    /** `live` only: the short name of what went wrong, from the step's rubric. */
+    val label: String? = null,
 )
 
 @Serializable
 enum class MistakeKind {
     @SerialName("behind") Behind,
     @SerialName("ahead") Ahead,
+    /** Advisory, from the hub's understanding: never moves the step, carries [Mistake.label] and no looks_like. */
+    @SerialName("live") Live,
 }
 
 /** The `advance` message, sent right before the matching state. `to` may equal total (finished). */
@@ -275,8 +311,9 @@ data class BackCommand(val from: Int? = null, val type: String = "back")
 @Serializable
 data class GotoCommand(val step: Int, val type: String = "goto")
 
+/** [token] is the sign-in token, so the hub tags the run with the learner; left out when signed out. */
 @Serializable
-data class SelectLessonCommand(val id: String, val type: String = "select_lesson")
+data class SelectLessonCommand(val id: String, val token: String? = null, val type: String = "select_lesson")
 
 @Serializable
 data class DismissMistakeCommand(val type: String = "dismiss_mistake")

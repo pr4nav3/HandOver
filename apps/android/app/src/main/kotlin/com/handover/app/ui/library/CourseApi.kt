@@ -1,6 +1,6 @@
 package com.handover.app.ui.library
 
-import com.handover.app.core.AppViewModel
+import com.handover.app.core.AccountSession
 import com.handover.app.core.HubClient
 import com.handover.app.core.HubException
 import com.handover.app.core.HubJson
@@ -41,9 +41,7 @@ import kotlin.coroutines.resumeWithException
 // server/docs/library.md). None of it is in CONTRACT.md Revision 5, so every call here is feature-detected:
 // a route the hub does not have answers 404 with FastAPI's own "Not Found", and the call returns null so the
 // screen hides that feature instead of failing. Legacy hubs keep working through GET /api/lessons and recut.
-//
-// TODO(core): these calls belong in core/HubClient once the library API is in the contract. HubClient keeps its
-// OkHttpClient private, so this file makes its own (same settings) and adds the bearer token when one is set.
+// It shares core's one OkHttp client and the account session's bearer token (core/AccountSession.kt).
 
 /** A course row from `GET /api/courses`. */
 @Serializable
@@ -219,11 +217,11 @@ interface CourseBackend {
 class CourseApi(
     val hub: HubUrl,
     private val http: OkHttpClient = sharedHttp,
-    /** The signed-in session's bearer token, when the app has one. TODO(core): no token store exists yet. */
-    private val token: () -> String? = { tokenProvider() },
+    /** The signed-in session's bearer token for this hub, or null when signed out. */
+    private val token: () -> String? = { AccountSession.token(hub) },
 ) : CourseBackend {
 
-    private val core = HubClient(hub, http)
+    private val core = HubClient(hub, http, token)
 
     override suspend fun me(): Me? {
         val obj = getJson("api/me") as? JsonObject ?: return null
@@ -395,11 +393,8 @@ class CourseApi(
     companion object {
         private val JSON = "application/json".toMediaType()
 
-        /** One client for every hub call these screens make; the same settings as the app's own. */
-        val sharedHttp: OkHttpClient by lazy { AppViewModel.defaultHttpClient() }
-
-        /** Where the signed-in token comes from. Set by whoever owns sign in; null means anonymous. */
-        @Volatile var tokenProvider: () -> String? = { null }
+        /** The app's one client (core's [HubClient.sharedHttp]). */
+        val sharedHttp: OkHttpClient get() = HubClient.sharedHttp
 
         private val cache = mutableMapOf<HubUrl, CourseApi>()
 

@@ -18,9 +18,11 @@ class UiSocket(
     http: OkHttpClient,
     scope: CoroutineScope,
     backoff: Backoff = Backoff(),
+    /** False asks for `/ws/ui?frames=0`: no live pictures, for a phone that is itself the camera. */
+    frames: Boolean = true,
     /** JPEG bytes to a Bitmap. Replaceable so JVM tests can run without Android's decoder. */
     private val decodeFrame: (ByteArray) -> Bitmap? = { BitmapFactory.decodeByteArray(it, 0, it.size) },
-) : HubSocket(hub.uiSocket, http, scope, backoff) {
+) : HubSocket(hub.uiSocket(frames), http, scope, backoff) {
 
     private val _frame = MutableStateFlow<Bitmap?>(null)
 
@@ -35,7 +37,9 @@ class UiSocket(
         _frame.value = null
     }
 
-    fun selectLesson(id: String): Boolean = send(SelectLessonCommand(id), SelectLessonCommand.serializer())
+    /** Selects [id]. [token] (the sign-in token) tags the run with the learner; null leaves it anonymous. */
+    fun selectLesson(id: String, token: String? = null): Boolean =
+        send(SelectLessonCommand(id, token?.takeIf { it.isNotBlank() }), SelectLessonCommand.serializer())
 
     /** Next from the position [shown] (the newest state by default). False when nothing was sent. */
     fun next(shown: HubState? = state.value, reason: String = "button"): Boolean =

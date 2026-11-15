@@ -64,6 +64,19 @@ class HubUrlTest {
         assertNull(parse("http://"))
     }
 
+    @Test fun rejectsOtherSchemesAndUserParts() {
+        assertNull(parse("mailto:someone@example.com"))
+        assertNull(parse("mailto:hub.local"))
+        assertNull(parse("tel:+15551234"))
+        assertNull(parse("sms:5551234?body=hi"))
+        assertNull(parse("javascript:alert(1)"))
+        assertNull(parse("geo:37.7,-122.4"))
+        assertNull(parse("someone@192.168.1.20"))
+        assertNull(parse("http://user@192.168.1.20:8000"))
+        assertNull(parse("handover://join?code=abc&host=192.168.1.20&port=8000"))
+        assertEquals(HubUrl("mac.local", 8001), parse("mac.local:8001"))
+    }
+
     @Test fun derivedUrls() {
         val hub = HubUrl("192.168.1.20", 8000)
         assertEquals("http://192.168.1.20:8000/", hub.httpBase)

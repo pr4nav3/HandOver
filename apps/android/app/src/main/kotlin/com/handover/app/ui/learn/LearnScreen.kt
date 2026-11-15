@@ -217,9 +217,10 @@ fun LearnScreen(state: AppState, vm: AppViewModel, modifier: Modifier = Modifier
     // Done: when the hub says done, or after a practice step; frozen at the moment of finishing.
     if (lesson != null && s?.lessonId != null && (s.done || showDone)) {
         var model by remember(run.lessonId, run.finished, run.steps) { mutableStateOf(RunScore.model(lesson, run)) }
-        LaunchedEffect(model.steps) {
-            // Feature detection: the hub only has a run score once it sends run_id in state (not yet).
-            val runId: String? = null
+        // The hub's score for this run, feature-detected: only a hub that sends run_id in state has one, and a
+        // hub without the score route keeps the local numbers. Keyed on the run so a new select fetches again.
+        val runId = s.runId
+        LaunchedEffect(model.steps, runId) {
             val hub = state.hub
             if (runId != null && hub != null) {
                 when (val r = DoneApi.runScore(hub, runId)) {

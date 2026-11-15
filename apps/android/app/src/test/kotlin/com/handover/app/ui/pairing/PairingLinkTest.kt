@@ -33,7 +33,7 @@ class PairingLinkTest {
 
     @Test fun joinLinksCarryNormalizedCodeAndOptionalHub() {
         val local = PairingLink.parse("handover://join?code=k7qm-2xpa") as PairingLink.Join
-        assertEquals("K7QM2XPA", local.code)
+        assertEquals("k7qm-2xpa", local.code)
         assertNull(local.target)
 
         val remote = PairingLink.parse("handover://join?host=192.168.1.30&port=8001&code=K7QM%202XPA&name=Shop") as PairingLink.Join
@@ -58,9 +58,11 @@ class PairingLinkTest {
     }
 
     @Test fun inviteCodeFormatting() {
-        assertEquals("K7QM2XPA", InviteCode.normalize(" k7qm 2xpa "))
+        // The hub's codes are token_urlsafe(12): case sensitive, with - and _. Only spaces are dropped.
+        assertEquals("k7Qm-2x_PaZ9wE4r", InviteCode.normalize(" k7Qm -2x_ PaZ9 wE4r "))
         assertEquals("K7QM 2XPA", InviteCode.grouped("K7QM2XPA"))
         assertEquals("Invite code K 7 Q M", InviteCode.spoken("K7QM"))
-        assertNull(InviteCode.normalize("ab-c"))
+        assertNull(InviteCode.normalize("ab"))
+        assertNull(InviteCode.normalize("ab+c/de=f"))
     }
 }

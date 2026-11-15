@@ -1,8 +1,11 @@
 package com.handover.app.ui.done
 
+import com.handover.app.core.AccountSession
+import com.handover.app.core.HubClient
 import com.handover.app.core.HubJson
 import com.handover.app.core.HubUrl
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -15,9 +18,8 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
-import java.util.concurrent.TimeUnit
 
-/** `GET /api/runs/{run_id}/score` on the hub branch (server/scoring.py). Every field optional. */
+/** `GET /api/runs/{run_id}/score` (library.md, server/scoring.py). Every field optional. */
 @Serializable
 data class HubRunScore(
     val score: Int? = null,
@@ -41,47 +43,78 @@ sealed interface ScoreFetch {
 }
 
 /**
- * The two Done calls core's HubClient does not have yet: the run score and the rating. Kept here
- * until core adds them (see the report). Its own small OkHttp client.
+ * The two Done calls: the run score and the rating. They use core's shared client and send the
+ * account session's bearer token, which the hub needs to show a learner their own run and to take
+ * a rating.
  */
 object DoneApi {
-    private val http by lazy {
-        OkHttpClient.Builder().connectTimeout(5, TimeUnit.SECONDS).readTimeout(10, TimeUnit.SECONDS).build()
+    /**
+     * `GET /api/runs/{run_id}/score` for [runId] from `state.run_id`. A hub without the route, or one
+     * that has not seen the run's events yet, is [ScoreFetch.NotOnHub] and the Done screen keeps its local
+     * numbers. [retries] covers the short gap before the hub's event file has the run's last events.
+     */
+    suspend fun runScore(
+        hub: HubUrl,
+        runId: String,
+        client: OkHttpClient = HubClient.sharedHttp,
+        token: String? = AccountSession.token(hub),
+        retries: Int = 2,
+        retryDelayMs: Long = 1_500,
+    ): ScoreFetch {
+        var attempt = 0
+        while (true) {
+            val (result, runMissing) = fetchScore(hub, runId, client, token)
+            if (!runMissing || attempt >= retries) return result
+            attempt++
+            delay(retryDelayMs)
+        }
     }
 
-    suspend fun runScore(hub: HubUrl, runId: String, client: OkHttpClient = http): ScoreFetch = withContext(Dispatchers.IO) {
+    private suspend fun fetchScore(hub: HubUrl, runId: String, client: OkHttpClient, token: String?): Pair<ScoreFetch, Boolean> = withContext(Dispatchers.IO) {
         try {
-            client.newCall(Request.Builder().url(hub.http("api/runs/$runId/score")).get().build()).execute().use { r ->
+            client.newCall(signed(Request.Builder().url(hub.http("api/runs/$runId/score")), token).get().build()).execute().use { r ->
                 val text = r.body?.string().orEmpty()
                 when {
-                    r.code == 404 || r.code == 405 -> ScoreFetch.NotOnHub
-                    !r.isSuccessful -> ScoreFetch.Failed(detail(text) ?: "The hub answered ${r.code}.")
+                    r.code == 404 -> ScoreFetch.NotOnHub to (detail(text) == "run not found")
+                    r.code == 405 || r.code == 401 || r.code == 403 -> ScoreFetch.NotOnHub to false
+                    !r.isSuccessful -> ScoreFetch.Failed(detail(text) ?: "The hub answered ${r.code}.") to false
                     else -> runCatching { ScoreFetch.Found(HubJson.decodeFromString(HubRunScore.serializer(), text)) }
-                        .getOrElse { ScoreFetch.Failed("The hub sent a score this app cannot read.") }
+                        .getOrElse { ScoreFetch.Failed("The hub sent a score this app cannot read.") } to false
                 }
             }
         } catch (e: IOException) {
-            ScoreFetch.Failed("Could not reach the hub.")
+            ScoreFetch.Failed("Could not reach the hub.") to false
         }
     }
 
     /** `POST /api/courses/{id}/rating`. Null on success, else the hub's message. */
-    suspend fun rate(hub: HubUrl, lessonId: String, stars: Int, comment: String?, client: OkHttpClient = http): String? = withContext(Dispatchers.IO) {
+    suspend fun rate(
+        hub: HubUrl,
+        lessonId: String,
+        stars: Int,
+        comment: String?,
+        client: OkHttpClient = HubClient.sharedHttp,
+        token: String? = AccountSession.token(hub),
+    ): String? = withContext(Dispatchers.IO) {
         val body = buildJsonObject {
             put("stars", stars)
             if (!comment.isNullOrBlank()) put("comment", comment.trim())
         }.toString().toRequestBody("application/json".toMediaType())
         try {
-            client.newCall(Request.Builder().url(hub.http("api/courses/$lessonId/rating")).post(body).build()).execute().use { r ->
+            client.newCall(signed(Request.Builder().url(hub.http("api/courses/$lessonId/rating")), token).post(body).build()).execute().use { r ->
+                val text = r.body?.string().orEmpty()
                 if (r.isSuccessful) null
-                else if (r.code == 404 || r.code == 405) "This hub does not take ratings yet."
+                else if (r.code == 405 || (r.code == 404 && detail(text) == "Not Found")) "This hub does not take ratings yet."
                 else if (r.code == 401) "Sign in on the hub to send a rating."
-                else detail(r.body?.string().orEmpty()) ?: "The hub answered ${r.code}."
+                else detail(text)?.replaceFirstChar(Char::uppercase) ?: "The hub answered ${r.code}."
             }
         } catch (e: IOException) {
             "Could not reach the hub."
         }
     }
+
+    private fun signed(builder: Request.Builder, token: String?): Request.Builder =
+        builder.apply { token?.takeIf { it.isNotBlank() }?.let { header("Authorization", "Bearer $it") } }
 
     private fun detail(text: String): String? = runCatching {
         ((HubJson.parseToJsonElement(text) as? JsonObject)?.get("detail") as? JsonPrimitive)?.content

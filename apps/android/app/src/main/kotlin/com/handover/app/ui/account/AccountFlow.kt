@@ -15,6 +15,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import com.handover.app.core.AppState
+import com.handover.app.core.Org
+import com.handover.app.core.OrgInvite
+import com.handover.app.core.OrgPage
 import com.handover.app.ui.components.EmptyState
 import com.handover.app.ui.components.HOHaptic
 import com.handover.app.ui.components.rememberHaptics
@@ -39,7 +42,12 @@ sealed interface AccountPage {
  * organization pages when the hub has /api/orgs.
  */
 @Composable
-fun AccountScreen(state: AppState, modifier: Modifier = Modifier, onBack: (() -> Unit)? = null, start: AccountPage = AccountPage.Home) {
+fun AccountScreen(
+    state: AppState,
+    modifier: Modifier = Modifier,
+    onBack: (() -> Unit)? = null,
+    start: AccountPage = AccountPage.Home,
+) {
     val model = rememberAccounts()
     val account by model.state.collectAsState()
     val recent = rememberRecentHubs()
@@ -47,6 +55,8 @@ fun AccountScreen(state: AppState, modifier: Modifier = Modifier, onBack: (() ->
     val hubName = recent.nameOf(hub?.display) ?: hub?.host ?: "this hub"
     LaunchedEffect(hub) { model.attach(hub) }
     var page by remember(start) { mutableStateOf(start) }
+    // The page Back stops at: the Organizations tab (start Orgs, or a join link) roots at the org list.
+    val root = if (start is AccountPage.Join || start == AccountPage.Orgs) AccountPage.Orgs else AccountPage.Home
     var detail by remember { mutableStateOf<OrgPage?>(null) }
     val scope = rememberCoroutineScope()
     val haptics = rememberHaptics()
@@ -58,7 +68,7 @@ fun AccountScreen(state: AppState, modifier: Modifier = Modifier, onBack: (() ->
     }
     fun reload(id: String) = scope.launch { model.org(id).onSuccess { detail = it } }
 
-    BackHandler(page != AccountPage.Home) {
+    BackHandler(page != root) {
         page = when (val p = page) {
             is AccountPage.Invite -> AccountPage.OrgDetail(p.id)
             AccountPage.Orgs -> AccountPage.Home
@@ -66,10 +76,13 @@ fun AccountScreen(state: AppState, modifier: Modifier = Modifier, onBack: (() ->
         }
     }
 
+    // Organizations need a signed-in person on a hub with accounts; until then the tab shows the account page.
+    val shown = if (root == AccountPage.Orgs && page != AccountPage.Home && !(account.signedIn && account.orgsSupported)) AccountPage.Home else page
+
     Column(modifier.fillMaxSize().paper()) {
-        when (val p = page) {
+        when (val p = shown) {
             AccountPage.Home -> {
-                PushedBar(if (account.signedIn) "Profile" else "Account", onBack)
+                PushedBar(if (root == AccountPage.Orgs) "Organizations" else if (account.signedIn) "Profile" else "Account", onBack)
                 when {
                     hub == null -> Centered { EmptyState("No hub connected", "Connect to a hub first.") }
                     account.support == AccountSupport.Unknown -> Centered { EmptyState("Checking the hub", null, loading = true) }
@@ -82,9 +95,12 @@ fun AccountScreen(state: AppState, modifier: Modifier = Modifier, onBack: (() ->
             AccountPage.Orgs -> OrgsListPage(
                 account.orgs.orEmpty(), account.capabilities.canCreateOrg,
                 onJoin = { page = AccountPage.Join() }, onCreate = { page = AccountPage.CreateOrg }, onOpen = { open(it.id) },
-                onBack = { page = AccountPage.Home },
+                onBack = if (root == AccountPage.Orgs) null else ({ page = AccountPage.Home }),
+                invites = account.invites,
+                onAccept = { inv -> model.acceptInvite(inv) { org -> haptics.play(HOHaptic.Success); open(org.id) } },
+                onDecline = { inv -> scope.launch { model.declineInvite(inv) } },
             )
-            AccountPage.CreateOrg -> CreateOrgPage(account, onCreate = { n, a -> model.createOrg(n, a) { org -> haptics.play(HOHaptic.Success); open(org.id); page = AccountPage.Invite(org.id) } }, onBack = { page = AccountPage.Orgs })
+            AccountPage.CreateOrg -> CreateOrgPage(account, onCreate = { n -> model.createOrg(n) { org -> haptics.play(HOHaptic.Success); open(org.id); page = AccountPage.Invite(org.id) } }, onBack = { page = AccountPage.Orgs })
             is AccountPage.Join -> JoinOrgPage(model, p.code, onJoined = { open(it.id) }, onBack = { page = AccountPage.Orgs })
             is AccountPage.OrgDetail -> {
                 val d = detail
@@ -103,11 +119,24 @@ fun AccountScreen(state: AppState, modifier: Modifier = Modifier, onBack: (() ->
             is AccountPage.Invite -> {
                 val d = detail
                 var error by remember { mutableStateOf<String?>(null) }
+                var fresh by remember(p.id) { mutableStateOf<OrgInvite?>(null) }
+                var busy by remember { mutableStateOf(false) }
                 InvitePage(
-                    d?.org ?: com.handover.app.ui.account.Org(id = p.id, name = "Organization"), d?.invites.orEmpty(), hub, hubName,
-                    onCreate = { role, hours, uses -> scope.launch { model.createInvite(p.id, role, hours, uses).fold({ error = null; reload(p.id) }, { error = it.message }) } },
-                    onRevoke = { inv -> scope.launch { model.revokeInvite(p.id, inv.code).onSuccess { haptics.play(HOHaptic.Warning) }; reload(p.id) } },
-                    busy = false, error = error, onBack = { page = AccountPage.OrgDetail(p.id) },
+                    d?.org ?: Org(id = p.id, name = "Organization"), d?.invites.orEmpty(), hub, hubName,
+                    onCreate = { role, hours, uses ->
+                        busy = true
+                        scope.launch {
+                            model.createInvite(p.id, role, hours, uses).fold({ fresh = it; error = null; reload(p.id) }, { error = it.message })
+                            busy = false
+                        }
+                    },
+                    onRevoke = { inv ->
+                        scope.launch {
+                            model.revokeInvite(p.id, inv.id).onSuccess { haptics.play(HOHaptic.Warning); if (fresh?.id == inv.id) fresh = null }
+                            reload(p.id)
+                        }
+                    },
+                    busy = busy, error = error, onBack = { page = AccountPage.OrgDetail(p.id) }, fresh = fresh,
                 )
             }
         }

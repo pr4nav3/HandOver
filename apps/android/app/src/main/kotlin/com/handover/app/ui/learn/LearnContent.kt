@@ -268,7 +268,7 @@ private fun MistakeSlot(ui: LearnUi, actions: LearnActions, onVideo: Boolean = f
         exit = fadeOut(HOMotion.reduced()),
     ) {
         val m = ui.mistake ?: return@AnimatedVisibility
-        MistakeCard(m, { actions.showStep(m.looksLike) }, actions::dismissMistake, onVideo = onVideo)
+        MistakeCard(m, { m.looksLike?.let(actions::showStep) }, actions::dismissMistake, onVideo = onVideo)
     }
 }
 
