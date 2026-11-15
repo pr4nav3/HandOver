@@ -2456,20 +2456,7 @@ button.option-card:hover {
   grid-template-areas: "tutorial divider camera";
 }
 
-.learn-grid.manual-focus,
-.learn-grid.manual-focus.tutorial-first {
-  grid-template-columns: minmax(0, 1fr);
-  grid-template-areas: "tutorial";
-}
-
-.learn-grid.manual-focus .learn-layout-tools {
-  display: none;
-}
-
-.learn-grid.manual-focus > .live-col,
-.learn-grid.manual-focus > .learn-divider {
-  display: none;
-}
+.learn-grid.manual-focus .live-frame { opacity: 0.5; }
 
 .learn-grid > .live-col {
   grid-area: camera;
@@ -2596,6 +2583,7 @@ button.option-card:hover {
 /* Before there is a picture the pane is an instruction, not a pretend feed: it keeps its own height. */
 .live.waiting {
   flex: 0 0 auto;
+  margin: auto 0;
 }
 
 .live.waiting .placeholder {

@@ -61,12 +61,13 @@ test("Learn videos fill their columns inside flat panels and there is no goal ca
   assert.match(clip, /background:\s*var\(--panel\)/);
 });
 
-test("Learn keeps waiting and manual states compact", async () => {
+test("Learn keeps the camera column on manual steps and centers the waiting state", async () => {
   const learn = await readFile(new URL("../src/views/learn.ts", import.meta.url), "utf8");
   const css = await readFile(new URL("../src/styles/app.css", import.meta.url), "utf8");
-  assert.match(learn, /livePane\.hidden = !!manualStep/);
+  assert.match(learn, /livePane\.hidden = false/);
   assert.match(learn, /classList\.toggle\("manual-focus", !!manualStep\)/);
   assert.doesNotMatch(learn, /class="badge-wrap feedback-card/);
   assert.match(css, /\.live\.waiting\s*{[^}]*flex:\s*0 0 auto/);
+  assert.match(css, /\.live\.waiting\s*{[^}]*margin:\s*auto 0/);
   assert.match(css, /\.live\.waiting \.placeholder/);
 });

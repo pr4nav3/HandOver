@@ -641,7 +641,7 @@ export class LearnView {
     const manualStep = step?.check_type === "manual";
     this.q<HTMLElement>(".learn-grid").classList.toggle("manual-focus", !!manualStep);
     const livePane = this.q<HTMLElement>(".live");
-    livePane.hidden = !!manualStep;
+    livePane.hidden = false;
     livePane.classList.toggle("waiting", !showLive);
     this.q<HTMLElement>(".live-frame").classList.toggle("hidden", !showLive);
     this.localVideo.hidden = !local;
