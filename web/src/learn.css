@@ -1,0 +1,1003 @@
+/* Learn screen only. Shared tokens, buttons, badges and progress live in styles.css.
+   Layout follows the Mac learn screen: a Steps card on the left, the live camera
+   and the expert clip as two equal panes, the step under them, controls at the
+   bottom. Video surfaces are always black. */
+
+/* Top bar */
+
+.note {
+  font-size: 13px;
+  color: var(--muted);
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.note.error {
+  color: var(--red);
+  border-color: color-mix(in srgb, var(--red) 30%, transparent);
+  max-width: 40vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.end-button,
+.steps-toggle {
+  height: 32px;
+  white-space: nowrap;
+}
+
+/* Only narrow windows use the Steps button; wide ones show the Steps card. */
+.steps-toggle {
+  display: none;
+}
+
+.more-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+/* Small floating card under the "..." button. */
+.popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 30;
+  width: max-content;
+  padding: 12px 14px;
+  border-color: var(--border-strong);
+}
+
+.popover-label {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+/* A small segmented control: 0.5 s / 1 s / 2 s. */
+.check-rate {
+  display: inline-flex;
+  padding: 3px;
+  gap: 2px;
+  border-radius: 10px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+}
+
+.check-rate button {
+  border: 0;
+  background: transparent;
+  padding: 5px 14px;
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.check-rate button:hover {
+  color: var(--text);
+}
+
+.check-rate button.on {
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: var(--segment-shadow);
+}
+
+/* Full-page layers: a dimmed backdrop for the End card, a clear one that closes popovers. */
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--bg) 70%, transparent);
+}
+
+.scrim.clear {
+  background: transparent;
+}
+
+.confirm-card {
+  width: min(400px, calc(100vw - 48px));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 28px;
+  border-radius: var(--radius-panel);
+  border-color: var(--border-strong);
+  text-align: center;
+}
+
+.confirm-card h2 {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+
+.confirm-text {
+  margin: 0 0 14px;
+  color: var(--muted);
+}
+
+.confirm-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.confirm-actions .primary,
+.confirm-actions .secondary {
+  flex: 1;
+  min-height: 48px;
+}
+
+/* No lesson, or waiting for one. */
+.learn-empty {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+}
+
+/* Learn body: Steps card, then the stage. */
+
+.page.learn {
+  position: relative;
+}
+
+.learn-body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  gap: 24px;
+  padding-top: 8px;
+}
+
+.learn-body.off {
+  display: none;
+}
+
+.steps-card {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--radius-panel);
+  padding: 14px 8px 8px;
+  overflow: hidden;
+}
+
+.sl {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+
+.sl-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 10px 10px;
+}
+
+.sl-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.sl-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.sl-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.sl-rows li + li {
+  border-top: 1px solid var(--border);
+}
+
+.sl-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 10px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  text-align: left;
+  font-size: 14px;
+  line-height: 1.35;
+  transition: background 0.15s;
+}
+
+.sl-row:hover {
+  background: var(--tint-1);
+}
+
+.sl-row.current {
+  background: color-mix(in srgb, var(--accent) 13%, transparent);
+  color: var(--accent-ink);
+  font-weight: 500;
+}
+
+.sl-rows li:has(.current) + li,
+.sl-rows li:has(+ li .current) {
+  border-color: transparent;
+}
+
+.st {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 20px;
+  height: 19px;
+}
+
+.st.current {
+  color: var(--accent);
+}
+
+.st.camera {
+  color: var(--green);
+}
+
+.st.button {
+  color: var(--muted);
+}
+
+.st.skipped {
+  color: var(--amber);
+}
+
+.st.idle {
+  color: var(--faint);
+}
+
+.sl-num {
+  flex: none;
+  min-width: 1.1em;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.sl-row.current .sl-num {
+  color: inherit;
+}
+
+.sl-name {
+  min-width: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Narrow windows: the Steps card becomes a sheet opened from the top bar. */
+.steps-sheet {
+  position: fixed;
+  top: 64px;
+  left: var(--pad);
+  z-index: 25;
+  width: min(320px, calc(100vw - 2 * var(--pad)));
+  max-height: calc(100vh - 96px);
+  display: flex;
+  flex-direction: column;
+  padding: 14px 8px 8px;
+  border-radius: var(--radius-panel);
+  border-color: var(--border-strong);
+}
+
+.sheet-close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 28px;
+  height: 28px;
+}
+
+.steps-sheet .sl-head {
+  padding-right: 40px;
+}
+
+@media (max-width: 1099px) {
+  .learn-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .steps-card {
+    display: none;
+  }
+  .steps-toggle {
+    display: inline-flex;
+  }
+}
+
+@media (min-width: 1100px) {
+  .steps-sheet {
+    display: none;
+  }
+}
+
+/* The stage: panes, step info, then the controls pinned to the bottom. */
+.learn-stage {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.panes {
+  flex: none;
+  display: flex;
+  gap: 20px;
+}
+
+/* Both panes get the same size from Learn.tsx (usePaneBox); before that, half each. */
+.pane {
+  position: relative;
+  flex: none;
+  width: calc(50% - 10px);
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  border-radius: var(--radius-panel);
+  display: grid;
+  place-items: center;
+}
+
+.pane.live {
+  background: var(--panel);
+}
+
+/* Video surfaces: black behind the picture, in light and dark. */
+.pane.live.on,
+.pane.clip {
+  background: var(--stage);
+  border-color: transparent;
+}
+
+.live canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  transition: filter 0.4s;
+}
+
+/* Camera dropped: the last frame stays so the learner keeps context, dimmed so
+   nobody takes it for live. */
+.live canvas.lost {
+  filter: grayscale(0.7) brightness(0.35);
+}
+
+.live-note {
+  position: absolute;
+  left: 50%;
+  bottom: 20px;
+  transform: translateX(-50%);
+  margin: 0;
+  padding: 8px 16px;
+  border-radius: 999px;
+  background: var(--caption-fill);
+  color: var(--caption-ink);
+  font-size: 15px;
+  white-space: nowrap;
+}
+
+/* A replayed video must never pass for a live camera. Top right, so the
+   pane label keeps the top left. */
+.rec {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px 4px 10px;
+  border-radius: 999px;
+  background: var(--caption-fill);
+  color: var(--caption-ink);
+  border: 1px solid color-mix(in srgb, var(--record) 55%, transparent);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.rec-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--record);
+}
+
+/* Which pane is which. Sits over video. */
+.pane-label {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  z-index: 2;
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: var(--caption-fill);
+  color: var(--caption-ink);
+  font-size: 13px;
+  font-weight: 600;
+  pointer-events: none;
+}
+
+.placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  color: var(--faint);
+  text-align: center;
+  padding: 20px;
+}
+
+.placeholder svg {
+  margin-bottom: 6px;
+}
+
+.placeholder-title {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.placeholder-hint {
+  margin: 0;
+  font-size: 14px;
+}
+
+.clip-media {
+  position: absolute;
+  inset: 0;
+}
+
+.clip video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+/* The standby clip buffers the next step underneath, out of sight. */
+.clip video.standby {
+  visibility: hidden;
+}
+
+/* Autoplay with sound was refused: the clip plays muted until this is clicked. */
+.unmute {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 14px 6px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: var(--caption-fill);
+  color: var(--caption-ink);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.unmute:hover {
+  background: rgba(0, 0, 0, 0.85);
+}
+
+/* Lift captions off the bottom edge of the picture. */
+video::-webkit-media-text-track-container {
+  transform: translateY(-10px);
+}
+
+/* ::cue ignores padding, so a same-color outline adds side room. 72% black is
+   DESIGN.md captionFill: white text keeps 9:1 even over a white frame. */
+video::cue {
+  background-color: var(--caption-fill);
+  outline: 0.3em solid var(--caption-fill);
+  color: var(--caption-ink);
+  font-family: var(--font);
+  font-size: clamp(17px, 1.3vw, 28px);
+  line-height: 1.45;
+}
+
+.step-info {
+  flex: none;
+  padding: 0 2px;
+}
+
+.step-count {
+  margin: 0 0 2px;
+  font-size: 13px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.step-title {
+  margin: 0;
+  font-size: clamp(22px, 1.7vw, 30px);
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.step-do {
+  margin: 4px 0 0;
+  font-size: 15px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Controls stay at the bottom of the stage. */
+.stage-foot {
+  position: relative;
+  flex: none;
+  margin-top: auto;
+}
+
+.controls {
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) minmax(0, auto) auto;
+  grid-template-areas: 'badge mistake next';
+  align-items: end;
+  gap: 20px;
+}
+
+.badge-wrap {
+  grid-area: badge;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* Two short lines under the badge. */
+.check-meta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  max-width: 100%;
+  min-height: calc(2 * 13px * 1.35);
+  font-size: 13px;
+  line-height: 1.35;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.check-meta span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.check-meta .sim {
+  color: var(--amber);
+  font-weight: 500;
+}
+
+.check-reason {
+  color: var(--faint);
+}
+
+.next-wrap {
+  grid-area: next;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.next-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.next-hint {
+  font-size: 13px;
+  color: var(--faint);
+}
+
+/* The one filled accent button on Learn. */
+.controls .next {
+  min-width: 132px;
+  font-size: 17px;
+}
+
+.controls .back {
+  gap: 4px;
+  padding: 0 20px 0 14px;
+}
+
+.next:disabled,
+.back:disabled {
+  cursor: default;
+}
+
+/* The catch (DESIGN 3.2): an amber wash over the panel with an amber hairline,
+   in the controls row between the badge and Back, so it never covers the
+   video or the step and nothing else moves. */
+.mistake-banner {
+  grid-area: mistake;
+  align-self: center;
+  max-width: 640px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 12px 12px 16px;
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--amber) 13%, var(--panel));
+  border: 1px solid color-mix(in srgb, var(--amber) 45%, transparent);
+}
+
+.mistake-icon {
+  flex: none;
+  color: var(--amber);
+}
+
+.mistake-text {
+  flex: 1 1 auto;
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.3;
+  min-width: 0;
+}
+
+.mistake-label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--amber);
+}
+
+.mistake-actions {
+  display: flex;
+  gap: 8px;
+  flex: none;
+}
+
+.mistake-banner .ghost {
+  min-height: 34px;
+  padding: 0 14px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--amber) 40%, transparent);
+}
+
+/* No camera yet: how to connect one, sized to fit inside the live pane. */
+.connect {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: clamp(16px, 2vw, 28px);
+  padding: 20px;
+  max-width: 100%;
+}
+
+.connect-text {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  max-width: 230px;
+}
+
+.connect-icon {
+  color: var(--faint);
+  margin-bottom: 4px;
+}
+
+.connect-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.connect-copy {
+  margin: 0;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.connect-local {
+  margin: 4px 0 0 -8px;
+  text-decoration: none;
+}
+
+.connect-qr {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: clamp(104px, 9vw, 150px);
+  flex: none;
+}
+
+.connect-qr figcaption code {
+  display: block;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.qr {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 10px;
+}
+
+/* Done (SCREENS 8): left column with the title, stats and buttons; the step
+   breakdown on the right, scrolling if long. */
+
+.done-screen {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(300px, 380px) minmax(0, 1fr);
+  gap: clamp(24px, 3vw, 48px);
+  padding-top: 20px;
+}
+
+.done-left {
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  text-align: center;
+}
+
+.done-title {
+  margin: 12px 0 0;
+  font-size: clamp(26px, 2.2vw, 34px);
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.done-sub {
+  margin: -8px 0 6px;
+  color: var(--muted);
+}
+
+.done-stats {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  row-gap: 16px;
+  padding: 18px 10px;
+  border-radius: var(--radius-panel);
+  background: var(--panel);
+  border: 1px solid var(--border);
+}
+
+.done-stats div {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+.done-stats dd {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.done-stats dt {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.caution {
+  color: var(--amber);
+}
+
+.done-note {
+  margin: 0;
+  font-size: 13px;
+  color: var(--amber);
+}
+
+.done-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.done-right {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 16px 0 6px;
+  border-radius: var(--radius-panel);
+  align-self: start;
+  max-height: 100%;
+}
+
+.done-right h2 {
+  margin: 0 20px 4px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.breakdown {
+  list-style: none;
+  margin: 0;
+  padding: 0 20px;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.bd-row {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) auto;
+  gap: 4px 10px;
+  align-items: start;
+  padding: 12px 0;
+}
+
+.bd-row + .bd-row {
+  border-top: 1px solid var(--border);
+}
+
+.bd-num {
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.35;
+}
+
+.bd-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.bd-title {
+  margin: 0;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+.bd-name {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bd-mistakes {
+  flex: none;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.bd-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.tb {
+  display: block;
+  height: 5px;
+  min-width: 4px;
+  border-radius: 3px;
+}
+
+.tb.exp {
+  background: var(--faint);
+  opacity: 0.6;
+}
+
+.tb.you {
+  background: var(--accent);
+}
+
+.tb.you.good {
+  background: var(--green);
+}
+
+.bd-meta {
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.bd-meta.camera:not(.mock) {
+  color: var(--green);
+}
+
+.bd-meta.skipped {
+  color: var(--amber);
+}
+
+.bd-meta.none {
+  color: var(--faint);
+}
+
+.bd-times {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  padding-top: 22px;
+  font-size: 12px;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+@media (max-width: 900px) {
+  .done-screen {
+    grid-template-columns: minmax(0, 1fr);
+    overflow-y: auto;
+  }
+  .done-left {
+    overflow: visible;
+  }
+}
+
+/* Projectors and big screens: scale up a little. */
+@media (min-width: 1800px) {
+  .learn-body {
+    grid-template-columns: 300px minmax(0, 1fr);
+  }
+  .sl-row {
+    font-size: 16px;
+  }
+  .controls .next {
+    min-width: 160px;
+    font-size: 19px;
+  }
+}
