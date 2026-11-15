@@ -913,6 +913,7 @@ class StepPlan:
     frac0: float                 # course progress at the start and end of this step
     frac1: float
     style: dict
+    guides: list[dict] = field(default_factory=list)
     zoom: bool = True
     highlight: bool = True
 
@@ -956,6 +957,124 @@ def region_px(plan: StepPlan) -> tuple[int, int, int, int]:
     return int(x0 * w), int(y0 * h), int(math.ceil(x1 * w)), int(math.ceil(y1 * h))
 
 
+# ---------------------------------------------------------------- instructional motion guides
+
+def _guide_point(value: Any) -> Optional[tuple[float, float]]:
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        return None
+    if not all(isinstance(v, (int, float)) for v in value):
+        return None
+    x, y = float(value[0]), float(value[1])
+    return (x, y) if 0 <= x <= 1 and 0 <= y <= 1 else None
+
+
+def clean_guides(value: Any, duration: float) -> list[dict]:
+    """Validate the small normalized guide language stored in production.steps.N.guides.
+
+    A guide may contain ``arrows`` and ``creases`` (pairs of normalized points)
+    plus ``targets`` (normalized points). Times are relative to the source clip.
+    Keeping this data in lesson.json makes hand-authored fold direction graphics
+    deterministic and re-renderable without baking lesson-specific code into the
+    renderer.
+    """
+    if not isinstance(value, list):
+        return []
+    out = []
+    for raw in value[:16]:
+        if not isinstance(raw, dict):
+            continue
+        start = float(raw.get("start", 0)) if isinstance(raw.get("start", 0), (int, float)) else 0.0
+        end = float(raw.get("end", start + 2.2)) if isinstance(raw.get("end", start + 2.2), (int, float)) else start + 2.2
+        start, end = max(0.0, start), min(duration, end)
+        if end - start < 0.25:
+            continue
+        guide = {"start": start, "end": end, "arrows": [], "creases": [], "targets": []}
+        for key in ("arrows", "creases"):
+            for pair in raw.get(key, []) if isinstance(raw.get(key), list) else []:
+                if not isinstance(pair, (list, tuple)) or len(pair) != 2:
+                    continue
+                a, b = _guide_point(pair[0]), _guide_point(pair[1])
+                if a is not None and b is not None:
+                    guide[key].append((a, b))
+        for point in raw.get("targets", []) if isinstance(raw.get("targets"), list) else []:
+            p = _guide_point(point)
+            if p is not None:
+                guide["targets"].append(p)
+        if guide["arrows"] or guide["creases"] or guide["targets"]:
+            out.append(guide)
+    return out
+
+
+def _partial(a: tuple[float, float], b: tuple[float, float], p: float) -> tuple[float, float]:
+    return a[0] + (b[0] - a[0]) * p, a[1] + (b[1] - a[1]) * p
+
+
+def _dashed(draw: ImageDraw.ImageDraw, a: tuple[float, float], b: tuple[float, float], fill: tuple,
+            width: int, dash: float) -> None:
+    length = math.hypot(b[0] - a[0], b[1] - a[1])
+    if length < 1:
+        return
+    ux, uy = (b[0] - a[0]) / length, (b[1] - a[1]) / length
+    t = 0.0
+    while t < length:
+        e = min(length, t + dash)
+        draw.line((a[0] + ux * t, a[1] + uy * t, a[0] + ux * e, a[1] + uy * e),
+                  fill=fill, width=width)
+        t += dash * 1.75
+
+
+def guide_frame(guide: dict, layout: Layout, elapsed: float, seconds: float, accent: tuple) -> Image.Image:
+    """One transparent animation frame: crease first, then fold arrows and a gently pulsing target."""
+    w, h, u = layout.width, layout.height, layout.u
+    img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    fade_in = min(1.0, elapsed / 0.22)
+    fade_out = min(1.0, max(0.0, seconds - elapsed) / 0.32)
+    alpha = _ease_out(min(fade_in, fade_out))
+    progress = _ease_out(min(1.0, elapsed / 0.65))
+    ink = (*accent, int(235 * alpha))
+    shadow = (0, 0, 0, int(105 * alpha))
+    line_w, shadow_w = max(3, round(6 * u)), max(5, round(10 * u))
+    dash = max(8.0, 15 * u)
+
+    def px(p: tuple[float, float]) -> tuple[float, float]:
+        return p[0] * w, p[1] * h
+
+    for a0, b0 in guide.get("creases", []):
+        a, b = px(a0), px(_partial(a0, b0, progress))
+        _dashed(d, a, b, shadow, shadow_w, dash)
+        _dashed(d, a, b, ink, line_w, dash)
+
+    for a0, b0 in guide.get("arrows", []):
+        a, b = px(a0), px(_partial(a0, b0, progress))
+        d.line((*a, *b), fill=shadow, width=shadow_w)
+        d.line((*a, *b), fill=ink, width=line_w)
+        if progress > 0.25:
+            angle = math.atan2(b[1] - a[1], b[0] - a[0])
+            head = 24 * u
+            spread = 0.58
+            points = [b,
+                      (b[0] - head * math.cos(angle - spread), b[1] - head * math.sin(angle - spread)),
+                      (b[0] - head * math.cos(angle + spread), b[1] - head * math.sin(angle + spread))]
+            d.polygon(points, fill=shadow)
+            inset = 3 * u
+            tip = (b[0] - inset * math.cos(angle), b[1] - inset * math.sin(angle))
+            small = head - 4 * u
+            d.polygon([tip,
+                       (tip[0] - small * math.cos(angle - spread), tip[1] - small * math.sin(angle - spread)),
+                       (tip[0] - small * math.cos(angle + spread), tip[1] - small * math.sin(angle + spread))],
+                      fill=ink)
+
+    pulse = 1 + 0.08 * math.sin(elapsed * math.pi * 2.2)
+    for point in guide.get("targets", []):
+        x, y = px(point)
+        radius = 14 * u * pulse
+        d.ellipse((x - radius - 3 * u, y - radius - 3 * u, x + radius + 3 * u, y + radius + 3 * u),
+                  outline=shadow, width=shadow_w)
+        d.ellipse((x - radius, y - radius, x + radius, y + radius), outline=ink, width=line_w)
+    return img
+
+
 # ---------------------------------------------------------------- one step
 
 def prepare_step(plan: StepPlan, work: Path) -> dict:
@@ -989,6 +1108,17 @@ def prepare_step(plan: StepPlan, work: Path) -> dict:
             img.save(ring_dir / f"{i:03d}.png")
         pad = ring_pad(layout)
         assets["ring"] = (ring_dir / "%03d.png", (x0 - pad, y0 - pad))
+    guides = []
+    for j, guide in enumerate(plan.guides):
+        seconds = guide["end"] - guide["start"]
+        guide_dir = work / f"guide-{j:02d}"
+        guide_dir.mkdir(exist_ok=True)
+        count = max(1, int(math.ceil(seconds * plan.probe.fps)))
+        for i in range(count):
+            elapsed = min(seconds, i / plan.probe.fps)
+            guide_frame(guide, layout, elapsed, seconds, over.accent).save(guide_dir / f"{i:03d}.png")
+        guides.append((guide_dir / "%03d.png", guide["start"]))
+    assets["guides"] = guides
     track, fill = progress_images(layout, over)
     track.save(work / "track.png")
     fill.save(work / "fill.png")
@@ -1016,6 +1146,13 @@ def step_graph(plan: StepPlan, assets: dict) -> Graph:
     clip = g.input("-i", plan.clip.as_posix())
     base = g.label()
     g.add(f"[{clip}:v]fps={fps:g},format=yuv420p,setsar=1[{base}]")
+
+    for pattern, start in assets.get("guides", []):
+        k = g.input("-framerate", f"{fps:g}", "-start_number", "0", "-i", Path(pattern).as_posix())
+        src, out = g.label("o"), g.label()
+        g.add(f"[{k}:v]format=rgba,setpts=PTS-STARTPTS+{start:.3f}/TB[{src}]")
+        g.add(f"[{base}][{src}]overlay=x=0:y=0:eof_action=pass[{out}]")
+        base = out
 
     if "ring" in assets:
         pattern, (rx, ry) = assets["ring"]
@@ -1459,6 +1596,7 @@ def build_plans(lesson_dir: Path, lesson: dict, style: dict, probes: dict[int, P
             vtt=lesson_dir / str(s.get("captions") or f"captions/{n:02d}.vtt"),
             first_frame=work / f"{n:02d}" / "first.jpg", probe=pr, region=region, key_time=key,
             frac0=t / total_s, frac1=(t + pr.duration) / total_s, style=style,
+            guides=clean_guides(o.get("guides"), pr.duration),
             zoom=style["zoom"] and o.get("zoom", True) is not False,
             highlight=style["highlight"] and o.get("highlight", True) is not False))
         t += pr.duration

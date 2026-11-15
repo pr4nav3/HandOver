@@ -335,6 +335,41 @@ def fallback_scripts(steps: Sequence[Any], clip_seconds: Optional[Sequence[float
     return out
 
 
+def scripts_from_file(path: Path, steps: Sequence[Any], clip_seconds: Sequence[float]) -> list[StepScript]:
+    """Read the hand-written ``{"steps": {"1": "..."}}`` format used by the lesson runbook.
+
+    Hand-written narration is a final editorial input, so fail loudly instead of silently replacing a missing
+    or overlong line with generated copy. This keeps the audio, captions and reviewed voice sheet identical.
+    """
+    path = Path(path)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except OSError as e:
+        raise VoiceError(f"voice script could not be read: {e}") from None
+    except ValueError:
+        raise VoiceError("voice script is not valid JSON") from None
+    raw = data.get("steps") if isinstance(data, dict) else None
+    if not isinstance(raw, dict):
+        raise VoiceError('voice script must be an object shaped like {"steps": {"1": "line"}}')
+
+    out: list[StepScript] = []
+    for i, step in enumerate(steps):
+        n = int(_get(step, "n", i + 1) or i + 1)
+        title = str(_get(step, "title", "") or f"Step {n}")
+        line = raw.get(str(n), raw.get(n))
+        if not isinstance(line, str) or not line.strip():
+            raise VoiceError(f"voice script is missing step {n}")
+        sentences = split_sentences(line)
+        if not sentences:
+            raise VoiceError(f"voice script step {n} has no speakable text")
+        seconds = clip_seconds[i] if i < len(clip_seconds) else step_seconds(step)
+        words, limit = _words(" ".join(sentences)), word_limit(seconds)
+        if words > limit:
+            raise VoiceError(f"voice script step {n} has {words} words; its {seconds:.1f} s clip allows {limit}")
+        out.append(StepScript(n, title, seconds, sentences))
+    return out
+
+
 def _fit_words(sentences: list[str], budget: int) -> list[str]:
     """Drop trailing sentences until the narration fits the word budget; the first sentence always stays."""
     kept: list[str] = []
@@ -902,6 +937,8 @@ def main(argv: Optional[list[str]] = None) -> int:
                     help="duck keeps the original audio quietly underneath; replace drops it; auto replaces when "
                          "the take has no usable narration, else ducks")
     ap.add_argument("--voice", default=None, help=f"Kokoro voice (default HANDOVER_VOICE, now {default_voice()})")
+    ap.add_argument("--script", type=Path,
+                    help='reviewed narration JSON shaped like {"steps": {"1": "line"}}; skips script generation')
     ap.add_argument("--dry-run", action="store_true", help="write and print the scripts without synthesizing")
     ap.add_argument("--undo", action="store_true", help="restore the original clips and captions")
     args = ap.parse_args(argv)
@@ -929,12 +966,20 @@ def main(argv: Optional[list[str]] = None) -> int:
         print("note: the expert's narration looks usable; voicing anyway because you asked")
     with tempfile.TemporaryDirectory(prefix="handover-voice-frames-") as tmp:
         frames, seconds = _lesson_frames(lesson_dir, steps, Path(tmp))
-        try:
-            scripts = write_script(steps, transcript, frames, clip_seconds=seconds)
-            print(f"script by {script_model()}, cost ${last_cost_usd:.5f}")
-        except VoiceError as e:
-            print(f"{e}; using the step titles instead")
-            scripts = fallback_scripts(steps, seconds)
+        if args.script:
+            try:
+                scripts = scripts_from_file(args.script, steps, seconds)
+            except VoiceError as e:
+                print(str(e), file=sys.stderr)
+                return 2
+            print(f"script from {args.script}")
+        else:
+            try:
+                scripts = write_script(steps, transcript, frames, clip_seconds=seconds)
+                print(f"script by {script_model()}, cost ${last_cost_usd:.5f}")
+            except VoiceError as e:
+                print(f"{e}; using the step titles instead")
+                scripts = fallback_scripts(steps, seconds)
     for sc in scripts:
         print(f"\n{sc.n:02d} {sc.title} ({sc.seconds:.1f}s, {_words(sc.narration)} words)\n   {sc.narration}")
     if args.dry_run:

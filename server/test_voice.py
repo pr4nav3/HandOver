@@ -294,6 +294,30 @@ def test_fallback_scripts():
     assert got[1].sentences == ["Pattern 2."]
 
 
+def test_scripts_from_file_requires_complete_lines_that_fit():
+    path = TMP / "reviewed-voice.json"
+    path.write_text(json.dumps({"steps": {"1": "Fold it flat.", "2": "Press the edge down."}}))
+    steps = [{"n": 1, "title": "Fold", "start": "00:00", "end": "00:04"},
+             {"n": 2, "title": "Press", "start": "00:04", "end": "00:08"}]
+    got = voice.scripts_from_file(path, steps, [4.0, 4.0])
+    assert [s.narration for s in got] == ["Fold it flat.", "Press the edge down."]
+
+    path.write_text(json.dumps({"steps": {"1": "Fold it flat."}}))
+    try:
+        voice.scripts_from_file(path, steps, [4.0, 4.0])
+        raise AssertionError("expected a missing-step error")
+    except voice.VoiceError as e:
+        assert "missing step 2" in str(e)
+
+    path.write_text(json.dumps({"steps": {"1": "One two three four five six seven eight nine ten.",
+                                               "2": "Press it."}}))
+    try:
+        voice.scripts_from_file(path, steps, [2.0, 4.0])
+        raise AssertionError("expected an overlong-line error")
+    except voice.VoiceError as e:
+        assert "allows" in str(e)
+
+
 # ---------------------------------------------------------------- speech
 
 class FakeKokoro:

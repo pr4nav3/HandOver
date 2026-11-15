@@ -123,6 +123,20 @@ def test_ring_frames_sizes_and_fade():
     assert frames[15].getpixel((frames[15].width // 2, frames[15].height // 2))[3] == 0  # hollow center
 
 
+def test_fold_guides_are_cleaned_and_animated():
+    raw = [{"start": 1, "end": 3, "arrows": [[[0.2, 0.7], [0.5, 0.5]]],
+            "creases": [[[0.2, 0.5], [0.8, 0.5]]], "targets": [[0.5, 0.5]]},
+           {"start": 9, "end": 12, "arrows": [[[2, 0], [0, 0]]]}]
+    guides = P.clean_guides(raw, 8.0)
+    assert len(guides) == 1 and guides[0]["start"] == 1 and guides[0]["end"] == 3
+    th = P.overlay_theme(P.normalize_style({}))
+    early = P.guide_frame(guides[0], L1080, 0.05, 2.0, th.accent)
+    full = P.guide_frame(guides[0], L1080, 1.0, 2.0, th.accent)
+    assert early.size == full.size == (1920, 1080) and full.mode == "RGBA"
+    assert full.getchannel("A").getbbox() and full.getchannel("A").getextrema()[1] > 200
+    assert early.getchannel("A").getextrema()[1] < full.getchannel("A").getextrema()[1]
+
+
 def test_lower_third_caption_progress_sizes():
     th = P.overlay_theme(P.normalize_style({}))
     lt = P.lower_third(3, 8, "Fold all four corners to the center", L1080, th)

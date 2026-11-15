@@ -223,10 +223,33 @@ def probe_duration(path: Path) -> float:
         raise RuntimeError(f"could not read duration of {path}: {out.stderr.strip()}")
 
 
+def audio_stream_index(path: Path) -> int | None:
+    """Return the first decodable audio stream's absolute index.
+
+    Recent iPhones can put an unsupported four-channel ``apac`` track before the
+    ordinary AAC compatibility track.  Mapping ``0:a:0`` selects that first
+    track and makes ffmpeg fail even though a perfectly usable AAC track is
+    present.  ffprobe reports unsupported tracks without a ``codec_name``;
+    skip those and map the first stream with a real decoder explicitly.
+    """
+    out = _capture([_bin("ffprobe"), "-v", "error", "-select_streams", "a",
+                    "-show_entries", "stream=index,codec_name", "-of", "json", str(path)])
+    try:
+        streams = json.loads(out.stdout).get("streams", [])
+    except (json.JSONDecodeError, AttributeError):
+        return None
+    for stream in streams:
+        codec = str(stream.get("codec_name") or "").strip().lower()
+        if codec and codec != "none":
+            try:
+                return int(stream["index"])
+            except (KeyError, TypeError, ValueError):
+                continue
+    return None
+
+
 def has_audio(path: Path) -> bool:
-    out = _capture([_bin("ffprobe"), "-v", "error", "-select_streams", "a", "-show_entries", "stream=index",
-                    "-of", "csv=p=0", str(path)])
-    return bool(out.stdout.strip())
+    return audio_stream_index(path) is not None
 
 
 def color_transfer(path: Path) -> str:
@@ -365,17 +388,17 @@ def normalize(src: Path, dst: Path) -> None:
     """1080p tall, 30 fps constant, H.264 + AAC, faststart, tagged SDR bt709. Adds silent audio when the input
     has none. iPhone HDR (PQ or HLG, bt2020) is converted to the bt709 color matrix so browsers show it SDR."""
     dst.parent.mkdir(parents=True, exist_ok=True)
-    audio = has_audio(src)
+    audio_index = audio_stream_index(src)
     if color_transfer(src) in HDR_TRANSFERS:
         vf = f"scale=-2:1080:in_color_matrix=bt2020:out_color_matrix=bt709:{TV_RANGE},format=yuv420p"
     else:
         vf = f"scale=-2:1080:{TV_RANGE},format=yuv420p"
     vf += "," + SDR_FRAME_TAGS  # the encoder flags alone lose to the frame tags ffmpeg carries from the input
     cmd = [_bin("ffmpeg"), "-y", "-i", str(src)]
-    if not audio:
+    if audio_index is None:
         cmd += ["-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo", "-shortest"]
     cmd += [
-        "-map", "0:v:0", "-map", "0:a:0" if audio else "1:a:0",
+        "-map", "0:v:0", "-map", f"0:{audio_index}" if audio_index is not None else "1:a:0",
         "-vf", vf, "-r", "30", "-fps_mode", "cfr",
         "-c:v", "libx264", "-crf", "20", "-preset", "veryfast", *SEEK_TAGS, *SDR_TAGS,
         "-c:a", "aac", "-ar", "48000", "-ac", "2",

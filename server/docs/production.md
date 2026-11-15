@@ -21,6 +21,7 @@ Each produced step has:
 - **Progress bar**: a thin bar along the bottom showing where this moment sits in the whole course.
 - **Push-in**: a slow ease in-out zoom toward the action region, at most 1.3x. The zoom stops early enough that the region and a margin around it stay in view, so hands are never cut off. With no known region it is a gentle 1.08x toward the center.
 - **Highlight**: a rounded ring around the action region at the step's key moment, for 1 s, with a soft scale-in. It only shows when the region is known and compact. A ring around most of the frame points at nothing, so it is skipped.
+- **Instructional guides**: optional timed crease lines, fold arrows, and pulsing targets authored as normalized coordinates. They draw on over 650 ms, fade cleanly, inherit the theme accent, and move through the same push-in as the paper beneath them.
 - **Captions**: burned in when the style asks for it. Soft captions are always written.
 - **Audio**: the clip's current mix (voiceover included), normalized to -16 LUFS with two-pass loudnorm.
 
@@ -54,11 +55,20 @@ The editor can fix one step without touching the rest:
 ```json
 "production": {
   "theme": "system",
-  "steps": { "3": { "region": [0.30, 0.20, 0.65, 0.80], "key_time": 2.4, "zoom": false, "highlight": true } }
+  "steps": { "3": {
+    "region": [0.30, 0.20, 0.65, 0.80], "key_time": 2.4, "zoom": false, "highlight": true,
+    "guides": [{
+      "start": 1.0, "end": 3.2,
+      "creases": [[[0.30, 0.50], [0.65, 0.50]]],
+      "arrows": [[[0.30, 0.75], [0.48, 0.50]]],
+      "targets": [[0.48, 0.50]]
+    }]
+  } }
 }
 ```
 
 `region` is `[x0, y0, x1, y1]` as fractions of the frame. `key_time` is seconds into the step's clip.
+Guide coordinates use the same normalized frame space; their `start` and `end` are seconds into that clip.
 
 ## Where regions and key moments come from
 

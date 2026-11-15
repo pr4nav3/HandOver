@@ -74,6 +74,28 @@ def _nearest_color(rgb) -> int:
     return min(range(len(DEMO_COLORS)), key=lambda i: sum((a - b) ** 2 for a, b in zip(rgb, DEMO_COLORS[i])))
 
 
+# ---------------------------------------------------------------- normalize input streams
+
+def test_audio_stream_skips_unsupported_iphone_track():
+    original = teach._capture
+    payload = {"streams": [
+        {"index": 1, "codec_name": None},
+        {"index": 2, "codec_name": "aac"},
+    ]}
+
+    class Result:
+        stdout = json.dumps(payload)
+        stderr = ""
+        returncode = 0
+
+    teach._capture = lambda _cmd: Result()
+    try:
+        assert teach.audio_stream_index(Path("iphone.mov")) == 2
+        assert teach.has_audio(Path("iphone.mov"))
+    finally:
+        teach._capture = original
+
+
 # ---------------------------------------------------------------- reference frames (M8)
 
 def test_ref_frames_in_last_15_percent_and_not_black():
