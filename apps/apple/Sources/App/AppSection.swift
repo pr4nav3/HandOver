@@ -2,7 +2,7 @@ import SwiftUI
 
 /// The app's top-level places, in sidebar and tab order.
 enum AppSection: String, CaseIterable, Identifiable, Hashable {
-    case library, learn, teach, camera, settings
+    case library, learn, teach, orgs, camera, settings
 
     var id: String { rawValue }
 
@@ -11,6 +11,7 @@ enum AppSection: String, CaseIterable, Identifiable, Hashable {
         case .library: "Library"
         case .learn: "Learn"
         case .teach: "Teach"
+        case .orgs: "Organizations"
         case .camera: "Camera"
         case .settings: "Settings"
         }
@@ -21,6 +22,7 @@ enum AppSection: String, CaseIterable, Identifiable, Hashable {
         case .library: "books.vertical"
         case .learn: "play.rectangle"
         case .teach: "video.badge.plus"
+        case .orgs: "person.3"
         case .camera: "camera"
         case .settings: "gearshape"
         }
@@ -33,6 +35,7 @@ enum AppSection: String, CaseIterable, Identifiable, Hashable {
         case .library: LibraryView()
         case .learn: LearnView()
         case .teach: TeachView()
+        case .orgs: OrgsListView()
         case .camera: CameraView()
         case .settings: SettingsView()
         }

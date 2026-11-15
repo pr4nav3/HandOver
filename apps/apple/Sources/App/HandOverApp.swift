@@ -15,9 +15,13 @@ struct HandOverApp: App {
     var body: some Scene {
         WindowGroup {
             RootView()
+                .handOverSetup()
+                .handOverTheme()
                 .environment(model)
                 .onOpenURL { url in
-                    // handover://connect?hub=... links and QR codes that open the app.
+                    // handover://connect?hub=... links and QR codes that open the app. handover://join invite
+                    // links are opened by handOverSetup().
+                    guard url.host() != "join" else { return }
                     model.connect(text: url.absoluteString)
                 }
         }
