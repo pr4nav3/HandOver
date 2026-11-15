@@ -85,6 +85,10 @@ export interface StateMsg {
   mistake?: Mistake | null
   /** lesson.json mtime in ms; changes after a recut. Older servers omit it. */
   rev?: number
+  /** Seconds between frames offered to the vision model, at least (set_check_interval). Older servers omit it. */
+  check_interval_s?: number
+  /** Live frames per second forwarded to each viewer, at most. Older servers omit it. */
+  ui_fps?: number
 }
 
 export interface AdvanceMsg {

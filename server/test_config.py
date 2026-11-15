@@ -159,10 +159,14 @@ def test_recovery_tunables_registered_and_documented():
 CALL_RE = re.compile(
     r'config\.env_(float|int|bool|choice)\(\s*"(HANDOVER_[A-Z0-9_]+)"\s*,\s*([^,)]+)(?:,\s*([^,)]+))?(?:,\s*([^,)]+))?\)'
 )
+CONST_RE = re.compile(r"^([A-Z][A-Z0-9_]*)\s*=\s*([^#\n]+)", re.M)
 
 
-def _lit(text):
-    text = text.strip()
+def _lit(text, consts=None):
+    """A literal default or bound; a keyword (min=, max=) is dropped and a module constant is resolved."""
+    text = re.sub(r"^\s*(min|max)\s*=", "", text).strip()
+    if consts and text in consts:
+        text = consts[text].strip()
     if text in ("True", "False"):
         return text == "True"
     try:
@@ -177,15 +181,42 @@ def test_direct_env_calls_match_registry():
     for path in sorted((REPO / "server").glob("*.py")):
         if path.name.startswith("test_") or path.name == "config.py":
             continue
-        for kind, name, default, lo, hi in CALL_RE.findall(path.read_text(encoding="utf-8")):
+        source = path.read_text(encoding="utf-8")
+        consts = dict(CONST_RE.findall(source))
+        for kind, name, default, lo, hi in CALL_RE.findall(source):
             t = config.tunable(name)  # KeyError means unregistered
             where = f"{path.name}: {name}"
             assert t.kind == kind, (where, t.kind, kind)
-            assert _lit(default) == t.default, (where, default, t.default)
+            assert _lit(default, consts) == t.default, (where, default, t.default)
             if lo:
-                assert _lit(lo) == t.min, (where, lo, t.min)
+                assert _lit(lo, consts) == t.min, (where, lo, t.min)
             if hi:
-                assert _lit(hi) == t.max, (where, hi, t.max)
+                assert _lit(hi, consts) == t.max, (where, hi, t.max)
+
+
+def test_live_view_and_teach_tunables_registered():
+    """The check cadence, the frame gap for 15 fps cameras, the UI rate cap, and the two teach names."""
+    want = {
+        "HANDOVER_CHECK_INTERVAL_S": ("float", 1.0, 0.2, 10, "main.py"),
+        "HANDOVER_MIN_FRAME_GAP": ("float", 0.04, 0, 5, "main.py"),
+        "HANDOVER_UI_FPS": ("int", 15, 1, 30, "main.py"),
+        "HANDOVER_MIN_STEP_S": ("float", 6.0, 0.0, 600.0, "teach.py"),
+        "HANDOVER_AUTO_SELFTEST": ("bool", True, None, None, "teach.py"),
+    }
+    for name, (kind, default, lo, hi, owner) in want.items():
+        t = config.tunable(name)
+        assert (t.kind, t.default, t.min, t.max, t.owner) == (kind, default, lo, hi, owner), name
+        with env(**{name: None}):
+            assert config.get(name) == default, name
+    with env(HANDOVER_CHECK_INTERVAL_S="0.1", HANDOVER_UI_FPS="31", HANDOVER_MIN_STEP_S="-1"):
+        assert config.get("HANDOVER_CHECK_INTERVAL_S") == 1.0  # out of range: default
+        assert config.get("HANDOVER_UI_FPS") == 15 and config.get("HANDOVER_MIN_STEP_S") == 6.0
+    with env(HANDOVER_CHECK_INTERVAL_S="0.5", HANDOVER_UI_FPS="30", HANDOVER_AUTO_SELFTEST="0"):
+        assert config.get("HANDOVER_CHECK_INTERVAL_S") == 0.5 and config.get("HANDOVER_UI_FPS") == 30
+        assert config.get("HANDOVER_AUTO_SELFTEST") is False
+    contract = (REPO / "CONTRACT.md").read_text(encoding="utf-8")
+    for name in ("HANDOVER_CHECK_INTERVAL_S", "HANDOVER_MIN_STEP_S", "HANDOVER_AUTO_SELFTEST"):
+        assert f"`{name}`" in contract, name
 
 
 def test_check_reads_through_registry():

@@ -17,6 +17,11 @@ from pathlib import Path
 TMP = Path(tempfile.mkdtemp(prefix="handover-teach-test-"))
 os.environ["HANDOVER_LESSONS"] = str(TMP / "lessons")
 os.environ.pop("HANDOVER_TEACH_MOCK", None)
+# Offline by default: no reference-question call and no automatic self-test reach a real model, even with a real
+# key in .env (tests that exercise them unset this inside _env). Fixtures are 1 to 3 s steps, so the 6 s minimum
+# step merge is off unless a test turns it on.
+os.environ.setdefault("HANDOVER_NO_NETWORK", "1")
+os.environ.setdefault("HANDOVER_MIN_STEP_S", "0")
 for _name in ("HANDOVER_TRANSCRIBE", "HANDOVER_WHISPER_MODEL"):
     os.environ.pop(_name, None)
 # No test may download a speech model: the real faster_whisper is blocked (imports fail, so teach falls back to
@@ -676,7 +681,7 @@ def test_claude_lesson_has_empty_captions_and_scrubbed_errors():
     assert all((d / s["captions"]).read_text(encoding="utf-8").strip() == "WEBVTT" for s in lesson["steps"])
     assert lesson["tools"] == ["Paper"] and any("no audio" in m for m in lines)
     with _no_env_file(), _env(**{**NO_KEYS, "ANTHROPIC_API_KEY": "sk-ant-secret-123"}):
-        assert teach.scrub(f"bad key sk-ant-secret-123 in {d}") == "bad key *** in <lessons>/claude-lesson"
+        assert teach.scrub(f"bad key sk-ant-secret-123 in {d.as_posix()}") == "bad key *** in <lessons>/claude-lesson"
         spend = _FakeSpend()
         with _fake_claude(spend, stop_reason="refusal"):
             try:
@@ -736,7 +741,10 @@ def test_handover_ffmpeg_comes_first():
     link_dir.mkdir(exist_ok=True)
     for name in ("ffmpeg", "ffprobe"):
         (link_dir / name).unlink(missing_ok=True)
-        (link_dir / name).symlink_to(teach._bin(name))
+        try:
+            (link_dir / name).symlink_to(teach._bin(name))
+        except OSError:  # Windows without the symlink privilege: a hard link works the same here
+            os.link(teach._bin(name), link_dir / name)
     os.environ["HANDOVER_FFMPEG"] = str(link_dir / "ffmpeg")
     try:
         assert teach._bin("ffmpeg") == str(link_dir / "ffmpeg")
@@ -1119,6 +1127,256 @@ def test_real_whisper_base_en():
     assert all(0 <= s.start < s.end <= 10.5 for s in segs)
     print(f"real whisper base.en: first call {first:.1f} s (includes any download and load), "
           f"second call {again:.1f} s; text: {words!r}; lines: {lines}")
+
+
+# ---------------------------------------------------------------- minimum step length (HANDOVER_MIN_STEP_S)
+
+def _st(a, b, title, q="Is it folded?", pre=(), ref="", mistake=""):
+    return teach.Step(start=a, end=b, title=title, check_question=q, prerequisites=list(pre), ref_time=ref,
+                      common_mistake=mistake)
+
+
+def test_short_steps_merge_into_previous_and_first_into_next():
+    ex = teach.Extraction(transcript=[], steps=[
+        _st("00:00", "00:03", "Lay it flat", q="manual"),                       # short first step: into the next
+        _st("00:03", "00:15", "Fold in half", q="Is it a rectangle?", pre=[1], mistake="Line up the edges."),
+        _st("00:15", "00:19", "Unfold it", q="Is there one crease line?", pre=[2], ref="00:18.5"),  # into previous
+        _st("00:19", "00:22", "Flip it over", q="Is the plain side up?", pre=[3]),      # short flip: never merged
+        _st("00:22", "00:25", "Start the corners", pre=[4]),                     # previous is the flip: into the next
+        _st("00:25", "00:40", "Fold the corners to the center", q="Are four flaps at the center?", pre=[5]),
+    ])
+    out = teach._merge_short_steps(ex, 6.0).steps
+    assert [(s.start, s.end, s.title) for s in out] == [
+        ("00:00", "00:19", "Fold in half"), ("00:19", "00:22", "Flip it over"),
+        ("00:22", "00:40", "Fold the corners to the center")], out
+    # the survivor was camera, so the merged step asks about the later step's (merged) end state
+    assert out[0].check_question == "Is there one crease line?" and out[0].ref_time == "00:18.5"
+    assert out[0].common_mistake == "Line up the edges."
+    assert [s.prerequisites for s in out] == [[], [1], [2]]
+    # merged camera only if the surviving (longer) step was camera
+    ex = teach.Extraction(transcript=[], steps=[
+        _st("00:00", "00:10", "Crease it both ways", q="manual"), _st("00:10", "00:12", "Press flat", pre=[1])])
+    (only,) = teach._merge_short_steps(ex, 6.0).steps
+    assert (only.start, only.end, only.title, only.check_question) == ("00:00", "00:12", "Crease it both ways", "manual")
+    # a lone flip between two flips stays; 0 turns merging off
+    flips = teach.Extraction(transcript=[], steps=[_st("00:00", "00:02", "Flip it over"),
+                                                   _st("00:02", "00:04", "Flip it over again")])
+    assert teach._merge_short_steps(flips, 6.0) == flips
+    assert teach._merge_short_steps(ex, 0) == ex
+
+
+def test_min_step_comes_from_the_env_and_runs_in_the_build():
+    with _env(HANDOVER_MIN_STEP_S=None):
+        assert teach.min_step_s() == 6.0
+    with _env(HANDOVER_MIN_STEP_S="2.5"):
+        assert teach.min_step_s() == 2.5
+    with _env(HANDOVER_MIN_STEP_S="-1"):
+        assert teach.min_step_s() == 6.0  # out of range: the default
+    answer = {"steps": [
+        {"start": "00:00", "end": "00:01", "title": "Lay it flat", "check_question": "manual",
+         "prerequisites": [], "ref_time": "", "common_mistake": ""},
+        {"start": "00:01", "end": "00:02.5", "title": "Fold it in half", "check_question": "Is it a rectangle?",
+         "prerequisites": [1], "ref_time": "", "common_mistake": ""},
+        {"start": "00:02.5", "end": "00:03", "title": "Press it", "check_question": "Is it flat?",
+         "prerequisites": [2], "ref_time": "", "common_mistake": ""}], "safety": [], "tools": []}
+    with _no_env_file(), _env(**{**NO_KEYS, "ANTHROPIC_API_KEY": "sk-ant-fake", "HANDOVER_MIN_STEP_S": "1.2"}), \
+            _fake_claude(_FakeSpend(), answer=answer):
+        lesson = teach.process_upload(_claude_src(), "min-step", "Min step")
+    # the 0.5 s step merges into the step before it; step 1 (1 s, first) merges into the next
+    assert [(s["start"], s["end"], s["title"]) for s in lesson["steps"]] == [("00:00", "00:03", "Fold it in half")]
+
+
+# ---------------------------------------------------------------- recut swap on Windows (WinError 32)
+
+def _swap_fixture(name: str, old_count: int, new_count: int) -> Path:
+    d = TMP / "swap" / name
+    shutil.rmtree(d, ignore_errors=True)
+    for sub, ext in (("clips", "mp4"), ("captions", "vtt"), ("frames", "jpg")):
+        (d / sub).mkdir(parents=True)
+        (d / ".recut_tmp" / sub).mkdir(parents=True)
+        for n in range(1, old_count + 1):
+            (d / sub / f"{n:02d}.{ext}").write_text(f"old {n}", encoding="utf-8")
+        for n in range(1, new_count + 1):
+            (d / ".recut_tmp" / sub / f"{n:02d}.{ext}").write_text(f"new {n}", encoding="utf-8")
+    return d
+
+
+def test_swap_falls_back_to_copying_when_renames_are_refused():
+    import pytest
+
+    d = _swap_fixture("refused", old_count=3, new_count=2)
+    real = Path.replace
+    tries = []
+
+    def refuse(self, target):
+        if self.is_dir():
+            tries.append(self.name)
+            raise PermissionError(32, "The process cannot access the file because it is being used by another process")
+        return real(self, target)
+
+    lines = []
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(Path, "replace", refuse)
+        mp.setattr(teach, "SWAP_WAIT_S", 0.0)
+        teach._swap_in(d, d / ".recut_tmp", lambda st, m: lines.append(m))
+    assert tries.count("clips") == teach.SWAP_TRIES == 5  # retried 5 times before falling back
+    for sub, ext in (("clips", "mp4"), ("captions", "vtt"), ("frames", "jpg")):
+        assert sorted(f.name for f in (d / sub).iterdir()) == [f"01.{ext}", f"02.{ext}"]  # stale 03 removed
+        assert (d / sub / f"02.{ext}").read_text(encoding="utf-8") == "new 2"
+    assert not (d / ".recut_tmp").exists() and not (d / ".recut_old").exists()
+    assert any("copied the new files" in m for m in lines)
+
+
+def test_swap_retries_then_renames():
+    import pytest
+
+    d = _swap_fixture("busy-once", old_count=2, new_count=1)
+    real, calls = Path.replace, []
+
+    def busy_once(self, target):
+        calls.append(self.name)
+        if self.is_dir() and calls.count(self.name) == 1 and self.parent == d:
+            raise PermissionError(32, "in use")
+        return real(self, target)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(Path, "replace", busy_once)
+        mp.setattr(teach, "SWAP_WAIT_S", 0.0)
+        teach._swap_in(d, d / ".recut_tmp")
+    assert sorted(f.name for f in (d / "clips").iterdir()) == ["01.mp4"]
+    assert (d / "clips" / "01.mp4").read_text(encoding="utf-8") == "new 1"
+    assert not (d / ".recut_tmp").exists() and not (d / ".recut_old").exists()
+
+
+def test_cut_removes_a_stale_recut_tmp():
+    d = _demo_copy("stale-tmp")
+    (d / ".recut_tmp" / "clips").mkdir(parents=True)
+    (d / ".recut_tmp" / "clips" / "99.mp4").write_bytes(b"left over")
+    (d / ".recut_tmp" / "junk.txt").write_text("x", encoding="utf-8")
+    teach.recut(d)
+    assert not (d / "clips" / "99.mp4").exists() and not (d / ".recut_tmp").exists()
+    assert sorted(f.name for f in (d / "clips").iterdir()) == [f"{n:02d}.mp4" for n in range(1, 6)]
+
+
+# ---------------------------------------------------------------- reference frames: pause after the step
+
+def test_ref_frame_found_in_the_pause_after_the_step():
+    # 6 s of motion, then the picture held still for 1.5 s: a step ending at 5 s has no still frame inside, so
+    # the pause just after its end is used (written as a null ref_time, which recut finds again)
+    src = TMP / "pause-after.mp4"
+    _ffmpeg("-f", "lavfi", "-i", "testsrc2=s=320x240:r=30:d=6", "-vf", "tpad=stop_mode=clone:stop_duration=1.5",
+            "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", str(src))
+    t = teach.pick_ref_time(src, 0.0, 5.0)
+    assert t is not None and 6.0 <= t <= 7.5, t
+    assert teach.pick_ref_time(src, 0.0, 5.0, extend=0) < 5.0  # the old rule alone stays inside the step
+    t = teach.pick_ref_time(src, 0.0, 3.0)  # nothing still within 2.5 s: the stillest frame in the window
+    assert t is not None and 2.5 <= t < 3.0, t
+    clip, out = TMP / "pause-clip.mp4", TMP / "pause-ref.jpg"
+    _ffmpeg("-i", str(src), "-t", "5", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", str(clip))
+    assert teach._ref_frame(src, clip, out, 0.0, 5.0, "", False) is None and out.stat().st_size > 0
+
+
+# ---------------------------------------------------------------- check questions from the reference frames
+
+def test_questions_from_refs_replace_and_fall_back():
+    import pytest
+
+    d = _demo_copy("ref-questions")
+    lesson = _read(d)
+    lesson["steps"][2]["check_type"] = "manual"
+    lesson["steps"][2]["check_question"] = ""
+    _write(d, lesson)
+    original = [s["check_question"] for s in lesson["steps"]]
+    seen = []
+
+    def boom(provider, items):
+        seen.append((provider, items))
+        raise RuntimeError("network down")
+
+    lines = []
+    with _env(HANDOVER_NO_NETWORK=None, ANTHROPIC_API_KEY="sk-ant-fake"), pytest.MonkeyPatch.context() as mp:
+        mp.setattr(teach, "_ref_questions_call", boom)
+        out = teach.questions_from_refs(d, _read(d), "claude", lambda st, m: lines.append(m))
+    assert [s["check_question"] for s in out["steps"]] == original and _read(d) == lesson  # unchanged on failure
+    assert any("keeping the extracted questions" in m for m in lines)
+    (provider, items), = seen
+    assert provider == "claude" and [it["n"] for it in items] == [1, 2, 4, 5]  # camera steps only
+    assert all(it["before"][:2] == b"\xff\xd8" and it["done"][:2] == b"\xff\xd8" for it in items)
+    by_n = {it["n"]: it for it in items}
+    assert by_n[2]["before"] == by_n[1]["done"]  # BEFORE is the previous step's reference
+
+    def answer(provider, items):
+        return {1: "Is there one square with a diagonal crease?", 2: "Is it red now?", 5: "  Are four flaps   up? "}
+
+    with _env(HANDOVER_NO_NETWORK=None, ANTHROPIC_API_KEY="sk-ant-fake"), pytest.MonkeyPatch.context() as mp:
+        mp.setattr(teach, "_ref_questions_call", answer)
+        out = teach.questions_from_refs(d, _read(d), "claude")
+    qs = [s["check_question"] for s in _read(d)["steps"]]
+    assert qs[0] == "Is there one square with a diagonal crease?" and qs[4] == "Are four flaps up?"
+    assert qs[1] == original[1] and qs[3] == original[3] and qs[2] == ""  # color word / missing: old question kept
+    # offline or the mock provider: no call at all
+    for env, prov in ((dict(HANDOVER_NO_NETWORK="1"), "claude"), (dict(HANDOVER_NO_NETWORK=None), "mock")):
+        with _env(**env), pytest.MonkeyPatch.context() as mp:
+            mp.setattr(teach, "_ref_questions_call", boom)
+            seen.clear()
+            teach.questions_from_refs(d, _read(d), prov)
+            assert seen == []
+
+
+def test_questions_from_refs_claude_request():
+    d = _demo_copy("ref-questions-claude")
+    n_camera = sum(s["check_type"] != "manual" for s in _read(d)["steps"])
+    answer = {"questions": [{"n": 2, "question": "Is the box at the right edge?"}]}
+    spend = _FakeSpend()
+    with _env(HANDOVER_NO_NETWORK=None, ANTHROPIC_API_KEY="sk-ant-fake"), _fake_claude(spend, answer=answer) as log:
+        out = teach.questions_from_refs(d, _read(d), "claude")
+    (req,) = log["requests"]  # one call for the whole lesson
+    blocks = req["messages"][0]["content"]
+    images = [b for b in blocks if b["type"] == "image"]
+    assert len(images) == 2 * n_camera <= teach.CLAUDE_MAX_FRAMES
+    assert blocks[0]["text"].startswith("Step 1: ") and blocks[0]["text"].endswith("BEFORE:")
+    assert blocks[2]["text"] == "Step 1 DONE:" and "never mention" in blocks[-1]["text"].lower()
+    assert req["output_config"]["format"]["type"] == "json_schema"
+    assert spend.calls[0] == "allow" and spend.calls[2][0] == "record"
+    assert out["steps"][1]["check_question"] == "Is the box at the right edge?"
+
+
+# ---------------------------------------------------------------- automatic self-test (HANDOVER_AUTO_SELFTEST)
+
+def test_auto_self_test_makes_failing_steps_manual():
+    import pytest
+
+    d = _demo_copy("auto-selftest")
+    calls = []
+
+    async def fake_self_test(lesson_dir, progress=teach.noop):
+        calls.append(lesson_dir)
+        lesson = _read(lesson_dir)
+        results = {2: {"own": "no", "prev": "no", "ok": False}, 4: {"own": "yes", "prev": "yes", "ok": False},
+                   5: {"own": "yes", "prev": "no", "ok": True}}
+        for s in lesson["steps"]:
+            if s["n"] in results:
+                s["self_test"] = results[s["n"]]
+        progress("self-test", "step 2: own no 0.90, prev no 0.90  FAILED, suggest manual or a clearer question")
+        return lesson, [1]
+
+    env = dict(HANDOVER_NO_NETWORK=None, HANDOVER_CHECK=None, HANDOVER_CHECK_PROVIDER="claude",
+               ANTHROPIC_API_KEY="sk-ant-fake", HANDOVER_AUTO_SELFTEST=None)
+    lines = []
+    with _env(**env), pytest.MonkeyPatch.context() as mp:
+        mp.setattr(teach, "_self_test", fake_self_test)
+        out = teach._auto_self_test(d, _read(d), lambda st, m: lines.append(m))
+        assert len(calls) == 1
+        by_n = {s["n"]: s for s in _read(d)["steps"]}
+        assert by_n[2]["check_type"] == "manual" and by_n[2]["check_question"] == "" and by_n[2]["self_test"]["own"] == "no"
+        assert by_n[4]["check_type"] == "camera" and by_n[5]["check_type"] == "camera"  # own passed: kept
+        assert out == _read(d)
+        assert any("step 2: own no" in m for m in lines) and any("Steps made manual" in m and "2" in m for m in lines)
+        # off, offline, mock check: no self-test
+        for extra in (dict(HANDOVER_AUTO_SELFTEST="0"), dict(HANDOVER_NO_NETWORK="1"), dict(HANDOVER_CHECK="mock")):
+            with _env(**extra):
+                teach._auto_self_test(d, _read(d))
+        assert len(calls) == 1
 
 
 if __name__ == "__main__":

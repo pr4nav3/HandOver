@@ -14,6 +14,7 @@ import importlib
 import itertools
 import json
 import logging
+import math
 import mimetypes
 import os
 import re
@@ -485,6 +486,15 @@ def ui_fps() -> float:
     return float(config.get("HANDOVER_UI_FPS"))  # type: ignore[arg-type]
 
 
+CHECK_INTERVAL_RANGE = (float(config.tunable("HANDOVER_CHECK_INTERVAL_S").min or 0.2),
+                        float(config.tunable("HANDOVER_CHECK_INTERVAL_S").max or 10))  # seconds, from the registry
+
+
+def clamp_check_interval(seconds: float) -> float:
+    lo, hi = CHECK_INTERVAL_RANGE
+    return min(hi, max(lo, float(seconds)))
+
+
 _SOF = {0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF}  # start-of-frame markers
 
 
@@ -642,6 +652,9 @@ class Engine:
         self.ahead_streak = 0  # confirmed ahead verdicts in a row on this step (HANDOVER_AHEAD_CONFIRM_N)
         self.override_streak = 0  # check yes, understanding not yes, in a row (HANDOVER_UNDERSTAND_OVERRIDE_N)
         self.gated_at = -1e9  # when the motion gate last looked at a frame (GATE_MIN_INTERVAL)
+        self.check_interval_override: Optional[float] = None  # set_check_interval from /ws/ui; None = env value
+        self.offered_at = -1e9  # when a frame was last offered to the check model (check_interval_s)
+        self.offer_wake_booked = False
         self.gate_wake_booked = False
         self.frame_event = asyncio.Event()
         self.ui_frame_event = asyncio.Event()
@@ -696,7 +709,24 @@ class Engine:
             "progress": self.progress,
             "stage": self.stage,
             "run_id": self.run_id(),
+            "check_interval_s": self.check_interval_s(),
+            "ui_fps": int(ui_fps()),
         }
+
+    def check_interval_s(self) -> float:
+        """Seconds between frames offered to the check model, at least: the runtime value from
+        set_check_interval, else HANDOVER_CHECK_INTERVAL_S. The camera may send 15 fps for the live view; the
+        model still sees at most one frame per interval (the motion gate and heartbeat apply on top)."""
+        if self.check_interval_override is not None:
+            return self.check_interval_override
+        return float(config.get("HANDOVER_CHECK_INTERVAL_S"))  # type: ignore[arg-type]
+
+    def set_check_interval(self, seconds: float) -> None:
+        """set_check_interval from /ws/ui: clamped to CHECK_INTERVAL_RANGE, applied at once, state broadcast."""
+        self.check_interval_override = clamp_check_interval(seconds)
+        log.info("check interval set to %.2f s", self.check_interval_override)
+        self.frame_event.set()  # a shorter interval may allow a check right now
+        self.broadcast_state()
 
     def run_id(self) -> Optional[str]:
         """The run the Done screen scores (GET /api/runs/{run_id}/score): the id databricks.start_run returned,
@@ -1048,7 +1078,7 @@ class Engine:
         if len(data) > MAX_FRAME_BYTES or data[:2] != b"\xff\xd8":
             metrics["frames_ignored"] += 1
             return
-        if now - cam.last_frame < config.env_float("HANDOVER_MIN_FRAME_GAP", 0.05, 0, 5):
+        if now - cam.last_frame < config.env_float("HANDOVER_MIN_FRAME_GAP", 0.04, 0, 5):
             metrics["frames_too_fast"] += 1
             return
         cam.last_frame = now
@@ -1137,6 +1167,10 @@ class Engine:
         self.gate_wake_booked = False
         self.frame_event.set()
 
+    def _offer_wake(self) -> None:
+        self.offer_wake_booked = False
+        self.frame_event.set()
+
     async def _check_task(self, job: CheckJob) -> None:
         try:
             await self._run_check(job)
@@ -1170,6 +1204,15 @@ class Engine:
         if ref is None:
             return None
         now = time.monotonic()
+        # Check cadence: at most one frame per check_interval_s goes to the model, whatever the camera rate. A
+        # wake-up is booked so a frame held back here is looked at again when the interval is over.
+        wait = self.check_interval_s() - (now - self.offered_at)
+        if wait > 0:
+            metrics["checks_held_interval"] += 1
+            if not self.offer_wake_booked:
+                self.offer_wake_booked = True
+                asyncio.get_running_loop().call_later(wait, self._offer_wake)
+            return None
         allowed = self.breaker.allow(now)
         if self.sync_offline():
             self.broadcast_state()
@@ -1180,6 +1223,7 @@ class Engine:
         elif pipelined and not confirming:
             self.spare_slots -= 1
         self.gate.mark_checked(now)
+        self.offered_at = now
         self.checked_seq = self.gated_seq
         question = cur.get("check_question") or "Is this step finished?"
         prev_ref = self.ref_bytes(self.step - 1) if self.step > 0 else None
@@ -2038,6 +2082,10 @@ def handle_ui_message(client: UIClient, text: str) -> None:
             client.push({"type": "error", "message": e.detail})
     elif kind == "end_lesson":
         engine.end_lesson()
+    elif kind == "set_check_interval":  # a setting, so it works with no lesson loaded
+        seconds = msg.get("seconds")
+        if isinstance(seconds, (int, float)) and not isinstance(seconds, bool) and math.isfinite(seconds):
+            engine.set_check_interval(float(seconds))
     elif engine.lesson is None:
         client.push({"type": "error", "message": "no lesson selected"})
     elif kind in ("next", "back"):
