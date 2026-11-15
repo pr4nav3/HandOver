@@ -154,8 +154,8 @@ html.grain body::after {
   width: 28px;
   height: 28px;
   border-radius: 8px;
-  background: #315f88;
-  color: #fff;
+  background: var(--accent);
+  color: var(--on-accent);
 }
 
 .pane-mark svg {
@@ -207,11 +207,9 @@ html.grain body::after {
 
 .pane-section {
   margin: 18px 10px 6px;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--faint);
+  color: var(--muted);
 }
 
 .pane-foot {
@@ -1962,11 +1960,9 @@ button.option-card:hover {
 }
 
 .group-title {
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--faint);
+  color: var(--muted);
   margin: 10px 0 4px;
 }
 
@@ -2253,11 +2249,9 @@ button.option-card:hover {
 }
 
 .sheet-body h3 {
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
   margin-bottom: 10px;
 }
 

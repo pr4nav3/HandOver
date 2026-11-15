@@ -118,7 +118,7 @@ function showError(e: unknown) {
 
 function hubPill() {
   const l = app.link;
-  if (l.link === "idle") return html`<span class="hub-pill off"><span class="dot"></span>Not connected</span>`;
+  if (l.link === "idle" || (l.link === "connected" && !app.down)) return html``;
   let cls = "ok";
   let words = "Connected";
   if (l.link === "connecting") [cls, words] = ["wait", "Connecting"];
