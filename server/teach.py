@@ -223,10 +223,20 @@ def probe_duration(path: Path) -> float:
         raise RuntimeError(f"could not read duration of {path}: {out.stderr.strip()}")
 
 
-def has_audio(path: Path) -> bool:
-    out = _capture([_bin("ffprobe"), "-v", "error", "-select_streams", "a", "-show_entries", "stream=index",
+def audio_stream(path: Path) -> int | None:
+    """Index, among the audio streams, of the first one ffmpeg can decode. iPhone .mov files can carry a first
+    audio track with no codec (codec_name "none"); mapping it makes ffmpeg refuse the whole file."""
+    out = _capture([_bin("ffprobe"), "-v", "error", "-select_streams", "a", "-show_entries", "stream=codec_name",
                     "-of", "csv=p=0", str(path)])
-    return bool(out.stdout.strip())
+    for i, line in enumerate(out.stdout.strip().splitlines()):
+        codec = line.strip().strip(",").lower()
+        if codec and codec not in ("none", "unknown"):
+            return i
+    return None
+
+
+def has_audio(path: Path) -> bool:
+    return audio_stream(path) is not None
 
 
 def color_transfer(path: Path) -> str:
@@ -365,9 +375,13 @@ def normalize(src: Path, dst: Path) -> None:
     """1080p tall, 30 fps constant, H.264 + AAC, faststart, tagged SDR bt709. Adds silent audio when the input
     has none. iPhone HDR (PQ or HLG, bt2020) is converted to the bt709 color matrix so browsers show it SDR."""
     dst.parent.mkdir(parents=True, exist_ok=True)
-    audio = has_audio(src)
+    audio_idx = audio_stream(src)
+    audio = audio_idx is not None
     if color_transfer(src) in HDR_TRANSFERS:
-        vf = f"scale=-2:1080:in_color_matrix=bt2020:out_color_matrix=bt709:{TV_RANGE},format=yuv420p"
+        # Real tone mapping (HLG or PQ to SDR), not just a matrix swap: the matrix-only path blows out white
+        # paper and hides creases. Mobius keeps highlight detail and natural color; npl is the nominal peak.
+        vf = ("zscale=t=linear:npl=1000,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=mobius:desat=0,"
+              f"zscale=t=bt709:m=bt709:r=tv,format=yuv420p,scale=-2:1080:{TV_RANGE},format=yuv420p")
     else:
         vf = f"scale=-2:1080:{TV_RANGE},format=yuv420p"
     vf += "," + SDR_FRAME_TAGS  # the encoder flags alone lose to the frame tags ffmpeg carries from the input
@@ -375,7 +389,7 @@ def normalize(src: Path, dst: Path) -> None:
     if not audio:
         cmd += ["-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo", "-shortest"]
     cmd += [
-        "-map", "0:v:0", "-map", "0:a:0" if audio else "1:a:0",
+        "-map", "0:v:0", "-map", f"0:a:{audio_idx}" if audio else "1:a:0",
         "-vf", vf, "-r", "30", "-fps_mode", "cfr",
         "-c:v", "libx264", "-crf", "20", "-preset", "veryfast", *SEEK_TAGS, *SDR_TAGS,
         "-c:a", "aac", "-ar", "48000", "-ac", "2",

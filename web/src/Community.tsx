@@ -9,13 +9,19 @@ const coverUrl = (id: string) => `/lessons/${encodeURIComponent(id)}/frames/01.j
 
 type Load = { status: 'loading' } | { status: 'error' } | { status: 'ready'; lessons: LessonSummary[] }
 
+
+// Real lessons first; test patterns, synthetic renders and mocks go last. The hub sorts by id only.
+const TEST_WORDS = /test pattern|synthetic|mock|not a real lesson|^demo/i
+export const realFirst = (lessons: LessonSummary[]) =>
+  [...lessons].sort((a, b) => Number(TEST_WORDS.test(a.title + ' ' + a.id)) - Number(TEST_WORDS.test(b.title + ' ' + b.id)))
+
 export function Community() {
   const [load, setLoad] = useState<Load>({ status: 'loading' })
 
   const fetchLessons = useCallback(() => {
     setLoad({ status: 'loading' })
     listLessons()
-      .then((lessons) => setLoad({ status: 'ready', lessons }))
+      .then((lessons) => setLoad({ status: 'ready', lessons: realFirst(lessons) }))
       .catch(() => setLoad({ status: 'error' }))
   }, [])
 
