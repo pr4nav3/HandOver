@@ -1,4 +1,4 @@
-import { CheckFillIcon, SkippedIcon, TapIcon } from './icons'
+import { Caps, pad2 } from './StepList'
 import type { StepHow } from './StepList'
 
 export interface DoneRow {
@@ -38,7 +38,7 @@ export function formatDuration(ms: number) {
   return h ? `${h}:${String(m).padStart(2, '0')}:${sec}` : `${m}:${sec}`
 }
 
-/** The Done screen (SCREENS 8, without the score and best and weakest cards). */
+/** The Done screen (SCREENS 8): a printed result sheet. Totals on the left, the step table on the right. */
 export function Done({ summary: s, onRestart, onBack, disabled }: { summary: DoneSummary; onRestart: () => void; onBack: () => void; disabled?: boolean }) {
   const maxT = Math.max(1, ...s.rows.map((r) => Math.max(r.expertS, r.yourS ?? 0)))
   const howWord = (how: StepHow | null) =>
@@ -46,11 +46,13 @@ export function Done({ summary: s, onRestart, onBack, disabled }: { summary: Don
   return (
     <div className="done-screen finish">
       <div className="done-left">
-        <h1 className="done-title">Lesson complete</h1>
+        <h1 className="display done-title">
+          <Caps>Lesson complete</Caps>
+        </h1>
         {s.title && <p className="done-sub">{s.title}</p>}
-        <dl className="done-stats finish-stats">
+        <dl className="card done-stats finish-stats">
           <div>
-            <dd>{s.ms > 0 ? formatDuration(s.ms) : <span className="faint">No time</span>}</dd>
+            <dd>{s.ms > 0 ? formatDuration(s.ms) : <span className="faint">None</span>}</dd>
             <dt>Your time</dt>
           </div>
           <div>
@@ -59,7 +61,8 @@ export function Done({ summary: s, onRestart, onBack, disabled }: { summary: Don
           </div>
           <div>
             <dd>
-              {s.camera} of {s.cameraSteps}
+              {s.camera}
+              <span className="of"> of {s.cameraSteps}</span>
             </dd>
             <dt>{s.mock ? 'By timer (mock)' : 'Checked by camera'}</dt>
           </div>
@@ -73,28 +76,34 @@ export function Done({ summary: s, onRestart, onBack, disabled }: { summary: Don
           </div>
           {s.skipped > 0 && (
             <div>
-              <dd>{s.skipped}</dd>
+              <dd className="caution">{s.skipped}</dd>
               <dt>Skipped</dt>
             </div>
           )}
         </dl>
         {s.mock && <p className="done-note">Simulated checks: camera steps passed on a timer.</p>}
         <div className="done-actions">
-          <button type="button" className="primary large next" onClick={onRestart} disabled={disabled}>
-            Start over
+          <button type="button" className="btn primary next" onClick={onRestart} disabled={disabled}>
+            <Caps>Start over</Caps>
           </button>
-          <button type="button" className="secondary large" onClick={onBack} disabled={disabled}>
+          <button type="button" className="btn" onClick={onBack} disabled={disabled}>
             Back to lessons
           </button>
         </div>
       </div>
 
-      <section className="done-right card" aria-label="Steps">
-        <h2>Steps</h2>
+      <section className="done-right" aria-label="Steps">
+        <h2 className="rule-head">
+          <span>Steps</span>
+          <span className="bd-legend" aria-hidden="true">
+            <span className="key-exp">Expert</span>
+            <span className="key-you">You</span>
+          </span>
+        </h2>
         <ol className="breakdown finish-steps">
           {s.rows.map((r) => (
             <li key={r.n} className="bd-row">
-              <span className="bd-num">{r.n}</span>
+              <span className="bd-num">{pad2(r.n)}</span>
               <div className="bd-main">
                 <p className="bd-title">
                   <span className="bd-name">{r.title}</span>
@@ -104,25 +113,21 @@ export function Done({ summary: s, onRestart, onBack, disabled }: { summary: Don
                     </span>
                   )}
                 </p>
-                <div className="bd-bars" aria-hidden="true">
-                  <span className="tb exp" style={{ width: `${(r.expertS / maxT) * 100}%` }} />
-                  {r.yourS !== null && <span className={`tb you ${r.how === 'camera' && !s.mock ? 'good' : ''}`} style={{ width: `${(r.yourS / maxT) * 100}%` }} />}
-                </div>
-                <p className={`bd-meta how ${r.how ?? 'none'} ${s.mock ? 'mock' : ''}`}>
-                  {r.how === 'camera' && !s.mock ? (
-                    <CheckFillIcon size={15} />
-                  ) : r.how === 'button' ? (
-                    <TapIcon size={15} />
-                  ) : r.how === 'skipped' ? (
-                    <SkippedIcon size={15} />
-                  ) : null}
-                  {howWord(r.how)}
-                </p>
+                <p className={`bd-meta how ${r.how ?? 'none'} ${s.mock ? 'mock' : ''}`}>{howWord(r.how)}</p>
+              </div>
+              <div className="bd-bars" aria-hidden="true">
+                <span className="tb exp" style={{ width: `${(r.expertS / maxT) * 100}%` }} />
+                <span
+                  className={`tb you ${r.how === 'camera' && !s.mock ? 'good' : ''}`}
+                  style={{ width: r.yourS === null ? 0 : `${(r.yourS / maxT) * 100}%` }}
+                />
               </div>
               <span className="bd-times">
-                <span title="You">{r.yourS === null ? 'No time' : formatDuration(r.yourS * 1000)}</span>
-                <span className="faint" title="Expert">
+                <span title="Expert" className="exp">
                   {formatDuration(r.expertS * 1000)}
+                </span>
+                <span title="You" className="you">
+                  {r.yourS === null ? 'None' : formatDuration(r.yourS * 1000)}
                 </span>
               </span>
             </li>

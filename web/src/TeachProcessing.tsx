@@ -1,6 +1,5 @@
 import type { ReactNode } from 'react'
 import type { JobStatus } from './api'
-import { CheckFillIcon, CloseIcon, WarningIcon } from './icons'
 
 /*
  * Make lesson, processing (SCREENS 13), ported from the desktop teach view:
@@ -20,6 +19,19 @@ const STAGES: { key: string; active: string; done: string }[] = [
 const ORDER = ['upload', 'queued', 'normalizing', 'extracting', 'cutting', 'done']
 
 export const sizeLabel = (b: number) => (b >= 1e6 ? `${(b / 1e6).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1e3))} KB`)
+
+/** Two-digit numeral, the way the printed sheet numbers things. */
+export const nn = (n: number) => String(n).padStart(2, '0')
+
+/** Done: a small ink square with a white check. */
+function DoneMark() {
+  return (
+    <svg className="stage-done" width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
+      <rect width="18" height="18" rx="2" fill="currentColor" />
+      <path d="m4.6 9.3 2.9 2.8 5.9-6" fill="none" stroke="#fff" strokeWidth="1.9" strokeLinecap="square" />
+    </svg>
+  )
+}
 
 export function ProcessCard({
   phase,
@@ -51,64 +63,73 @@ export function ProcessCard({
   children?: ReactNode
 }) {
   const at = phase === 'uploading' ? 0 : phase === 'done' ? 5 : Math.max(1, ORDER.indexOf(status ?? 'queued'))
-  const failedAt = phase === 'error' ? (job ? at : 0) : -1
   const pct = total ? Math.floor((sent / total) * 100) : 0
+  const fileLine = `${fileName}${fileSize ? `, ${sizeLabel(fileSize)}` : ''}`
 
-  const rows = STAGES.filter((s) => s.key !== 'queued' || at === 1).map((s) => {
+  if (phase === 'error') {
+    // No job id means the upload itself failed.
+    const stopped = STAGES.find((s) => ORDER.indexOf(s.key) === (job ? at : 0))
+    return (
+      <section className="card teach-card process-card job error" aria-live="polite">
+        <div className="process-head">
+          <p className="process-eyebrow">{stopped ? `Stopped at ${stopped.active}` : 'Stopped'}</p>
+          <h2 className="process-title">Could not make the lesson</h2>
+        </div>
+        <p className="process-error" role="alert">
+          {error}
+        </p>
+        <p className="process-file">{fileLine}</p>
+        {children}
+      </section>
+    )
+  }
+
+  if (phase === 'done') {
+    return (
+      <section className="card teach-card process-card job done" aria-live="polite">
+        <div className="process-head">
+          <p className="process-eyebrow">{title}</p>
+          <h2 className="process-title">Your lesson is ready</h2>
+        </div>
+        {children}
+      </section>
+    )
+  }
+
+  const rows = STAGES.filter((s) => s.key !== 'queued' || at === 1).map((s, n) => {
     const i = ORDER.indexOf(s.key)
-    const state = i === failedAt ? 'bad' : i < at ? 'done' : i === at && phase !== 'error' ? 'active' : 'todo'
-    const text = state === 'done' ? s.done || s.active : s.key === 'upload' && state === 'active' ? `Uploading ${pct}%` : s.active
+    const state = i < at ? 'done' : i === at ? 'active' : 'todo'
+    const upload = s.key === 'upload' && state === 'active'
     return (
       <li key={s.key} className={`stage ${state}`}>
-        <span className="stage-mark">
-          {state === 'done' ? (
-            <CheckFillIcon size={20} />
-          ) : state === 'active' ? (
-            <span className="spinner" />
-          ) : state === 'bad' ? (
-            <span className="stage-bad">
-              <CloseIcon size={11} />
-            </span>
-          ) : (
-            <span className="stage-ring" />
-          )}
-        </span>
+        <span className="stage-num">{nn(n + 1)}</span>
         <span className="stage-text">
-          {text}
-          {s.key === 'upload' && state === 'active' && (
-            <span className="bar" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
-              <span style={{ width: `${pct}%` }} />
+          <span className="stage-name">{state === 'done' ? s.done || s.active : s.active}</span>
+          {upload && (
+            <span className="stage-upload">
+              <span className="bar" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
+                <span style={{ width: `${pct}%` }} />
+              </span>
+              <span className="stage-pct">{pct}%</span>
             </span>
           )}
-          {state === 'active' && s.key !== 'upload' && message && <span className="stage-note">{message}</span>}
+          {state === 'active' && !upload && message && <span className="stage-note">{message}</span>}
+        </span>
+        <span className="stage-mark">
+          {state === 'done' ? <DoneMark /> : state === 'active' ? <span className="spinner" /> : <span className="stage-ring" />}
         </span>
       </li>
     )
   })
 
   return (
-    <section className={`panel process-card job ${phase}`} aria-live="polite">
+    <section className={`card teach-card process-card job ${phase}`} aria-live="polite">
       <div className="process-head">
-        <p className="eyebrow">
-          {phase === 'done' ? title : `${fileName}${fileSize ? `, ${sizeLabel(fileSize)}` : ''}`}
-        </p>
-        {phase === 'done' ? (
-          <h2 className="ready-title">
-            <CheckFillIcon size={22} />
-            Your lesson is ready
-          </h2>
-        ) : (
-          <h2>{title}</h2>
-        )}
-        {(phase === 'uploading' || phase === 'polling') && <p className="muted">HandOver is turning your video into steps.</p>}
+        <p className="process-eyebrow">Making your lesson</p>
+        <h2 className="process-title">{title}</h2>
+        <p className="process-file">{fileLine}</p>
       </div>
-      {phase !== 'done' && <ul className="stages">{rows}</ul>}
-      {phase === 'error' && (
-        <p className="process-error" role="alert">
-          <WarningIcon size={20} />
-          <span>{error}</span>
-        </p>
-      )}
+      <ol className="stages">{rows}</ol>
       {children}
     </section>
   )

@@ -1,5 +1,4 @@
 import type { Step } from './api'
-import { CheckFillIcon, PlayIcon, Ring0Icon, SkippedIcon, TapIcon } from './icons'
 
 /** How a step was finished in this run: by a camera check, by Next, or passed over. */
 export type StepHow = 'camera' | 'button' | 'skipped'
@@ -23,45 +22,21 @@ const STATUS: Record<StepHow | 'current' | 'idle', string> = {
   idle: 'Not started',
 }
 
-function Glyph({ how, current }: { how: StepHow | null; current: boolean }) {
-  const kind = current ? 'current' : (how ?? 'idle')
-  return (
-    <span className={`st ${kind}`} title={STATUS[kind]} aria-label={STATUS[kind]} role="img">
-      {kind === 'current' ? (
-        <PlayIcon size={20} />
-      ) : kind === 'camera' ? (
-        <CheckFillIcon size={20} />
-      ) : kind === 'button' ? (
-        <TapIcon size={20} />
-      ) : kind === 'skipped' ? (
-        <SkippedIcon size={20} />
-      ) : (
-        <Ring0Icon size={20} />
-      )}
-    </span>
-  )
-}
+/** 4 to "04": step numbers read like a printed procedure. */
+export const pad2 = (n: number) => String(n).padStart(2, '0')
 
-/** A small ring for "k of n done". */
-function Ring({ done, total }: { done: number; total: number }) {
-  const r = 8
-  const c = 2 * Math.PI * r
-  const f = total ? Math.min(1, done / total) : 0
+/**
+ * Text drawn in capitals while the DOM keeps its sentence case, so innerText,
+ * copy and paste, screen readers and the e2e checks all see "Start over", not
+ * "START OVER" (Chromium's innerText applies text-transform). The capitals come
+ * from `data-caps` in a ::before (learn.css); the real text sits visually
+ * hidden beside it. `show` draws a different string (e.g. zero padded).
+ */
+export function Caps({ children, show }: { children: string; show?: string }) {
   return (
-    <svg className="steps-ring" width="22" height="22" viewBox="0 0 22 22" aria-hidden="true">
-      <circle cx="11" cy="11" r={r} fill="none" stroke="var(--panel-2)" strokeWidth="3" />
-      <circle
-        cx="11"
-        cy="11"
-        r={r}
-        fill="none"
-        stroke={f >= 1 ? 'var(--green)' : 'var(--accent)'}
-        strokeWidth="3"
-        strokeLinecap="round"
-        strokeDasharray={`${c * f} ${c}`}
-        transform="rotate(-90 11 11)"
-      />
-    </svg>
+    <span className="caps" data-caps={show ?? children}>
+      <span className="caps-src">{children}</span>
+    </span>
   )
 }
 
@@ -83,30 +58,35 @@ export function StepList({
   const done = runs.filter((r) => r && (r.how === 'camera' || r.how === 'button')).length
   return (
     <div className="sl">
-      <div className="sl-head">
+      <div className="rule-head sl-head">
         <span className="sl-title">Steps</span>
         {steps.length > 0 && (
-          <span className="sl-count">
-            <Ring done={done} total={steps.length} />
-            {done} of {steps.length} done
+          <span className="sl-count" aria-label={`${done} of ${steps.length} done`}>
+            {done} / {steps.length}
           </span>
         )}
       </div>
       <ol className="sl-rows">
-        {steps.map((s, i) => (
-          <li key={i}>
-            <button
-              type="button"
-              className={`sl-row ${i === current ? 'current' : ''}`}
-              aria-current={i === current ? 'step' : undefined}
-              onClick={() => onPick(i)}
-            >
-              <Glyph how={runs[i]?.how ?? null} current={i === current} />
-              <span className="sl-num">{i + 1}</span>
-              <span className="sl-name">{s.title}</span>
-            </button>
-          </li>
-        ))}
+        {steps.map((s, i) => {
+          const how = runs[i]?.how ?? null
+          const kind = i === current ? 'current' : (how ?? 'idle')
+          const state = kind === 'camera' || kind === 'button' ? 'done' : kind
+          return (
+            <li key={i}>
+              <button
+                type="button"
+                className={`sl-row ${state}`}
+                aria-current={i === current ? 'step' : undefined}
+                title={STATUS[kind]}
+                onClick={() => onPick(i)}
+              >
+                <span className="sl-num">{pad2(i + 1)}</span>
+                <span className="sl-name">{s.title}</span>
+                <span className="sr-only"> ({STATUS[kind]})</span>
+              </button>
+            </li>
+          )
+        })}
       </ol>
     </div>
   )

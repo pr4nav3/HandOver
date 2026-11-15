@@ -1,44 +1,58 @@
-/* Teach screen only. Shared tokens, buttons and cards live in styles.css.
-   Ported from the desktop app's Teach (apps/desktop/ui/src/styles/app.css):
-   option card, process card, stage list, upload bar.
+/* Teach screen only, in the field-manual language: cream paper, navy ink,
+   condensed numerals and uppercase labels, sharp 2px corners, 1px ink frames,
+   hairline rules, one cobalt for the primary button and the current item.
+   Tokens and shared classes (.btn, .card, .frame, .stamp, .rule-head,
+   .display, .spinner, .page-head) live in styles.css.
 
    Every rule is scoped under the Teach root (.page.teach) so generic names
    like .stage, .step-list or .bar cannot reach Learn or shared screens. The
    scope sits in :where() so each rule keeps the specificity it had unscoped. */
 
-/* Teach has no progress bar; match Learn's offset so the top bar does not jump. */
-.page.teach {
-  padding-top: 18px;
-}
-
-:where(.page).teach h2 {
-  margin: 0;
-  font-size: 17px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-}
-
-:where(.page).teach .hint {
-  margin: 0;
-  font-size: 13px;
-  color: var(--muted);
-}
-
 :where(.page.teach) .tabular {
   font-variant-numeric: tabular-nums;
 }
 
-/* Home: upload (or processing) on the left, your lessons on the right. */
-
-:where(.page.teach) .teach-inner {
-  max-width: 1120px;
+:where(.page.teach) .hint {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink2);
 }
+
+/* Page head: TEACH large, one line under it, a 1.5px ink rule. */
+
+:where(.page.teach) .teach-head {
+  display: block;
+  margin: 0 0 32px;
+  padding-bottom: 18px;
+  border-bottom: 1.5px solid var(--ink);
+}
+
+:where(.page.teach) .teach-head h1 {
+  margin: 0;
+  font-family: var(--cond);
+  font-weight: 600;
+  font-size: 84px;
+  line-height: 0.85;
+  letter-spacing: 0.005em;
+  text-transform: uppercase;
+  color: var(--ink);
+}
+
+:where(.page.teach) .teach-head .page-sub {
+  margin: 14px 0 0;
+  font-size: 16px;
+  color: var(--ink2);
+}
+
+/* Home: upload (or processing) on the left, your lessons on the right. */
 
 :where(.page.teach) .teach-grid {
   display: grid;
   grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
-  gap: 24px;
+  gap: 28px;
   align-items: start;
+
 }
 
 @media (max-width: 900px) {
@@ -48,106 +62,130 @@
 }
 
 :where(.page.teach) .teach-card {
-  padding: 24px;
+  padding: 24px 28px 28px;
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 22px;
+  border-radius: var(--r);
 }
 
-/* The pick target: a desktop option card that is also a drop zone. */
-:where(.page.teach) .option-card {
+:where(.page.teach) .rule-head {
+  margin: 0;
+}
+
+:where(.page.teach) .rule-count {
+  margin-left: auto;
+  color: var(--ink3);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Drop zone: a dashed rectangle; picked, it holds the file and a Change handle. */
+
+:where(.page.teach) .drop {
   display: flex;
   align-items: center;
   gap: 16px;
-  padding: 20px;
-  border-radius: var(--radius);
-  border: 1px dashed var(--border-strong);
-  background: var(--panel);
+  min-height: 132px;
+  padding: 24px 28px;
+  border: 1.5px dashed var(--rule2);
+  border-radius: var(--r);
   text-align: left;
   cursor: pointer;
   transition: border-color 0.15s, background 0.15s;
 }
 
-:where(.page.teach) .option-card:hover {
-  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
-  background: color-mix(in srgb, var(--accent) 4%, var(--panel));
+:where(.page.teach) .drop:hover {
+  border-color: var(--ink);
 }
 
-:where(.page.teach) .option-card.over {
-  border-color: var(--accent);
+:where(.page.teach) .drop.over {
   border-style: solid;
-  background: color-mix(in srgb, var(--accent) 8%, var(--panel));
+  border-color: var(--cobalt);
+  background: var(--cobalt-soft);
 }
 
-:where(.page.teach) .option-card.has-file {
+:where(.page.teach) .drop.has-file {
+  min-height: 0;
+  padding: 18px 20px 18px 24px;
   border-style: solid;
-  border-color: var(--border);
-  background: var(--panel-2);
+  border-width: 1px;
+  border-color: var(--rule2);
 }
 
-:where(.page.teach) .tile {
-  display: grid;
-  place-items: center;
-  flex: none;
-  width: 56px;
-  height: 56px;
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
-  color: var(--accent-ink);
-}
-
-:where(.page.teach) .option-text {
+:where(.page.teach) .drop-text {
+  flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  min-width: 0;
+  gap: 4px;
 }
 
-:where(.page.teach) .option-title {
+:where(.page.teach) .drop-title {
+  font-family: var(--cond);
   font-weight: 600;
-  font-size: 16px;
+  font-size: 24px;
+  line-height: 1;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink);
 }
 
-:where(.page.teach) .option-title.file-name {
+:where(.page.teach) .drop-line {
+  font-size: 14px;
+  color: var(--ink2);
+}
+
+:where(.page.teach) .file-name {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--ink);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-:where(.page.teach) .option-line {
-  color: var(--muted);
-  font-size: 14px;
-  font-variant-numeric: tabular-nums;
+:where(.page.teach) .drop-change {
+  flex: none;
 }
+
+/* Title: a bare input on a 1.5px ink rule. */
 
 :where(.page.teach) .field {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
   text-align: left;
 }
 
 :where(.page.teach) .field > span {
+  font-family: var(--cond);
+  font-weight: 600;
   font-size: 13px;
-  color: var(--muted);
-  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink2);
 }
 
 :where(.page.teach) .field input {
-  min-height: 44px;
-  background: var(--panel-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 0 14px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-bottom: 1.5px solid var(--ink);
+  border-radius: 0;
+  background: transparent;
+  font-family: var(--sans);
+  font-size: 18px;
+  color: var(--ink);
   outline: none;
 }
 
 :where(.page.teach) .field input::placeholder {
-  color: var(--faint);
+  color: var(--ink3);
 }
 
 :where(.page.teach) .field input:focus {
-  border-color: var(--accent);
+  border-bottom-color: var(--cobalt);
+  box-shadow: inset 0 -1px 0 var(--cobalt);
 }
 
 :where(.page.teach) .upload-row,
@@ -158,37 +196,46 @@
   gap: 12px;
 }
 
-/* Your lessons */
+/* Your lessons: rows on hairlines, the whole row opens the review. */
 
 :where(.page.teach) .loading-line {
   display: flex;
   align-items: center;
   gap: 10px;
   margin: 0;
+  font-size: 14px;
+  color: var(--ink2);
 }
 
 :where(.page.teach) .lessons-empty {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 8px;
-  padding: 32px 0;
-  color: var(--faint);
+  gap: 6px;
+  padding: 8px 0 12px;
+  font-size: 14px;
+  color: var(--ink2);
 }
 
-:where(.page.teach) .lessons-empty span {
-  color: var(--muted);
+:where(.page.teach) .lessons-empty-title {
+  font-family: var(--cond);
+  font-weight: 600;
+  font-size: 22px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink3);
 }
 
 :where(.page.teach) .open-error {
   margin: 0;
-  color: var(--red);
+  padding-left: 12px;
+  border-left: 3px solid var(--bad);
+  color: var(--ink);
   font-size: 14px;
 }
 
 :where(.page.teach) .lesson-list {
   list-style: none;
-  margin: 0 -8px;
+  margin: -22px -28px -28px;
   padding: 0;
   display: flex;
   flex-direction: column;
@@ -197,17 +244,17 @@
 :where(.page.teach) .lesson-list li {
   display: flex;
   align-items: center;
-  gap: 4px;
-  border-radius: var(--radius-sm);
+  gap: 12px;
+  padding: 0 28px 0 0;
   transition: background 0.15s;
 }
 
 :where(.page.teach) .lesson-list li + li {
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--rule);
 }
 
 :where(.page.teach) .lesson-list li:hover {
-  background: var(--tint-1);
+  background: color-mix(in srgb, var(--ink) 4%, transparent);
 }
 
 :where(.page.teach) .lesson-row {
@@ -215,24 +262,19 @@
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 10px 8px;
+  gap: 16px;
+  padding: 16px 0 16px 28px;
   border: 0;
   background: transparent;
   text-align: left;
-  border-radius: var(--radius-sm);
+  color: var(--ink);
 }
 
 :where(.page.teach) .row-cover {
   flex: none;
-  display: grid;
-  place-items: center;
-  width: 64px;
+  display: block;
+  width: 72px;
   height: 48px;
-  border-radius: 10px;
-  overflow: hidden;
-  background: var(--panel-2);
-  color: var(--faint);
 }
 
 :where(.page.teach) .row-cover img {
@@ -245,12 +287,17 @@
 :where(.page.teach) .row-text {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
   min-width: 0;
 }
 
 :where(.page.teach) .row-title {
+  font-family: var(--cond);
   font-weight: 600;
+  font-size: 20px;
+  line-height: 1.05;
+  letter-spacing: 0.01em;
+  text-transform: uppercase;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -258,165 +305,189 @@
 
 :where(.page.teach) .row-meta {
   font-size: 13px;
-  color: var(--muted);
+  color: var(--ink2);
   font-variant-numeric: tabular-nums;
 }
 
-:where(.page.teach) .lesson-list .try,
-:where(.page.teach) .process-actions .quiet {
+:where(.page.teach) .lesson-list .try {
   flex: none;
-  min-height: 44px;
-  padding: 0 12px;
-  margin-right: 4px;
 }
 
 /* Processing (SCREENS 13). The card keeps `.job` for the e2e: `.job.error`, `.job .spinner`. */
 
-:where(.page.teach) .process-card {
-  padding: 24px;
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
-}
-
 :where(.page.teach) .process-head {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 8px;
+  min-width: 0;
 }
 
-:where(.page.teach) .process-head .muted {
+:where(.page.teach) .process-eyebrow {
   margin: 0;
-  font-size: 14px;
-}
-
-:where(.page.teach) .eyebrow {
-  margin: 0;
-  font-size: 13px;
-  color: var(--muted);
+  font-family: var(--cond);
+  font-weight: 600;
+  font-size: 16px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--cobalt);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+:where(.page.teach) .process-title {
+  margin: 0;
+  font-family: var(--cond);
+  font-weight: 600;
+  font-size: 36px;
+  line-height: 0.95;
+  letter-spacing: 0.005em;
+  text-transform: uppercase;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+:where(.page.teach) .process-file {
+  margin: 0;
+  font-size: 13px;
+  color: var(--ink2);
   font-variant-numeric: tabular-nums;
-}
-
-:where(.page.teach) .process-card h2 {
-  font-size: 22px;
-  font-weight: 650;
-  letter-spacing: -0.015em;
-}
-
-:where(.page.teach) .ready-title {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-:where(.page.teach) .ready-title svg {
-  color: var(--green);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 :where(.page.teach) .stages {
   list-style: none;
   margin: 0;
-  padding: 18px 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  border-radius: var(--radius-sm);
-  background: var(--panel-2);
+  padding: 0;
+  border-bottom: 1px solid var(--rule);
 }
 
 /* Scoped under .stages: learn.css owns a global .stage (its video column). */
 :where(.page.teach) .stages .stage {
-  display: flex;
-  flex-direction: row;
-  gap: 14px;
-  align-items: flex-start;
-  font-size: 16px;
-}
-
-:where(.page.teach) .stages .stage-mark {
-  width: 22px;
-  height: 22px;
   display: grid;
-  place-items: center;
-  flex: none;
-  color: var(--faint);
+  grid-template-columns: 44px minmax(0, 1fr) 24px;
+  align-items: start;
+  gap: 0 8px;
+  padding: 14px 0;
+  border-top: 1px solid var(--rule);
 }
 
-:where(.page.teach) .stages .stage.done .stage-mark {
-  color: var(--green);
-}
-
-:where(.page.teach) .stages .stage-ring {
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  border: 1.5px solid var(--faint);
-}
-
-:where(.page.teach) .stages .stage-bad {
-  display: grid;
-  place-items: center;
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  background: var(--red);
-  color: var(--panel);
-}
-
-:where(.page.teach) .stages .stage.todo .stage-text {
-  color: var(--faint);
-}
-
-:where(.page.teach) .stages .stage.bad .stage-text {
-  color: var(--text);
+:where(.page.teach) .stages .stage-num {
+  font-family: var(--cond);
+  font-weight: 600;
+  font-size: 20px;
+  line-height: 22px;
+  color: var(--ink3);
+  font-variant-numeric: tabular-nums;
 }
 
 :where(.page.teach) .stages .stage-text {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  flex: 1;
+  gap: 8px;
   min-width: 0;
+}
+
+:where(.page.teach) .stages .stage-name {
+  font-size: 16px;
   line-height: 22px;
+  color: var(--ink3);
+}
+
+:where(.page.teach) .stages .stage.done .stage-num,
+:where(.page.teach) .stages .stage.done .stage-name {
+  color: var(--ink2);
+}
+
+:where(.page.teach) .stages .stage.active .stage-num {
+  color: var(--cobalt);
+}
+
+:where(.page.teach) .stages .stage.active .stage-name {
+  color: var(--ink);
+  font-weight: 600;
 }
 
 :where(.page.teach) .stages .stage-note {
   font-size: 13px;
-  line-height: 1.35;
-  color: var(--muted);
+  line-height: 1.4;
+  color: var(--ink2);
+}
+
+:where(.page.teach) .stages .stage-mark {
+  height: 22px;
+  display: grid;
+  place-items: center;
+  color: var(--ink);
+}
+
+:where(.page.teach) .stages .stage-ring {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1.5px solid var(--rule2);
+}
+
+:where(.page.teach) .stage-upload {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
 :where(.page.teach) .bar {
+  flex: 1;
   display: block;
   height: 4px;
-  border-radius: 2px;
-  background: var(--tint-2);
+  background: var(--rule);
   overflow: hidden;
 }
 
 :where(.page.teach) .bar span {
   display: block;
   height: 100%;
-  background: var(--accent);
+  background: var(--ink);
   transition: width 0.2s;
 }
 
-:where(.page.teach) .process-error {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  margin: 0;
+:where(.page.teach) .stage-pct {
+  flex: none;
+  min-width: 40px;
+  text-align: right;
+  font-family: var(--cond);
+  font-weight: 600;
   font-size: 16px;
-  line-height: 1.35;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
 }
 
-:where(.page.teach) .process-error svg {
-  flex: none;
-  color: var(--red);
-  margin-top: 1px;
+:where(.page.teach) .process-foot {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+:where(.page.teach) .process-foot .hint {
+  flex: 1;
+}
+
+/* Error: a bad bar down the left, the hub's words verbatim. */
+
+:where(.page.teach) .process-card.error {
+  border-left: 3px solid var(--bad);
+}
+
+:where(.page.teach) .process-card.error .process-eyebrow {
+  color: var(--bad);
+}
+
+:where(.page.teach) .process-error {
+  margin: 0;
+  font-size: 17px;
+  line-height: 1.45;
+  color: var(--ink);
+  overflow-wrap: anywhere;
 }
 
 /* Ready */
@@ -424,12 +495,13 @@
 :where(.page.teach) .ready {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 22px;
 }
 
 :where(.page.teach) .ready-line {
   margin: 0;
-  color: var(--muted);
+  font-size: 15px;
+  color: var(--ink2);
 }
 
 :where(.page.teach) .ready-strip {
@@ -444,10 +516,7 @@
 :where(.page.teach) .ready-frame,
 :where(.page.teach) .ready-more {
   position: relative;
-  aspect-ratio: 4 / 3;
-  border-radius: 10px;
-  overflow: hidden;
-  background: var(--stage);
+  aspect-ratio: 3 / 4;
 }
 
 :where(.page.teach) .ready-frame img {
@@ -459,27 +528,27 @@
 
 :where(.page.teach) .ready-num {
   position: absolute;
-  top: 5px;
-  left: 5px;
-  min-width: 20px;
-  height: 20px;
-  padding: 0 5px;
-  border-radius: 10px;
-  display: grid;
-  place-items: center;
-  font-size: 12px;
+  top: 0;
+  left: 0;
+  padding: 3px 6px 2px;
+  font-family: var(--cond);
   font-weight: 600;
-  background: var(--caption-fill);
-  color: var(--caption-ink);
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  line-height: 1.1;
+  background: var(--ink);
+  color: #fff;
 }
 
 :where(.page.teach) .ready-more {
   display: grid;
   place-items: center;
-  background: var(--panel-2);
-  color: var(--muted);
-  font-size: 14px;
+  border: 1px dashed var(--rule2);
+  border-radius: var(--r);
+  font-family: var(--cond);
   font-weight: 600;
+  font-size: 20px;
+  color: var(--ink2);
 }
 
 /* Lesson review: back, title, try it; the player and timeline; the step list. */
@@ -489,22 +558,21 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  padding-top: 8px;
+  gap: 20px;
+  padding: 24px 32px 28px;
 }
 
 :where(.page.teach) .review-head {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 24px;
   flex: none;
+  padding-bottom: 16px;
+  border-bottom: 1.5px solid var(--ink);
 }
 
-:where(.page.teach) .review-head .ghost {
-  min-height: 44px;
-  padding: 0 14px 0 10px;
-  font-size: 14px;
-  border-radius: var(--radius-sm);
+:where(.page.teach) .review-head .back {
+  flex: none;
 }
 
 :where(.page.teach) .review-title {
@@ -512,30 +580,35 @@
   min-width: 0;
   display: flex;
   align-items: baseline;
-  gap: 12px;
+  gap: 16px;
 }
 
 :where(.page.teach) .review-title h1 {
   margin: 0;
-  font-size: 22px;
-  font-weight: 650;
-  letter-spacing: -0.015em;
+  font-family: var(--cond);
+  font-weight: 600;
+  font-size: 36px;
+  line-height: 1;
+  letter-spacing: 0.005em;
+  text-transform: uppercase;
+  color: var(--ink);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-:where(.page.teach) .review-title .muted {
+:where(.page.teach) .review-meta {
   flex: none;
   font-size: 14px;
+  color: var(--ink2);
 }
 
 :where(.page.teach) .review-body {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) clamp(320px, 28vw, 440px);
-  gap: 24px;
+  grid-template-columns: minmax(0, 1fr) clamp(340px, 28vw, 420px);
+  gap: 28px;
 }
 
 :where(.page.teach) .player-col {
@@ -550,9 +623,6 @@
   width: 100%;
   aspect-ratio: 16 / 9;
   flex: none;
-  overflow: hidden;
-  border-radius: var(--radius);
-  background: var(--stage);
   position: relative;
 }
 
@@ -571,12 +641,107 @@
   gap: 14px;
 }
 
+/* Timeline: a 28px track, each step ink at 12% on 1px paper gaps; the current one cobalt. */
+:where(.page.teach) .timeline {
+  flex: none;
+}
+
+:where(.page.teach) .timeline .track {
+  position: relative;
+  height: 28px;
+  background: color-mix(in srgb, var(--ink) 4%, transparent);
+}
+
+:where(.page.teach) .tl-seg {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  margin: 0;
+  padding: 0 0 0 6px;
+  border: 0;
+  border-right: 1px solid var(--paper);
+  border-radius: 0;
+  background-clip: padding-box;
+  background-color: color-mix(in srgb, var(--ink) 12%, var(--paper));
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  transition: background-color 0.15s;
+}
+
+:where(.page.teach) .tl-seg span {
+  font-family: var(--cond);
+  font-weight: 600;
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  color: var(--ink2);
+  font-variant-numeric: tabular-nums;
+}
+
+:where(.page.teach) .tl-seg:hover {
+  background-color: color-mix(in srgb, var(--ink) 22%, var(--paper));
+}
+
+:where(.page.teach) .tl-seg.active {
+  background-color: var(--cobalt);
+}
+
+:where(.page.teach) .tl-seg.active span {
+  color: #fff;
+}
+
+:where(.page.teach) .playhead {
+  position: absolute;
+  top: -4px;
+  bottom: -4px;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--ink);
+  pointer-events: none;
+}
+
+/* A square knob on top so the playhead reads over the cobalt step. */
+:where(.page.teach) .playhead::before {
+  content: '';
+  position: absolute;
+  top: -4px;
+  left: -3px;
+  width: 8px;
+  height: 8px;
+  background: var(--ink);
+}
+
+:where(.page.teach) .tl-scale {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 6px;
+  font-family: var(--cond);
+  font-weight: 500;
+  font-size: 14px;
+  letter-spacing: 0.04em;
+  color: var(--ink3);
+  font-variant-numeric: tabular-nums;
+}
+
 :where(.page.teach) .player-meta {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 14px;
   min-height: 44px;
+}
+
+:where(.page.teach) .meta-hint {
   font-size: 14px;
+  color: var(--ink2);
+}
+
+:where(.page.teach) .meta-num {
+  flex: none;
+  font-family: var(--cond);
+  font-weight: 600;
+  font-size: 28px;
+  line-height: 1;
+  color: var(--cobalt);
 }
 
 :where(.page.teach) .meta-text {
@@ -584,6 +749,7 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
+  gap: 2px;
 }
 
 :where(.page.teach) .meta-title {
@@ -594,114 +760,39 @@
   white-space: nowrap;
 }
 
-:where(.page.teach) .player-meta .ghost {
-  min-height: 44px;
-  padding: 0 14px;
-  font-size: 14px;
-  border-radius: var(--radius-sm);
-  flex: none;
+:where(.page.teach) .meta-sub {
+  font-size: 13px;
+  color: var(--ink2);
 }
 
-/* Timeline: a sunken well; each step an accent tint, the current one solid. */
-:where(.page.teach) .timeline {
-  flex: none;
-}
-
-:where(.page.teach) .timeline .track {
-  position: relative;
-  height: 44px;
-  border-radius: var(--radius-sm);
-  background: var(--panel-2);
-}
-
-:where(.page.teach) .tl-seg {
-  position: absolute;
-  top: 4px;
-  bottom: 4px;
-  border: 0;
-  /* Hairline gap between touching steps. */
-  border-left: 2px solid var(--panel-2);
-  border-right: 2px solid var(--panel-2);
-  border-radius: 9px;
-  padding: 0;
-  background-clip: padding-box;
-  background-color: color-mix(in srgb, var(--accent) 22%, var(--panel-2));
-  overflow: hidden;
-  display: flex;
-  align-items: center;
-  padding-left: 8px;
-  transition: background-color 0.15s;
-}
-
-:where(.page.teach) .tl-seg:nth-child(even) {
-  background-color: color-mix(in srgb, var(--accent) 32%, var(--panel-2));
-}
-
-:where(.page.teach) .tl-seg span {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--accent-ink);
-  font-variant-numeric: tabular-nums;
-}
-
-:where(.page.teach) .tl-seg:hover {
-  background-color: color-mix(in srgb, var(--accent) 45%, var(--panel-2));
-}
-
-:where(.page.teach) .tl-seg.active {
-  background-color: var(--accent);
-}
-
-:where(.page.teach) .tl-seg.active span {
-  color: var(--on-accent);
-}
-
-:where(.page.teach) .playhead {
-  position: absolute;
-  top: -5px;
-  bottom: -5px;
-  width: 2px;
-  margin-left: -1px;
-  border-radius: 1px;
-  background: var(--accent);
-  pointer-events: none;
-}
-
-/* A knob on top so the playhead reads over the solid current step. */
-:where(.page.teach) .playhead::before {
-  content: '';
-  position: absolute;
-  top: -4px;
-  left: -4px;
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: var(--accent);
-  border: 2px solid var(--bg);
-}
-
-:where(.page.teach) .tl-scale {
-  display: flex;
-  justify-content: space-between;
-  margin-top: 6px;
-  font-size: 12px;
-  color: var(--faint);
-  font-variant-numeric: tabular-nums;
-}
-
-/* Step list */
+/* Step list, like the Learn rail: numeral, frame, title; the current row cobalt-soft with a bar. */
 
 :where(.page.teach) .step-list {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  padding: 16px 8px 8px;
+  padding: 0;
+  border-radius: var(--r);
+  overflow: hidden;
 }
 
 :where(.page).teach .step-list-head {
-  padding: 0 12px 10px;
-  font-size: 13px;
-  color: var(--muted);
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin: 0;
+  padding: 18px 20px 12px;
+  font-family: var(--cond);
+  font-weight: 600;
+  font-size: 16px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink);
+}
+
+:where(.page.teach) .step-list-count {
+  color: var(--ink3);
+  font-variant-numeric: tabular-nums;
 }
 
 :where(.page.teach) .thumbs {
@@ -709,59 +800,61 @@
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 2px;
 }
 
 :where(.page.teach) .step-row {
+  position: relative;
   flex: none;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  min-height: 72px;
-  padding: 8px 10px;
+  display: grid;
+  grid-template-columns: 30px 72px minmax(0, 1fr);
+  align-items: start;
+  gap: 14px;
+  padding: 12px 16px 12px 20px;
   border: 0;
-  border-radius: var(--radius-sm);
+  border-top: 1px solid var(--rule);
+  border-radius: 0;
   background: transparent;
   text-align: left;
+  color: var(--ink);
   transition: background 0.15s;
 }
 
 :where(.page.teach) .step-row:hover {
-  background: var(--tint-1);
+  background: color-mix(in srgb, var(--ink) 4%, transparent);
 }
 
 :where(.page.teach) .step-row.active {
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  background: var(--cobalt-soft);
+}
+
+:where(.page.teach) .step-row.active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--cobalt);
 }
 
 :where(.page.teach) .step-num {
-  flex: none;
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  font-size: 13px;
+  font-family: var(--cond);
   font-weight: 600;
+  font-size: 20px;
+  line-height: 22px;
+  color: var(--ink3);
   font-variant-numeric: tabular-nums;
-  background: var(--panel-2);
-  color: var(--muted);
 }
 
 :where(.page.teach) .step-row.active .step-num {
-  background: var(--accent);
-  color: var(--on-accent);
+  color: var(--cobalt);
 }
 
 /* A fixed box: portrait and landscape frames both crop to it. */
 :where(.page.teach) .thumb-img {
-  flex: none;
   display: block;
   width: 72px;
   height: 54px;
-  border-radius: 8px;
-  overflow: hidden;
-  background: var(--stage);
 }
 
 :where(.page.teach) .thumb-img img {
@@ -772,16 +865,15 @@
 }
 
 :where(.page.teach) .thumb-text {
-  flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
+  padding-top: 1px;
 }
 
 :where(.page.teach) .thumb-title {
   font-size: 14px;
-  font-weight: 500;
   line-height: 1.3;
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -792,18 +884,23 @@
 :where(.page.teach) .thumb-meta {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  color: var(--muted);
+  gap: 10px;
 }
 
-:where(.page.teach) .thumb-tag {
+:where(.page.teach) .thumb-time {
+  font-family: var(--cond);
+  font-weight: 500;
+  font-size: 14px;
+  letter-spacing: 0.03em;
+  color: var(--ink3);
+  font-variant-numeric: tabular-nums;
+}
+
+:where(.page.teach) .stamp.thumb-tag {
+  padding: 1px 5px;
   font-size: 11px;
-  font-weight: 600;
-  padding: 1px 7px;
-  border-radius: 999px;
-  border: 1px solid var(--border-strong);
-  color: var(--text);
+  border-width: 1px;
+  line-height: 1.2;
 }
 
 @media (max-width: 900px) {
