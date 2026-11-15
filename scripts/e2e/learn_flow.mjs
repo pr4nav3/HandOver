@@ -14,7 +14,9 @@
 //
 // Protocol: prints "E2E_READY" once the page is up; the driver then starts the
 // replay camera. Writes flow.json with one row per assertion and exits 1 on failure.
-// Selectors use visible text and roles from web/src/Learn.tsx, not class names.
+// Selectors use visible text and roles from web/src/Community.tsx, Learn.tsx and
+// Done.tsx, not class names. The learner starts on #/community and picks the
+// lesson's card, which opens #/learn/<id> and selects it on the hub.
 
 import { createRequire } from 'node:module'
 import { mkdirSync, writeFileSync } from 'node:fs'
@@ -32,7 +34,7 @@ const { chromium } = createRequire(join(WEB, 'package.json'))('playwright')
 const rows = []
 const pageErrors = []
 const consoleErrors = []
-let t0 = 0 // performance.now() when Start lesson was clicked
+let t0 = 0 // performance.now() when the lesson card was clicked
 let failed = false
 let stats = {} // done screen numbers, for flow.json
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
@@ -76,12 +78,13 @@ function watch(page, label) {
   })
 }
 
-// Text of the step counter ("Step 2 of 5", "All steps complete").
-const stepCount = (page) => page.getByText(/^(Step \d+ of \d+|All steps complete)$/).first()
+// Text of the step counter ("Step 2 of 5"). Done hides it and shows "Lesson complete".
+const stepCount = (page) => page.getByText(/^Step \d+ of \d+$/).first()
 const waitStep = (page, text, timeout) => page.getByText(text, { exact: true }).first().waitFor({ state: 'visible', timeout })
 
 const browser = await chromium.launch({
-  channel: 'chrome',
+  // Installed Chrome decodes the H.264 clips; E2E_CHANNEL=msedge also works.
+  channel: process.env.E2E_CHANNEL || 'chrome',
   headless: process.env.E2E_HEADED !== '1',
   args: ['--autoplay-policy=no-user-gesture-required'],
 })
@@ -104,15 +107,19 @@ try {
   watch(page, 'learner')
   const chimes = () => page.evaluate(() => window.__chimeNotes)
 
-  await check(page, 'learn screen opens', async () => {
-    await page.goto(`${APP}/#/learn`)
-    await page.getByRole('button', { name: 'Start lesson' }).waitFor({ timeout: 15000 })
-    await page.locator(`option[value="${LESSON}"]`).waitFor({ state: 'attached', timeout: 10000 })
-    return `${LESSON} is in the picker`
+  // The lesson's card shows its title; the hub's list gives it.
+  let lessonTitle = LESSON
+  const card = () => page.getByRole('button', { name: lessonTitle }).first()
+  await check(page, 'community lists the lesson', async () => {
+    const list = await fetch(`${APP}/api/lessons`).then((r) => r.json())
+    lessonTitle = list.find((l) => l.id === LESSON)?.title || LESSON
+    await page.goto(`${APP}/#/community`)
+    await card().waitFor({ timeout: 15000 })
+    return `card "${lessonTitle}"`
   })
 
-  // The spectator is a second viewer in its own browser context. It never
-  // clicks Start (that would select the lesson again), it only watches.
+  // The spectator is a second viewer in its own browser context, on plain
+  // #/learn: it never selects a lesson (that would restart it), it only watches.
   const specCtx = await browser.newContext({ viewport: { width: 1440, height: 900 } })
   const spectator = await specCtx.newPage()
   watch(spectator, 'spectator')
@@ -120,34 +127,34 @@ try {
 
   console.log('E2E_READY')
 
+  await check(page, 'pick lesson and start', async () => {
+    await card().click()
+    t0 = performance.now()
+    await page.waitForURL(`**/#/learn/${encodeURIComponent(LESSON)}`, { timeout: 5000 })
+    await waitStep(page, 'Step 1 of 5', 5000)
+    return `#/learn/${LESSON}, Step 1 of 5`
+  })
+
   await check(page, 'replay camera connects', async () => {
-    // The top bar names the active camera ("Replay: norm.mp4").
+    // The top bar names the active camera ("Replay: norm.mp4") while a lesson shows.
     await page.getByTitle('Active camera').waitFor({ state: 'visible', timeout: 20000 })
     return `camera "${(await page.getByTitle('Active camera').innerText()).trim()}"`
   })
 
-  await check(page, 'pick lesson and start', async () => {
-    await page.getByRole('combobox').selectOption(LESSON)
-    await page.getByRole('button', { name: 'Start lesson' }).click()
-    t0 = performance.now()
-    await page.getByRole('button', { name: 'Start lesson' }).waitFor({ state: 'detached', timeout: 5000 })
-    await waitStep(page, 'Step 1 of 5', 5000)
-    return 'picker closed, Step 1 of 5'
-  })
-
   await check(page, 'live frame appears', async () => {
-    const img = page.getByRole('img', { name: 'Live camera' })
-    await img.waitFor({ state: 'visible', timeout: 10000 })
+    // Live frames are drawn on a canvas (role img, "Live camera"), hidden until the first one.
+    const canvas = page.getByRole('img', { name: 'Live camera' })
+    await canvas.waitFor({ state: 'visible', timeout: 10000 })
     await page.waitForFunction(
       () => {
-        const i = document.querySelector('img[alt="Live camera"]')
-        return !!i && i.src.startsWith('blob:') && i.complete && i.naturalWidth > 0
+        const c = document.querySelector('canvas[aria-label="Live camera"]')
+        return !!c && !c.classList.contains('hidden') && c.width > 0 && c.height > 0
       },
       null,
       { timeout: 10000 },
     )
-    const size = await img.evaluate((i) => `${i.naturalWidth}x${i.naturalHeight}`)
-    return `live JPEG ${size}`
+    const size = await canvas.evaluate((c) => `${c.width}x${c.height}`)
+    return `live frame ${size}`
   })
 
   await check(page, 'Recording banner shows', async () => {
@@ -158,7 +165,8 @@ try {
   await check(page, 'step 1 clip plays with a caption', async () => {
     const cue = await page.waitForFunction(
       () => {
-        const v = document.querySelector('video')
+        // The clip on screen; its twin (.standby) buffers the next one.
+        const v = document.querySelector('.clip video:not(.standby)')
         if (!v || v.paused || v.currentTime <= 0) return false
         const t = [...v.textTracks].find((x) => x.mode === 'showing')
         const c = t?.activeCues?.[0]
@@ -175,7 +183,7 @@ try {
 
   const chimeBefore = await chimes()
   await check(page, 'camera advance to step 2 with chime', async () => {
-    await page.getByText('Verified', { exact: true }).waitFor({ state: 'visible', timeout: 20000 })
+    await page.getByText('Verified', { exact: true }).first().waitFor({ state: 'visible', timeout: 20000 })
     await waitStep(page, 'Step 2 of 5', 5000)
     const deadline = Date.now() + 2000
     let notes = 0
@@ -207,8 +215,8 @@ try {
     return `"${(await banner.locator('p').first().innerText()).trim()}"`
   })
 
-  await check(page, "I'm fine dismisses it", async () => {
-    await page.getByRole('button', { name: "I'm fine" }).click({ timeout: 2000 })
+  await check(page, 'OK dismisses it', async () => {
+    await banner.getByRole('button', { name: 'OK', exact: true }).click({ timeout: 2000 })
     const clickedAfter = ((performance.now() - mistakeAt) / 1000).toFixed(1)
     await banner.waitFor({ state: 'hidden', timeout: 1500 })
     const step = (await stepCount(page).innerText()).trim()
@@ -219,7 +227,7 @@ try {
 
   await check(page, 'manual step shows manual badge', async () => {
     await waitStep(page, 'Step 3 of 5', 20000)
-    await page.getByText('Manual step', { exact: true }).waitFor({ state: 'visible', timeout: 3000 })
+    await page.getByText('Manual step', { exact: true }).first().waitFor({ state: 'visible', timeout: 3000 })
     return 'Step 3 of 5, Manual step'
   })
 
@@ -231,27 +239,29 @@ try {
 
   await check(page, 'Done shows real stats', async () => {
     await page.getByText('Lesson complete', { exact: true }).waitFor({ state: 'visible', timeout: 45000 })
-    await waitStep(page, 'All steps complete', 2000)
     stats = await page.evaluate(() => {
       const out = {}
       for (const d of document.querySelectorAll('dl div')) {
         const k = d.querySelector('dt')?.textContent?.trim()
         if (k) out[k] = d.querySelector('dd')?.textContent?.trim() ?? ''
       }
-      out.__rows = [...document.querySelectorAll('table tbody tr')].map((r) => r.textContent.trim())
+      // One row per step in the Done step list (Done.tsx, section "Steps").
+      out.__rows = [...document.querySelectorAll('section[aria-label="Steps"] ol > li')].map((r) => r.textContent.trim())
       return out
     })
-    const want = { 'Checked by camera': '4', 'Marked done': '1', 'Mistakes caught': '1', Expert: '0:40' }
+    // A hub in mock mode labels camera passes "By timer (mock)"; a real one "Checked by camera".
+    const camKey = 'By timer (mock)' in stats ? 'By timer (mock)' : 'Checked by camera'
+    const want = { [camKey]: '4 of 4', 'Marked done': '1', 'Mistakes caught': '1', Expert: '0:40' }
     const bad = Object.entries(want).filter(([k, v]) => stats[k] !== v).map(([k, v]) => `${k} is ${stats[k] ?? 'missing'}, expected ${v}`)
     if (!/^\d+:\d\d$/.test(stats['Your time'] ?? '') || stats['Your time'] === '0:00') bad.push(`Your time is ${stats['Your time'] ?? 'missing'}`)
     if (stats.__rows.length !== 5) bad.push(`${stats.__rows.length} step rows, expected 5`)
     if (bad.length) throw new Error(bad.join('; '))
-    return `time ${stats['Your time']}, expert ${stats.Expert}, camera ${stats['Checked by camera']}, by hand ${stats['Marked done']}, mistakes ${stats['Mistakes caught']}`
+    return `time ${stats['Your time']}, expert ${stats.Expert}, ${camKey.toLowerCase()} ${stats[camKey]}, by hand ${stats['Marked done']}, mistakes ${stats['Mistakes caught']}`
   })
 
   await check(spectator, 'spectator mirrors done', async () => {
-    await waitStep(spectator, 'All steps complete', 3000)
-    return 'second viewer shows All steps complete'
+    await spectator.getByText('Lesson complete', { exact: true }).waitFor({ state: 'visible', timeout: 3000 })
+    return 'second viewer shows Lesson complete'
   })
 } catch (e) {
   rows.push({ name: 'flow ran', status: 'FAIL', ms: 0, at_s: null, detail: String(e?.message || e).split('\n')[0], screenshot: null })

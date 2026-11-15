@@ -80,10 +80,9 @@ if (RTT_MS) {
 }
 await page.addInitScript(probe)
 await hook('/mock/camera?on=1')
-await page.goto(`${APP}/#/learn`)
-await page.waitForSelector(`.lesson-option[data-id="${LESSON}"]`)
-await page.click(`.lesson-option[data-id="${LESSON}"]`)
-await page.click('text=Start lesson')
+// The route selects the lesson (#/learn/<id> sends select_lesson).
+await page.goto(`${APP}/#/learn/${encodeURIComponent(LESSON)}`)
+await page.waitForFunction(() => /^Step \d+ of/.test(document.querySelector('.step-count')?.textContent ?? ''), null, { timeout: 10000 })
 await wait(1500)
 
 const total = (await hook('/mock/goto?step=0')).total
