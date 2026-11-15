@@ -163,7 +163,7 @@ def test_setup_statements_substitute_catalog_and_schema():
     assert "/Volumes/cat_a/sch_b/lessons/" in sql and "workspace.handoverx" in sql
 
 
-def test_real_prayush_files_parse_and_every_filter_edit_applies():
+def test_real_sql_files_parse_and_every_filter_edit_applies():
     text, _ = ds.read_source("01_setup.sql")
     if text is not None:
         stmts = ds.setup_statements(text, {"catalog": "workspace", "schema": "handover"})

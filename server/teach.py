@@ -1115,7 +1115,7 @@ def _last_frame(clip: Path, out: Path) -> None:
     raise RuntimeError(f"could not grab last frame of {clip}")
 
 
-# ---------------------------------------------------------------- 3a. reference frames (M8)
+# ---------------------------------------------------------------- 3a. reference frames
 
 REF_TAIL = 0.15        # look for the reference in the last 15% of the step
 REF_MIN_WINDOW = 0.3   # seconds; very short steps still get a few frames to compare

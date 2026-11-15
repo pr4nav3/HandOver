@@ -6,7 +6,7 @@ import Observation
 /// user default `handover.feature.glasses` (or the launch argument `-handover.feature.glasses YES`).
 ///
 /// It needs Meta's Wearables Device Access Toolkit (MWDAT 1.0.1, linked with Swift Package Manager; API names as
-/// in Pranav's ios/Sources/GlassesCameraSource.swift). The only transport is Bluetooth Classic, through the
+/// in ios/Sources/GlassesCameraSource.swift). The only transport is Bluetooth Classic, through the
 /// External Accessory protocol `com.meta.ar.wearable` and the bluetooth-peripheral and external-accessory
 /// background modes in Info.plist. It needs no Hotspot or Wi-Fi Info entitlement, so a free personal team signs
 /// it. Not tested on glasses yet, so the card never claims it works, and every failure falls back to the phone.

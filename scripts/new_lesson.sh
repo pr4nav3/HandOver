@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Turn one or more expert takes into a lesson folder (M14), then show how to fix step times.
+# Turn one or more expert takes into a lesson folder, then show how to fix step times.
 #
 #   scripts/new_lesson.sh --id fortune-teller-v1 --title "Fold a fortune teller" take1.mov [take2.mov ...]
 #   scripts/new_lesson.sh --mock --id test-v1 --title "Test" clip.mp4     # no Gemini: three placeholder steps

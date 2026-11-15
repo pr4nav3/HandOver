@@ -1,23 +1,23 @@
-# Operations: demo-day runbook
+# Operations: runbook
 
-What to run on the Mac, in order, and what to do when something breaks.
+What to run, in order, and what to do when something breaks.
 
 Back to [server/README.md](../README.md).
 
-## Demo day on Windows
+## Running on Windows
 
-PowerShell in the repo root. Never set `HANDOVER_CHECK=mock` for the real demo.
+PowerShell in the repo root. Leave `HANDOVER_CHECK` unset for real checks; `mock` passes on a timer.
 
 | # | Step | Command or action | Expect |
 |---|---|---|---|
 | 1 | Stop stale hubs | `Get-NetTCPConnection -State Listen -LocalPort 8000,8443 -ErrorAction SilentlyContinue \| select LocalPort,OwningProcess`, then `Stop-Process -Id <PID>` for each | Nothing listens on 8000 or 8443. `run_server.ps1` refuses to start and names the PID otherwise |
 | 2 | Preflight | `.venv\Scripts\python.exe scripts\preflight.py` | `READY` or `READY WITH WARNINGS`. The `Ports` rows name any PID still on 8000 or 8443; `cert IP` must cover the laptop IP |
 | 3 | Start the hub | `scripts\run_server.ps1` | `Hub: ... LAN: http://<IP>:8000/`, `Phone camera page: https://<IP>:8443/capture`, then `check: claude claude-haiku-5-5`. Ctrl+C stops it cleanly |
-| 4 | Open the screens | Laptop: `http://localhost:8000/` (the Learn screen); a second screen or projector: `http://<IP>:8000/` | Lessons list loads; the live pane shows "Connect a camera" with a QR code |
+| 4 | Open the screens | Laptop: `http://localhost:8000/` (the Learn screen); any other screen on the network: `http://<IP>:8000/` | Lessons list loads; the live pane shows "Connect a camera" with a QR code |
 | 5 | Pair the phone | Same Wi-Fi or hotspot as the laptop. Scan the QR code (or open `https://<IP>:8443/capture` in Safari), allow the camera. The HandOver app: enter `http://<IP>:8000` (the hub logs it as `pair a phone: ...`) | The top bar names the camera; frames show on the big screen |
-| 6 | Replay fallback | `.venv\Scripts\python.exe -m server.replay lessons\fortune-teller-v1\norm.mp4 --select fortune-teller-v1 --loop` (or a clean fold recording) | The "Recording" banner shows; steps advance from the file |
-| 7 | Breaker fallback | Rehearse once: `$env:ANTHROPIC_API_KEY = "sk-ant-invalid"; scripts\run_server.ps1` (the 401 is not billed) | "Checks off, use Next" with reason `no_key`; Next still moves every step. Remove the variable and restart before judging |
-| 8 | Last look | `.venv\Scripts\python.exe -m server.spend` | Today and the total are well under $20 and $50 |
+| 6 | Replay (optional) | `.venv\Scripts\python.exe -m server.replay lessons\fortune-teller-v1\norm.mp4 --select fortune-teller-v1 --loop` (or a clean fold recording) | The "Recording" banner shows; steps advance from the file |
+| 7 | Breaker check (optional) | `$env:ANTHROPIC_API_KEY = "sk-ant-invalid"; scripts\run_server.ps1` (the 401 is not billed) | "Checks off, use Next" with reason `no_key`; Next still moves every step. Remove the variable and restart afterwards |
+| 8 | Spend | `.venv\Scripts\python.exe -m server.spend` | Today and the total are well under $20 and $50 |
 
 Phone pairing, once per laptop and network:
 
@@ -33,7 +33,7 @@ scripts/run_server.sh
 
 | Check | Expect |
 |---|---|
-| Log line | `lessons: <path>  check: claude claude-haiku-5-5` or `check: gemini <model>` (says `mock` if `HANDOVER_CHECK=mock` is set: unset it for the demo) |
+| Log line | `lessons: <path>  check: claude claude-haiku-5-5` or `check: gemini <model>` (says `mock` if `HANDOVER_CHECK=mock` is set: unset it for real checks) |
 | Phone line | `Phone camera page: https://<IP>:8443/capture` (only when certs exist) |
 | Lessons | `curl -s http://localhost:8000/api/lessons` lists both lessons |
 
@@ -73,19 +73,16 @@ It reconnects every 2 s if the hub drops. It sends `hello` with `source: "file"`
 
 `demo-v1` is a synthetic test pattern (colored bars), not a real lesson.
 
-## 5. Fallback ladder
+## 5. Camera sources
 
-Drop one rung only when the one above fails. Next always works.
+Any of these can be the learner's camera; the hub judges whichever one is active. Next always works, with or without a camera.
 
-```mermaid
-flowchart TD
-  a["Glasses through the iPhone app<br/>(only if the 8 PM gate passed)"] -->|fails| b["iPhone app, phone camera"]
-  b -->|fails| c["Safari /capture on the iPhone"]
-  c -->|fails| d["server.replay of the clean fold<br/>with the Recording banner"]
-  d -->|fails| e["Next button"]
-```
-
-The iPhone app lives in `ios/` (Pranav's lane) and is not in this branch.
+| Source | How |
+|---|---|
+| Meta glasses through the iPhone app | The app streams the glasses camera with the Meta Wearables toolkit (needs a paid Apple Developer team) |
+| iPhone app, phone camera | The app in `ios/` or `apps/apple/` |
+| Safari `/capture` on a phone | `https://<IP>:8443/capture` |
+| A recording | `server.replay`, shown with the Recording banner |
 
 ## 6. Breaker and the provider down
 
@@ -93,22 +90,15 @@ The breaker turns checks off after 3 errors or timeouts in a row, any 429 (rate 
 
 If the provider is down or slow:
 
-1. Keep going with Next. Say "the camera check is off, so I'll press Next."
+1. Keep going with Next.
 2. Switch provider: set `HANDOVER_CHECK_PROVIDER=gemini` (or `claude`) and restart the hub.
-3. Do not switch to `HANDOVER_CHECK=mock` in front of judges. Mock passes on a timer, not on what the camera sees.
+3. `HANDOVER_CHECK=mock` is for tests only. Mock passes on a timer, not on what the camera sees.
 
 The log says `check failed` or `check timed out` for each failed call.
 
-## 7. 8 AM rehearsal count
+## 7. Measuring accuracy on real attempts
 
-From docs/PLAN.md: 20 folds under venue light.
-
-| Count | Rule |
-|---|---|
-| Planted skipped flip caught in 18 or more of 20 | Keep the catch in the demo |
-| Fewer than 18 | Step 5 becomes manual and the plant moves |
-
-Also log camera-verified steps, manual steps, false passes and false alarms. Results: not measured yet.
+`scripts/rehearsal.py` tallies, over many attempts against a running hub, how often the mistake check named a skipped step; `scripts/accuracy.py` and `scripts/eval_checks.py` measure checks offline. Log camera-verified steps, manual steps, false passes and false alarms alongside. If a step's mistake is caught too rarely, make that step manual.
 
 ## 8. Privacy
 

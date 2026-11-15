@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""End-to-end demo test: the real learn screen in Chrome against a mock hub and the replay camera.
+"""End-to-end test: the real learn screen in Chrome against a mock hub and the replay camera.
 
     .venv/bin/python scripts/e2e_demo.py [--headed] [--keep]        (Windows: .venv/Scripts/python.exe)
 
 Builds web/ into a temp folder (never touches web/dist), copies lessons/demo-v1 into a temp lessons
 folder with a common_mistake on step 2, starts the hub in mock mode on 8095 (no keys, no Databricks, events
-to a temp file, HANDOVER_NO_NETWORK=1) with a planted "behind"
+to a temp file, HANDOVER_NO_NETWORK=1) with an injected "behind"
 mistake on step 2, runs scripts/e2e/learn_flow.mjs in installed Chrome, and starts server.replay once
 the page is up. Screenshots, flow.json, summary.json and the hub and replay logs go to
 scripts/out/e2e-<time>/. Prints a PASS/FAIL table; exit code 0 only when every row passed.
@@ -277,7 +277,7 @@ def main() -> int:
         if not wait_http(f"{base}/api/lessons", 30, procs["hub"]):
             rows.add("FAIL", "hub up", time.monotonic() - t, f"no answer on {base}; see {out / 'hub.log'}")
             return 1
-        rows.add("PASS", "hub up", time.monotonic() - t, f"{base}, mock checks, mistake planted on step 2")
+        rows.add("PASS", "hub up", time.monotonic() - t, f"{base}, mock checks, mistake injected on step 2")
 
         # The hub serves the build when it supports HANDOVER_WEB_DIST; otherwise Vite serves it and proxies.
         t = time.monotonic()
@@ -333,7 +333,7 @@ def main() -> int:
         (out / "summary.json").write_text(json.dumps(
             {"when": dt.datetime.now().isoformat(timespec="seconds"), "app": base, "lesson": LESSON,
              "passed": not rows.failed(), "rows": rows.rows}, indent=2) + "\n", encoding="utf-8")
-        print_table(rows.rows, f"HandOver e2e demo  lesson {LESSON}  hub {base}")
+        print_table(rows.rows, f"HandOver e2e  lesson {LESSON}  hub {base}")
         print(f"screenshots and logs: {out}")
 
 

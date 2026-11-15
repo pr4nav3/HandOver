@@ -997,7 +997,7 @@ def undo(lesson_dir: Path) -> int:
 
 # ---------------------------------------------------------------- app cues
 
-APP_CUES = {  # file stem: line. The Learn screen plays /voice/<stem>.mp3 (web/public/voice); see docs/VOICE_SHEET.md
+APP_CUES = {  # file stem: line. The Learn screen plays /voice/<stem>.mp3 (web/public/voice); see docs/voice.md
     "done-moving-on": "That's it. Next step.",
     "lesson-complete": "That's the whole thing. Nicely done.",
     "checks-off": "I can't see well right now. Tap Next when you're done.",

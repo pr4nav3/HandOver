@@ -103,7 +103,7 @@ HandOver cross-platform design (Design role). I edited no files.
 - Needs setup: Android emulator. It needs the free Android SDK, which is unknown to be installed. The emulator can feed the Mac webcam as its camera (inferred).
 - Cannot verify here: the Windows app. Options are a free GitHub Actions windows-latest build (compiles only, inferred free for public repos) or Windows 11 ARM in UTM (heavy, and the Mac load rule applies). Windows UI and Mica stay unverified without a Windows machine. Phone to laptop pairing across OSes also needs the real devices.
 
-**9. Contract additions this design needs (Lead's decision)**
+**9. Contract additions this design needs**
 - `status:"mistake"` with a `message` field, and a skip alert event.
 - `pair` code check, plus a hello message from the phone carrying the device name.
 - Export and import lesson endpoints.

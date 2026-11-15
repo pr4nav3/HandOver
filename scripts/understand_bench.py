@@ -10,7 +10,7 @@ real footage):
                      part way (its top-down projection), 1, 2 or 3 of 4 corners folded, the sheet squashed
                      mid-flip. Step 8 (pockets) has no geometric model here: its one in-between frame is a 50%
                      alpha blend of states 7 and 8, a crude proxy, labeled "blend" in the results.
-  planted mistakes   step 2 corners not lined up; step 4 only 3 corners folded; step 4 corners stopped short
+  injected mistakes   step 2 corners not lined up; step 4 only 3 corners folded; step 4 corners stopped short
                      of the center; step 5 flipped before the 4th corner was folded; step 6 corners short of
                      the center.
 
@@ -259,7 +259,7 @@ class Frame:
     step: int
     name: str
     key: object
-    progress: Optional[float]  # truth; None for planted mistakes
+    progress: Optional[float]  # truth; None for injected mistakes
     kind: str  # series or mistake
     proxy: str = "geometry"  # geometry, blend, or state (a finished synth_folds state)
 
@@ -483,7 +483,7 @@ def metrics(rows: list[Row], tracker_factory: Callable) -> dict:
         hit = [m for m in msgs if m]
         fired += bool(hit)
         labels[f"s{step} {name}"] = [r.mistake for r in seq]
-    out["tracker_fired_on_planted"] = (fired, total)
+    out["tracker_fired_on_injected"] = (fired, total)
     out["tracker_false_fire_on_clean_series"] = (fires_clean, n_clean)
     out["mistake_labels_seen"] = labels
     # done vs check
@@ -542,19 +542,19 @@ def report(meta: dict, results: dict[str, dict], subsets: dict[str, dict]) -> st
                 ("mistake detected per frame (conf >= 0.75)", lambda m: frac(m["mistake_detected"])),
                 ("mistake false alarm, clean frames", lambda m: frac(m["mistake_false_alarm"])),
                 ("  of which in-between frames", lambda m: frac(m["mistake_false_alarm_inbetween"])),
-                ("tracker fired on planted sequence", lambda m: frac(m["tracker_fired_on_planted"])),
+                ("tracker fired on injected sequence", lambda m: frac(m["tracker_fired_on_injected"])),
                 ("tracker false fire on clean series", lambda m: frac(m["tracker_false_fire_on_clean_series"])),
                 ("done: yes on done frames (understand)", lambda m: frac(m["understand_done"]["done_yes"])),
                 ("done: false pass, all others (understand)", lambda m: frac(m["understand_done"]["false_pass_all"])),
                 ("  in-between (understand)", lambda m: frac(m["understand_done"]["false_pass_inbetween"])),
-                ("  planted mistakes (understand)", lambda m: frac(m["understand_done"]["false_pass_mistake"])),
+                ("  injected mistakes (understand)", lambda m: frac(m["understand_done"]["false_pass_mistake"])),
                 ("done: yes on done frames (current check)",
                  lambda m: frac(m["check_done"]["done_yes"]) if "check_done" in m else "-"),
                 ("done: false pass, all others (current check)",
                  lambda m: frac(m["check_done"]["false_pass_all"]) if "check_done" in m else "-"),
                 ("  in-between (current check)",
                  lambda m: frac(m["check_done"]["false_pass_inbetween"]) if "check_done" in m else "-"),
-                ("  planted mistakes (current check)",
+                ("  injected mistakes (current check)",
                  lambda m: frac(m["check_done"]["false_pass_mistake"]) if "check_done" in m else "-"),
                 ("latency p50 / p90 ms (understand)", lambda m: f"{m['latency_p50']} / {m['latency_p90']}"),
                 ("latency p50 / p90 ms (current check)",
@@ -577,7 +577,7 @@ def report(meta: dict, results: dict[str, dict], subsets: dict[str, dict]) -> st
             lines.append(f"| {model} | {th} | {frac(v['detected'])} | {frac(v['false_alarm'])} |")
     lines += [""]
     lines += ["## Rubric cost", ""] + [f"- {m}: ${c:.4f}" for m, c in meta["rubric_cost"].items()] + [""]
-    lines += ["## Mistake labels per planted sequence (variant order)", ""]
+    lines += ["## Mistake labels per injected sequence (variant order)", ""]
     for model, res in results.items():
         for k, v in res["mistake_labels_seen"].items():
             lines.append(f"- {model} {k}: {v}")

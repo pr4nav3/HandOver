@@ -27,7 +27,7 @@ session.addCamera(StreamConfiguration(videoQuality = VideoQuality.LOW, frameRate
 - Plain Bluetooth, no toolkit calls. A2DP play only; HFP two-way 16/8 kHz mono; HFP disables A2DP. Set HFP before camera stream or audio route fails silently.
 - Android: TYPE_BLUETOOTH_SCO device, MODE_IN_COMMUNICATION, setCommunicationDevice, before session.start(). SpeechRecognizer for "next" (inferred it follows comm device).
 - iOS: .playback (A2DP) or .playAndRecord with .allowBluetoothHFP; SFSpeechRecognizer.
-- Demo recommendation: keep audio on the laptop; HFP sounds like a phone call.
+- Recommendation: keep audio on the laptop; HFP sounds like a phone call.
 
 ## Phone fallback and one Android app
 - Android cleartext: res/xml/network_security_config.xml `<base-config cleartextTrafficPermitted="true"/>`.

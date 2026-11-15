@@ -74,7 +74,7 @@ def _nearest_color(rgb) -> int:
     return min(range(len(DEMO_COLORS)), key=lambda i: sum((a - b) ** 2 for a, b in zip(rgb, DEMO_COLORS[i])))
 
 
-# ---------------------------------------------------------------- reference frames (M8)
+# ---------------------------------------------------------------- reference frames
 
 def test_ref_frames_in_last_15_percent_and_not_black():
     d = _demo_copy("ref-frames")

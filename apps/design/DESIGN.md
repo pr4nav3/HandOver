@@ -3,11 +3,11 @@
 The visual and interaction rules for every HandOver app: iPhone, iPad, Mac, Android and Windows. Colors per theme are in [THEMES.md](THEMES.md). Every screen, string and state is in [SCREENS.md](SCREENS.md).
 
 Sources. Most patterns here come from two apps that already work this way. Each section names the file it borrows from.
-- Vibeflux, iPhone: `vibeflux/iOS/AgentDeckViewer/Design/DeckTokens.swift`, `DeckComponents.swift`, `Views/*`. Mac and shared: `vibeflux/Sources/Design/DeckThemeCatalog.swift`, `DeckWorkViews.swift`. Android: `vibeflux/android/app/src/main/kotlin/com/soham109/agentdeck/ui/theme/DeckTheme.kt`. Windows: `vibeflux/windows/ui/src/themes.ts`.
+- Vibeflux, iPhone: `vibeflux/iOS/AgentDeckViewer/Design/DeckTokens.swift`, `DeckComponents.swift`, `Views/*`. Mac and shared: `vibeflux/Sources/Design/DeckThemeCatalog.swift`, `DeckWorkViews.swift`. Android: `vibeflux/android/.../agentdeck/ui/theme/DeckTheme.kt`. Windows: `vibeflux/windows/ui/src/themes.ts`.
 - Glasspad: `glasspad/Packages/GlasspadKit/Sources/GlasspadKit/Theme/ThemeCatalog.swift`, `ThemeGrain.swift`, `glasspad/Apps/iOS/Sources/Design/Glass.swift`, `Grain.swift`, `glasspad/docs/brand/voice.md`.
 - HandOver today: `web/src/Learn.tsx`, `web/src/Teach.tsx`, `web/src/styles.css`, `CONTRACT.md`, `server/docs/*`.
 
-Scope note. `docs/PLAN.md` lists Android, Windows and QR pairing as cut for the hackathon build. This spec covers them because the lead asked for the full product. Builders should treat Android and Windows sections as the target for after the demo. Features that need hub endpoints that do not exist yet are marked **Needs hub** with the missing piece named (see the last section of SCREENS.md).
+Scope note. This spec covers the full product, including Android, Windows and QR pairing. Features that need hub endpoints that do not exist yet are marked **Needs hub** with the missing piece named (see the last section of SCREENS.md).
 
 ---
 
@@ -496,7 +496,7 @@ Rules (from `ConnectionFeedback.swift`):
 - **Targets**: 44 x 44 pt minimum on iOS and Mac touch, 48 dp on Android, 40 epx pointer and 44 touch on Windows. The PiP tile, timeline boundaries and progress segments meet it with invisible padding.
 - **Keyboard** (iPad and Mac, also Windows): Right Arrow or Space for Next, Left Arrow for Back (same as `Learn.tsx`), R to replay the clip, M to mute, C for captions, Command Z and Shift Command Z in the editor, Command S does nothing (autosave) but shows "Saved". Full keyboard access focus ring on every control.
 - **Captions** on by default. Respect the system "Closed Captions + SDH" setting as on.
-- **Voice Next** (listen for "next" and "back") is off by default and stays off until the learner turns it on (`docs/PLAN.md`, `Learn.tsx`). It ignores speech while the clip is audible.
+- **Voice Next** (listen for "next" and "back") is off by default and stays off until the learner turns it on (`Learn.tsx`). It ignores speech while the clip is audible.
 - **Camera mode** keeps the screen awake (`isIdleTimerDisabled`) and dims to 30% brightness after 30 s idle, restoring on touch.
 
 ---

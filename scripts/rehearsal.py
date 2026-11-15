@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
-"""8 AM rehearsal counter: live hub events plus a tally of planted-flip catches against the bar.
+"""Accuracy run over many attempts: live hub events plus a tally of how often the mistake check
+named a skipped step, against a target rate.
 
     .venv/bin/python scripts/rehearsal.py [--base http://localhost:8000] [--log FILE] [--goal 18] [--of 20]
 
-Runs `scripts/smoke.py watch --log FILE` and shows its lines. Press keys while folds run:
-    t  start a try        c  caught (the planted flip was named)        m  missed
+Runs `scripts/smoke.py watch --log FILE` and shows its lines. Press keys while attempts run:
+    t  start an attempt   c  caught (the hub named the skipped step)    m  missed
     u  undo the last c/m  q  quit and print the summary
-c or m without t counts as a new try. A MISTAKE line from the hub prints a hint; the count is yours.
+c or m without t counts as a new attempt. A MISTAKE line from the hub prints a hint; the count is yours.
 Every key press is also written to the log as a JSON line, next to the hub events.
-Default log: scripts/out/rehearsal-<timestamp>.jsonl. Bar (docs/PLAN.md): 18 of 20, else step 5
-becomes manual and the plant moves.
+Default log: scripts/out/accuracy-run-<timestamp>.jsonl. Default target: 18 catches of 20 attempts;
+a step whose mistake is caught less often is a candidate for a manual step.
 """
 
 from __future__ import annotations
@@ -45,7 +46,7 @@ class Tally:
         self.mistake_seen = False
 
     def mark(self, event: str, **extra) -> None:
-        line = {"t": dt.datetime.now().isoformat(timespec="milliseconds"), "rehearsal": event}
+        line = {"t": dt.datetime.now().isoformat(timespec="milliseconds"), "accuracy_run": event}
         if event in ("start", "caught", "missed"):
             line["try"] = len(self.results) + (1 if event == "start" else 0)
         line.update(extra)
@@ -86,9 +87,9 @@ class Tally:
         done = caught + missed
         allowed = self.of - self.goal
         if caught >= self.goal:
-            status = f"bar met ({self.goal} of {self.of})"
+            status = f"target met ({self.goal} of {self.of})"
         elif missed > allowed:
-            status = f"bar missed: {missed} misses, only {allowed} allowed. Make step 5 manual and move the plant"
+            status = f"target missed: {missed} misses, only {allowed} allowed. Consider making that step manual"
         else:
             status = f"on track: need {self.goal - caught} more catches in {max(0, self.of - done)} tries"
         return f"[caught {caught}  missed {missed}  of {done}]  {status}"
@@ -100,13 +101,13 @@ def reader(proc: subprocess.Popen, tally: Tally) -> None:
         say("   " + text)
         if "MISTAKE" in text and not tally.mistake_seen:
             tally.mistake_seen = True
-            say("   hint: the hub flagged a mistake. Press c if it named the planted flip.")
+            say("   hint: the hub flagged a mistake. Press c if it named the skipped step.")
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(prog="scripts/rehearsal.py", description="8 AM rehearsal counter")
+    ap = argparse.ArgumentParser(prog="scripts/rehearsal.py", description="Accuracy run: tally caught and missed mistakes over many attempts")
     ap.add_argument("--base", default="http://localhost:8000")
-    ap.add_argument("--log", type=Path, help="JSON lines log (default scripts/out/rehearsal-<timestamp>.jsonl)")
+    ap.add_argument("--log", type=Path, help="JSON lines log (default scripts/out/accuracy-run-<timestamp>.jsonl)")
     ap.add_argument("--goal", type=int, default=18, help="catches needed (default 18)")
     ap.add_argument("--of", type=int, default=20, help="out of this many tries (default 20)")
     a = ap.parse_args()
@@ -116,7 +117,7 @@ def main() -> int:
     log = a.log
     if log is None:
         (HERE / "out").mkdir(exist_ok=True)
-        log = HERE / "out" / f"rehearsal-{dt.datetime.now().strftime('%Y%m%d-%H%M%S')}.jsonl"
+        log = HERE / "out" / f"accuracy-run-{dt.datetime.now().strftime('%Y%m%d-%H%M%S')}.jsonl"
     tally = Tally(a.goal, a.of, log)
 
     proc = subprocess.Popen(
@@ -124,7 +125,7 @@ def main() -> int:
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, text=True, bufsize=1,
     )
     threading.Thread(target=reader, args=(proc, tally), daemon=True).start()
-    say(f"Rehearsal: bar {a.goal} of {a.of}. Keys: t start, c caught, m missed, u undo, q quit.  Log: {log}")
+    say(f"Accuracy run: target {a.goal} of {a.of}. Keys: t start, c caught, m missed, u undo, q quit.  Log: {log}")
     tally.mark("session_start", goal=a.goal, of=a.of, base=a.base)
 
     fd = sys.stdin.fileno()
@@ -157,7 +158,7 @@ def main() -> int:
     caught, missed = tally.counts()
     tally.mark("session_end", caught=caught, missed=missed)
     say("")
-    say("Rehearsal summary")
+    say("Accuracy run summary")
     for i, (r, took) in enumerate(tally.results, 1):
         say(f"  try {i:2d}  {r:6s}  {took:5.0f} s")
     say(f"  {tally.line()}")

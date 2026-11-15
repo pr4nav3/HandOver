@@ -63,7 +63,7 @@ cd .. && cargo build && cargo test
 cargo run -p app --features custom-protocol -- --hub 127.0.0.1:8099
 ```
 
-`--features custom-protocol` serves the built UI from inside the binary (the Tauri CLI turns it on for `tauri build`). `HANDOVER_DESKTOP_HOME` moves the app's data folder, for tests and demos.
+`--features custom-protocol` serves the built UI from inside the binary (the Tauri CLI turns it on for `tauri build`). `HANDOVER_DESKTOP_HOME` moves the app's data folder, for tests.
 
 Against a real hub in mock mode, from the repo root:
 

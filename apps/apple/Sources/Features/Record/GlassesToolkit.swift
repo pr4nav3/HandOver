@@ -1,7 +1,7 @@
 import Foundation
 
 // Every Meta Wearables Device Access Toolkit (MWDAT 1.0.1) call for recording lives in this file. Names and
-// signatures follow the 1.0.1 swiftinterface files (MWDATCore, MWDATCamera) and Pranav's compiling
+// signatures follow the 1.0.1 swiftinterface files (MWDATCore, MWDATCamera) and the compiling
 // ios/Sources/GlassesCameraSource.swift. Built only when the package is linked; otherwise the stub at the
 // bottom keeps the glasses source unavailable. Streams over Bluetooth Classic only (no Wi-Fi entitlements, so a
 // free personal team signs it). Not yet run on glasses.

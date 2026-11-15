@@ -103,7 +103,7 @@ final class HubIntegrationTests: XCTestCase {
         let camera = CameraSocket(hub: hub, hello: hello)
         let log = EventLog(camera.events)
         await camera.start()
-        // After hello the hub sends camera_status and state to cameras (CONTRACT.md section 6, W8).
+        // After hello the hub sends camera_status and state to cameras (CONTRACT.md section 6).
         try await eventually("camera_status after hello", timeout: .seconds(5)) {
             log.messages.contains { if case .cameraStatus = $0 { true } else { false } }
         }

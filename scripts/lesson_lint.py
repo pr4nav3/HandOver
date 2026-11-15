@@ -1,4 +1,4 @@
-"""Check a lesson folder against CONTRACT.md section 3 before it goes on stage.
+"""Check a lesson folder against CONTRACT.md section 3 before it is used.
 
     .venv/bin/python scripts/lesson_lint.py lessons/demo-v1 [lessons/other ...] [--strict] [--json]
 

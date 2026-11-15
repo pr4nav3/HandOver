@@ -1,7 +1,7 @@
 # Glasses and phone recording: research notes (2026-11-14)
 
-Tags: [V] verified in Meta 1.0 reference, the official repo, or Pranav's compiled code; [I] inferred, needs a device test.
-The compiling MWDAT 1.0.1 integration is on branch soham/pranav-fixes (ios/Sources/GlassesCameraSource.swift).
+Tags: [V] verified in Meta 1.0 reference, the official repo, or our compiled integration; [I] inferred, needs a device test.
+The MWDAT 1.0.1 integration is in ios/Sources/GlassesCameraSource.swift.
 
 ## P0: entitlements and the Wi-Fi link (test first)
 - [V] Camera streaming runs over a Wi-Fi network hosted by the glasses. Needs `com.apple.developer.networking.HotspotConfiguration` and `com.apple.developer.networking.wifi-info` entitlements plus Local Network permission. Without them the SDK connects over BLE but never streams.

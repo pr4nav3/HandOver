@@ -2,7 +2,7 @@
 
 ## Recommendation
 - Hub: one Python FastAPI server serving the built React app plus the REST/WS contract. Frozen with PyInstaller per OS. Every client speaks the same HTTP/WS contract; that is what makes every OS work with every other.
-- Desktop (Mac, Windows): skip Tauri/Electron this weekend. Ship the PyInstaller app (Mac .app in .dmg, Windows .exe in Inno Setup installer). It starts the hub, opens the learn screen in the default browser, shows a QR code. Reason: Chrome Web Speech fails inside embedded webviews (Electron "network" error, WKWebView) (inferred from bug reports). Tauri 2 sidecar is the later upgrade (needs Rust, target-triple binary name; verified).
+- Desktop (Mac, Windows): skip Tauri/Electron at first. Ship the PyInstaller app (Mac .app in .dmg, Windows .exe in Inno Setup installer). It starts the hub, opens the learn screen in the default browser, shows a QR code. Reason: Chrome Web Speech fails inside embedded webviews (Electron "network" error, WKWebView) (inferred from bug reports). Tauri 2 sidecar is the later upgrade (needs Rust, target-triple binary name; verified).
 - Mobile: native Swift iOS and native Kotlin Android thin capture clients: glasses or phone camera, JPEG 1 fps, WebSocket to /ws/camera.
   - Meta Wearables DAT for Android exists (verified): github.com/facebook/meta-wearables-dat-android, Maven Central group com.meta.wearable, sample 1.0.1, developer preview, video streaming supported. Trust README (Maven Central) over older docs (GitHub Packages + token).
   - iOS DAT 1.0.1 SPM developer preview (verified). Flutter wrapper is third party; skip. RN/Capacitor have no official glasses support.
@@ -52,7 +52,7 @@
 - PyInstaller size; keep faster-whisper optional.
 - Web Speech needs Chrome and internet; Next button fallback.
 - DAT developer preview on both OSes.
-- Hotspot client isolation can block phone to laptop. Test venue network early.
+- Hotspot client isolation can block phone to laptop. Test the network early.
 - No Windows hardware means Windows ships "CI green, untested by hand".
 
 ## Minimum viable per platform

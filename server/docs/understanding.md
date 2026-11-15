@@ -69,7 +69,7 @@ flowchart LR
 
 ## 4. Measured (synthetic renders only)
 
-Run `scripts/out/understand-20261114-172318/report.md`: 26 frames per variant over camera steps 2, 4, 5, 6, 8 (start, real partial folds drawn with synth_folds' primitives, done, plus 5 planted mistakes). Step 8's in-between is a 50% alpha blend, a crude proxy. These are Pillow drawings, not photos.
+Run `scripts/out/understand-20261114-172318/report.md`: 26 frames per variant over camera steps 2, 4, 5, 6, 8 (start, real partial folds drawn with synth_folds' primitives, done, plus 5 injected mistakes). Step 8's in-between is a 50% alpha blend, a crude proxy. These are Pillow drawings, not photos.
 
 | Metric | Haiku 5.5, 3 variants | Sonnet 5.5, 1 variant | Haiku, same variant |
 |---|---|---|---|
@@ -80,7 +80,7 @@ Run `scripts/out/understand-20261114-172318/report.md`: 26 frames per variant ov
 | Done yes on done frames | 13/15 | 5/5 | 5/5 |
 | False pass on all other frames | 9/63 | 1/21 | 3/21 |
 | Mistake flagged at >= 0.75 / false alarm | 2/15, 3/63 | 0/5, 0/21 | 1/5, 1/21 |
-| Tracker fired on planted sequence / on clean series | 0/5, 0/15 | 0/5, 0/5 | |
+| Tracker fired on injected sequence / on clean series | 0/5, 0/15 | 0/5, 0/5 | |
 | Latency p50 / p90 | 1363 / 2537 ms | 2097 / 2772 ms | 1614 / 2634 ms |
 | Cost per live call | $0.00012 | $0.0032 | |
 | Rubric call | $0.0023 | $0.0291 | |
@@ -89,7 +89,7 @@ Current check on the same Haiku frames: done yes 15/15, false pass 10/63, p50 10
 
 Mistake confidence threshold sweep, Haiku, per frame:
 
-| Threshold | Detected | False alarm on clean frames | Tracker: planted / clean series |
+| Threshold | Detected | False alarm on clean frames | Tracker: injected / clean series |
 |---|---|---|---|
 | 0.5 | 12/15 | 14/63 | 4/5, 4/15 |
 | 0.6 | 11/15 | 13/63 | 4/5, 4/15 |
@@ -98,13 +98,13 @@ Mistake confidence threshold sweep, Haiku, per frame:
 What this says:
 
 - Progress and stage work: monotonic along a step, start and done read correctly in most frames.
-- Haiku names the planted mistake in 4 of 5 sequences, the same label in every variant, but at confidence 0.6 to 0.7, the same values it gives half-finished correct frames. No threshold separates them on single frames. At 0.75 the tracker never fires; at 0.6 it catches 4/5 and false-fires on 4/15 clean series. "Flipped early" was never caught by Haiku.
+- Haiku names the injected mistake in 4 of 5 sequences, the same label in every variant, but at confidence 0.6 to 0.7, the same values it gives half-finished correct frames. No threshold separates them on single frames. At 0.75 the tracker never fires; at 0.6 it catches 4/5 and false-fires on 4/15 clean series. "Flipped early" was never caught by Haiku.
 - Sonnet is smoother on progress and has fewer false passes, but caught no mistakes and costs 26 times more per call. Not clearly better for its price; Haiku stays the default.
 - As a done signal alone, understanding is not better than the current check. As a second vote it cuts false passes by more than half.
 
 ## 5. Limits
 
-- Synthetic renders only, small samples (5 planted mistakes, 15 series). Re-test on real footage before trusting any number.
+- Synthetic renders only, small samples (5 injected mistakes, 15 series). Re-test on real footage before trusting any number.
 - The benchmark's keyframes come from clean renders (an idealized expert video); the synthetic lesson's own video is static per step.
 - Expected stage is truth progress split evenly over the model's stages, so "stage exact" is approximate; "within 1" is the fairer number.
 - A live call is slower than the current check: 0.35 s more at p50, 1.1 s more at p90. The first call per step writes the cache.

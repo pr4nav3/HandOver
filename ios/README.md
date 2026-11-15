@@ -1,11 +1,11 @@
 Compiles with Xcode on macOS against MWDAT 1.0.1; not yet run on a device.
 
-# HandOver Camera (iPhone app, PLAN.md W8)
+# HandOver Camera (iPhone app)
 
 A small SwiftUI app that sends about two JPEGs per second to the hub's `/ws/camera`
 (CONTRACT.md section 6). It shows the current step and status, and has large Next and Back buttons.
-The source is the phone's back camera (W8a), or Ray-Ban Meta glasses through the Meta Wearables
-Device Access Toolkit 1.0.1 (W8b). If the glasses fail, the app switches to the phone camera on its own.
+The source is the phone's back camera, or Ray-Ban Meta glasses through the Meta Wearables
+Device Access Toolkit 1.0.1. If the glasses fail, the app switches to the phone camera on its own.
 
 The app builds with zero warnings in the glasses and hub files. Every toolkit call lives in
 `Sources/GlassesCameraSource.swift`, checked against the 1.0.1 swiftinterface files. Nothing has run on
@@ -44,7 +44,7 @@ resolve. In that case, use the fallback below.
 - Next and Back stay disabled until the hub has sent a state with a lesson. Pick the lesson in the web app.
 - If you see "Replaced", another connection with this phone's device id took over (close code 4000). The app does not reconnect on its own. Tap Start again.
 - `wss://` to the hub's port 8443 only works if the phone trusts the mkcert root. Plain `ws://<ip>:8000` is the normal path.
-- If iOS blocks `ws://<ip>` with an ATS error (-1022), `NSAllowsLocalNetworking` is not covering the address. For the demo, add `NSAllowsArbitraryLoads: true` under `NSAppTransportSecurity` in `project.yml` and regenerate.
+- If iOS blocks `ws://<ip>` with an ATS error (-1022), `NSAllowsLocalNetworking` is not covering the address. As a workaround, add `NSAllowsArbitraryLoads: true` under `NSAppTransportSecurity` in `project.yml` and regenerate.
 
 ## Glasses: Developer Mode in the Meta AI app
 
@@ -55,7 +55,7 @@ free team, use the phone camera; choosing Glasses falls back to it.
 1. Pair the glasses in the Meta AI app (v254 or later). Update the glasses firmware first if it asks.
 2. In the Meta AI app, open Settings > App Info and tap the version number 5 times. Turn on Developer Mode.
 3. In HandOver, choose Glasses and tap Start. The first time, the app opens the Meta AI app for registration and camera permission. Approve, then return to HandOver. Streaming restarts when the app is back in front.
-4. Developer Mode turns itself off after glasses firmware updates. Check it again right before the demo.
+4. Developer Mode turns itself off after glasses firmware updates. Check it again after every update.
 5. Keep HandOver in the foreground. Backgrounding the app ends the glasses session.
 
 The app falls back to the phone camera, with an orange note, if no glasses frame arrives within 15 s
@@ -84,12 +84,11 @@ flag from A, or `GlassesCameraSource` will be undefined.
 In Xcode without xcodegen: select `GlassesCameraSource.swift`, untick HandOverCamera under Target Membership,
 and remove the MWDATCore and MWDATCamera packages under the project's Package Dependencies.
 
-## 8 PM glasses gate (docs/PLAN.md)
+## Glasses acceptance test
 
-W8b (glasses) is time-boxed from 6:30 to 8:00. At **8:00 PM**, frames must reach the hub through this app for
-**60 s with no gap over 5 s and one camera advance**. Otherwise, glasses leave the demo, the pitch and Devpost.
-The phone camera (W8a) is the main path either way. The demo ladder is glasses, then this iPhone app, then Safari
-`capture.html`, then replay.
+Glasses streaming counts as working when frames reach the hub through this app for
+**60 s with no gap over 5 s and one camera advance**. The phone camera is the main path either way. Other camera
+sources are this app with the phone camera, Safari `capture.html`, and `server.replay`.
 
 ## Checklist for the first device run
 

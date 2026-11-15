@@ -25,13 +25,13 @@ HandOver market and competitor research (as of 2026-11-14)
 
 **Market need evidence**
 - **Manufacturing hiring:** Up to 3.8 million new manufacturing workers needed in 2024 to 2033. "5 in 10 or 1.9 million of these jobs could go unfilled." The page mentions retiring Baby Boomers but gives no retirement count. (Fetched: https://www.themanufacturinginstitute.org/manufacturers-need-as-many-as-3-8-million-new-employees-by-2033/, Deloitte and Manufacturing Institute, April 3, 2024)
-- **Construction:** Needs 439,000 net new workers in 2025 and up to 499,000 in 2026. The median construction worker is now under 42, meaning "an increasingly large section of the workforce lacks experience." Pitch angle: lots of novices, few experts. (Search: https://www.constructiondive.com/news/2025-workers-construction-needs-how-many/738205/)
+- **Construction:** Needs 439,000 net new workers in 2025 and up to 499,000 in 2026. The median construction worker is now under 42, meaning "an increasingly large section of the workforce lacks experience." In short: lots of novices, few experts. (Search: https://www.constructiondive.com/news/2025-workers-construction-needs-how-many/738205/)
 - **Aging:** Over 4.1 million Americans turn 65 each year through 2027 ("Peak 65," Alliance for Lifetime Income), about 11,200 a day. (Search: https://www.aarp.org/money/retirement/silver-tsunami-late-boomers-turn-65/)
 - **Training cost:** ATD reports $1,283 per employee in 2023 and $1,254 in 2024; cost per learning hour rose from $123 to $165. (Search: https://assets.td.org/m/483691e33fbdf4db/original/State_of_the_Industry_PDF_Download_2025.pdf)
-- **Caution:** One analysis of government labor data finds only about 18% of electricians are 55 or older, so the "boomer exodus in the trades" story is weaker than headlines say. Pitch it as "demand outpaces experienced people," not "everyone is retiring." Ignore blog figures like "4 million trades by 2030"; I could not trace them to a source. (Search: https://startbusinessbystate.com/?p=23969)
+- **Caution:** One analysis of government labor data finds only about 18% of electricians are 55 or older, so the "boomer exodus in the trades" story is weaker than headlines say. Frame it as "demand outpaces experienced people," not "everyone is retiring." Ignore blog figures like "4 million trades by 2030"; I could not trace them to a source. (Search: https://startbusinessbystate.com/?p=23969)
 
 **Cross-platform angle (relevant to the every-OS goal)**
-- The incumbents are each tied to one device family: HoloLens (retiring), Vision Pro, Meta glasses, or a fixed station camera. HandOver's capture page runs in a phone browser and the learn screen runs in a laptop browser, so Android to Windows, iPhone to Mac, and a Mac-made lesson on Windows all work through the same web stack. Normalizing video to H.264 is what makes Windows playback work. That is an honest, demoable difference, but claim only the device pairs you actually test.
+- The incumbents are each tied to one device family: HoloLens (retiring), Vision Pro, Meta glasses, or a fixed station camera. HandOver's capture page runs in a phone browser and the learn screen runs in a laptop browser, so Android to Windows, iPhone to Mac, and a Mac-made lesson on Windows all work through the same web stack. Normalizing video to H.264 is what makes Windows playback work. That is an honest difference, but claim only the device pairs actually tested.
 - From a Mac you can check: iOS Safari capture, the macOS learn screen, and Chrome on macOS. Without hardware you cannot check: Android Chrome capture (needs a real Android phone or an emulator from the free Android SDK) and Windows playback and speech input (needs a Windows machine; Edge and Chrome on Windows behave differently).
 
 **Three honest positioning lines**
@@ -42,4 +42,4 @@ HandOver market and competitor research (as of 2026-11-14)
 **Claims to avoid**
 - Do not say "first" or "only." VSight already splits video into steps, Dozuki's VisualVerify checks images of finished work, and Retrocausal tracks steps live.
 - Do not quote training-time savings. HandOver has no measured results, and the 30 to 40% figure is DeepSight's own claim.
-- Say "one take" only if the bike demo really was one take.
+- Say "one take" only if the lesson really came from one take.

@@ -755,7 +755,7 @@ def test_ratings():
 def test_anonymous_optional_and_required_modes():
     reset()
     make_lesson("demo")
-    # optional (default): today's open demo flow works on legacy lessons, with no users at all
+    # optional (default): the open flow works on legacy lessons, with no users at all
     assert client.get("/api/courses/demo").json()["permissions"]["can_edit"] is True
     assert client.post("/api/courses/demo/edit/step", json={"n": 1, "title": "Open"}).status_code == 200
     assert client.post("/api/courses/demo/publish").status_code == 401

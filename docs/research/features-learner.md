@@ -1,18 +1,18 @@
 ## Learner experience ideas for HandOver (learn mode)
 
-**Bottom line:** the best learner features are web-only and live in `web/src/Learn.tsx`, plus small additions to `server/check.py`. They work on any laptop host (Mac or Windows) and with any phone that sends frames (iPhone, Android or glasses), so they don't affect whether the platforms work together. Top pick: "mistake hint plus skip alert". It catches the spec's main failure, the skipped or doubled flip at step 5, and turns it into the moment judges remember.
+**Bottom line:** the best learner features are web-only and live in `web/src/Learn.tsx`, plus small additions to `server/check.py`. They work on any laptop host (Mac or Windows) and with any phone that sends frames (iPhone, Android or glasses), so they don't affect whether the platforms work together. Top pick: "mistake hint plus skip alert". It catches the most common failure, the skipped or doubled flip at step 5, and tells the learner what went wrong.
 
-**What I checked in the repo:**
+**What was checked in the repo:**
 - `CONTRACT.md` already sends `last_check.confidence` and `latency_ms` on `/ws/ui`.
 - `useVoice.ts` handles only "next" and "back".
 - `lessons/demo-v1/lesson.json` has `prerequisites`.
-- None of the ideas below has been built or run.
+- At the time of writing, none of the ideas below had been built.
 
 **How to read the ratings:**
-- **Wow** = how much it impresses judges, 1 to 5.
+- **Wow** = how much it stands out to a new user, 1 to 5.
 - **Use** = real usefulness, 1 to 5.
-- **Hrs** = effort for one dev with an AI agent.
-- **Risk** = demo risk: L low, M medium, H high.
+- **Hrs** = effort in focused hours.
+- **Risk** = risk of misbehaving in use: L low, M medium, H high.
 
 ### Ideas, rated
 
@@ -24,25 +24,25 @@
 | 4 | **"Show me again" and "slower".** Voice or button restarts the clip, or sets `playbackRate=0.5` with `preservesPitch` on so narration stays understandable. | 3 | 4 | 1 | L |
 | 5 | **Target frame toggle.** Show the step's `frames/NN.jpg` ("this is what done looks like") next to or over the live view. | 4 | 4 | 1 | L |
 | 6 | **Ghost overlay.** The reference frame at 35% opacity on top of the live view, like an onion skin. | 4 | 3 | 1.5 | M (camera angles differ, so it can look misaligned) |
-| 7 | **Hand ghost.** MediaPipe HandLandmarker (a free Google library that finds hand joint positions in video) draws the expert's hand skeleton from the clip over the learner's view. Spec section 9, item 8. | 5 | 2 | 5 | H (alignment, CPU, setup time) |
+| 7 | **Hand ghost.** MediaPipe HandLandmarker (a free Google library that finds hand joint positions in video) draws the expert's hand skeleton from the clip over the learner's view. | 5 | 2 | 5 | H (alignment, CPU, setup time) |
 | 8 | **Confidence ring.** A badge that fills to `last_check.confidence`, with latency in small text. The data already arrives. | 3 | 3 | 0.5 | L |
-| 9 | **More voice commands.** Add again, slower, why, pause, back, "what step". | 4 | 4 | 1.5 | M (hall noise; Chrome only) |
-| 10 | **Spoken coaching.** `speechSynthesis` (the browser's built-in text to speech) reads step titles and hints aloud. "Expert style" = Gemini rewrites the hint in the expert's own words from the transcript. Avoid voice cloning: ElevenLabs costs money past its free tier, and a fake expert voice is borderline larp. Playing the expert's real audio is more honest. | 4 | 4 | 2 | L |
+| 9 | **More voice commands.** Add again, slower, why, pause, back, "what step". | 4 | 4 | 1.5 | M (room noise; Chrome only) |
+| 10 | **Spoken coaching.** `speechSynthesis` (the browser's built-in text to speech) reads step titles and hints aloud. "Expert style" = Gemini rewrites the hint in the expert's own words from the transcript. Avoid voice cloning: ElevenLabs costs money past its free tier, and a cloned expert voice is misleading. Playing the expert's real audio is more honest. | 4 | 4 | 2 | L |
 | 11 | **End screen stats vs expert.** Time per step (yours vs the clip length), total time, retries, mistakes caught, a bar chart. Built from the `advance` events. | 4 | 4 | 2.5 | L |
-| 12 | **Filmstrip of your verified moments.** Keep the live frame at each camera-verified step, then show your fold next to the expert's reference on the end screen. Great final shot for the pitch. | 5 | 4 | 1.5 | L |
-| 13 | **Final-state compare.** The learner's last frame vs the expert's final frame, with a yes/no match from Gemini. Spec section 9, item 7. | 4 | 3 | 1 | L |
+| 12 | **Filmstrip of your verified moments.** Keep the live frame at each camera-verified step, then show your fold next to the expert's reference on the end screen. | 5 | 4 | 1.5 | L |
+| 13 | **Final-state compare.** The learner's last frame vs the expert's final frame, with a yes/no match from Gemini. | 4 | 3 | 1 | L |
 | 14 | **Multilingual captions.** At teach time (or on demand), Gemini translates each VTT file to `captions/NN.<lang>.vtt`; add a language picker, and TTS speaks hints in that language. | 4 | 4 | 2 | L |
 | 15 | **Accessibility pack.** Caption size control, high-contrast theme, an `aria-live` region that announces step changes to screen readers, keyboard keys (Space next, Left back, R repeat, W why), `prefers-reduced-motion`. | 2 | 5 | 1.5 | L |
 | 16 | **Left-hand mirror.** Flip the clip horizontally. Captions must move into a separate div or they mirror too. | 3 | 3 | 0.5 | L |
 | 17 | **Stuck assist.** No progress for 20 s: replay the clip in slow motion and offer the target frame. | 3 | 4 | 1 | L |
 | 18 | **QR code to join.** The learn screen shows a QR code for the capture page URL, so any iPhone or Android phone becomes the camera in one scan. This is the main cross-platform enabler. | 4 | 5 | 1 | M (see HTTPS note below) |
-| 19 | **Spectator mirror.** A second device opens a read-only learn view, so judges watch on a phone or projector. `/ws/ui` already sends updates to every connected screen. | 3 | 3 | 1 | L |
+| 19 | **Spectator mirror.** A second device opens a read-only learn view, so others can watch on a phone or projector. `/ws/ui` already sends updates to every connected screen. | 3 | 3 | 1 | L |
 | 20 | **Multiple learners.** A learner id per camera socket, separate step state for each, and a grid dashboard. | 4 | 4 | 6+ | H (contract rewrite, rate limits) |
 | 21 | **Offline mode.** A service worker (a script that caches files in the browser) keeps the clips; a local image-similarity check replaces Gemini. | 2 | 3 | 4+ | M (the local check is weaker; skip it) |
-| 22 | **Step card.** The frame plus arrow callouts and a quote from the transcript. Spec section 9, item 4. | 3 | 3 | 3 | M |
-| 23 | **Ask the expert by voice,** answered from the transcript. | 4 | 3 | 3 | M (the spec says no chat box this weekend; leave it out) |
+| 22 | **Step card.** The frame plus arrow callouts and a quote from the transcript. | 3 | 3 | 3 | M |
+| 23 | **Ask the expert by voice,** answered from the transcript. | 4 | 3 | 3 | M (a chat box is out of scope) |
 
-### Contract changes these need (they go through the Lead)
+### Contract changes these need
 - `last_check` gains `"hint": str|null`.
 - New server message: `{"type":"alert","kind":"skip|hint|stuck","text":str,"step":int}`.
 - Optional field on `advance`: `"frame_saved": "<url>"` for the filmstrip. Or the client grabs the latest binary frame itself, which needs no contract change.
@@ -59,14 +59,14 @@
   - The Android Chrome capture page. This needs a physical Android phone, not the SDK. Inferred: Android won't trust a mkcert certificate (a locally made HTTPS certificate) without installing its root certificate by hand, so use the free `cloudflared` quick tunnel's real certificate for Android.
   - Multilingual TTS quality on each operating system.
 
-### Top 8 for the hackathon, in priority order
-1. **Mistake hint plus skip alert (#1 and #2).** Catches the step 5 flip on stage. Test it with a replay of a skipped-flip recording before it goes in the demo.
-2. **Spoken coaching via speechSynthesis (#10).** Speaks hints, skip alerts and step titles, so it's hands-free and judges hear it catch the mistake.
+### Top 8, in priority order
+1. **Mistake hint plus skip alert (#1 and #2).** Catches the step 5 flip. Test it with a replay of a skipped-flip recording.
+2. **Spoken coaching via speechSynthesis (#10).** Speaks hints, skip alerts and step titles, so it's hands-free and the learner hears the mistake named.
 3. **More voice commands plus slow motion and why (#9, #4, #3).** Shows the "I can't touch the laptop, my hands are full" story.
 4. **End screen: stats vs expert plus filmstrip plus final compare (#11, #12, #13).** A strong closing visual, and the risk is low.
-5. **Target frame toggle plus confidence ring (#5, #8).** Shows judges what the check is looking at, which builds trust in the AI.
-6. **QR code to join (#18).** Proves any phone works with any laptop host, live, in one scan.
+5. **Target frame toggle plus confidence ring (#5, #8).** Shows the learner what the check is looking at, which builds trust in the AI.
+6. **QR code to join (#18).** Any phone works with any laptop host, in one scan.
 7. **Multilingual captions (#14).** One toggle; good for the "knowledge transfer across a workforce" story.
 8. **Accessibility pack plus left-hand mirror (#15, #16).** Cheap and real, and it reads as polish.
 
-Skip this weekend: hand ghost (#7), multiple learners (#20), offline (#21), ask the expert (#23).
+Left out for now: hand ghost (#7), multiple learners (#20), offline (#21), ask the expert (#23).

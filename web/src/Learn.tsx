@@ -510,7 +510,7 @@ export function Learn() {
     send({ type: 'dismiss_mistake' })
   }
 
-  // Freeze the summary the moment the lesson finishes.
+  // Snapshot the summary the moment the lesson finishes.
   const [summary, setSummary] = useState<DoneSummary | null>(null)
   useEffect(() => {
     if (!isDone) {

@@ -2,7 +2,7 @@
 
 The hub is one Python process on the Mac. It turns an expert video into a lesson of step clips, then watches a learner's camera and moves to the next clip when the step looks done.
 
-Wire formats live in [CONTRACT.md](../CONTRACT.md); fields this lane proposes are in [docs/contract-proposals.md](docs/contract-proposals.md). Status words used on these pages:
+Wire formats live in [CONTRACT.md](../CONTRACT.md); proposed changes are in [docs/contract-proposals.md](docs/contract-proposals.md). Status words used on these pages:
 
 | Word | Meaning |
 |---|---|
@@ -46,13 +46,13 @@ Feed a recording in as the camera:
 | Which one ran | `state.check_mode` is `mock`, `claude` or `gemini`; check events carry the real model id; mistakes carry `source` `mock`, `claude` or `gemini` |
 | Claude budget | Hard caps: $20 per local day (`HANDOVER_CLAUDE_BUDGET_DAY_USD`) and $50 in total (`HANDOVER_CLAUDE_BUDGET_TOTAL_USD`). At a cap no call is made and the UI shows checks off with reason `budget` |
 | Spend so far | `.venv/bin/python -m server.spend` prints today, the total, both caps and what is left |
-| Tests | `HANDOVER_NO_NETWORK=1` never builds a real model client, so a key in `.env` cannot turn a test into a paid call. The contract suite and the e2e demo also start their hub without keys or Databricks settings and with a temp event file |
+| Tests | `HANDOVER_NO_NETWORK=1` never builds a real model client, so a key in `.env` cannot turn a test into a paid call. The contract suite and the end-to-end test also start their hub without keys or Databricks settings and with a temp event file |
 
 ## Live loop
 
 ```mermaid
 flowchart LR
-  cam["Camera<br/>iPhone app, Safari /capture,<br/>server.replay"] -->|"JPEG, about 1 fps"| wsc["/ws/camera"]
+  cam["Camera<br/>iPhone app, Safari /capture,<br/>server.replay"] -->|"JPEG, about 12 fps"| wsc["/ws/camera"]
   wsc --> newest["Keep newest frame<br/>(memory only)"]
   newest --> gate{"Motion gate<br/>still and changed?"}
   gate -->|yes, or 6 s heartbeat| chk["Check: Claude Haiku or Gemini<br/>reference vs live<br/>up to 2 at once"]
@@ -62,7 +62,7 @@ flowchart LR
   deb -->|passed| ver["verified now,<br/>next clip preloads"]
   ver -->|0.8 s| adv["advance to next step"]
   adv --> wsu["/ws/ui<br/>advance, then state"]
-  newest -->|"downscaled, 4 per s max"| wsu
+  newest -->|"downscaled, up to ui_fps per s"| wsu
 ```
 
 ## Modules
@@ -111,7 +111,7 @@ No pytest in the lock file, so each test file runs as a module. Set `HANDOVER_NO
 
 ```sh
 export HANDOVER_NO_NETWORK=1
-.venv/bin/python -m server.test_engine     # engine, cameras, gate, breaker, mistakes, latency paths, M15 privacy
+.venv/bin/python -m server.test_engine     # engine, cameras, gate, breaker, mistakes, latency paths, privacy
 .venv/bin/python -m server.test_contract   # black-box CONTRACT.md suite against its own hub
 .venv/bin/python -m server.test_server     # teach pipeline, recut, REST
 .venv/bin/python -m server.test_check      # checks, breaker, debouncer, mock
@@ -136,4 +136,4 @@ Only numbers someone measured, with how.
 - [docs/engine.md](docs/engine.md): learn engine states, stale guard, rev, cameras, latency
 - [docs/checks.md](docs/checks.md): motion gate, model call, debounce, breaker, mistake check
 - [docs/teach.md](docs/teach.md): video in, lesson folder out, self-test, recut
-- [docs/operations.md](docs/operations.md): demo-day runbook, privacy, troubleshooting
+- [docs/operations.md](docs/operations.md): runbook, privacy, troubleshooting

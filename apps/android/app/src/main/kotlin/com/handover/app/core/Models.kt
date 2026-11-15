@@ -14,7 +14,7 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
 
 // The wire models, field for field from CONTRACT.md (sections 3, 4, 6 and 7) plus the fields the hub
-// sends today on branch soham/server (check_mode, next_clip). Every field the contract marks NEW, or
+// sends today (check_mode, next_clip). Every field the contract marks NEW, or
 // that only exists on the hub branch, is optional here: readers ignore unknown keys and tolerate
 // missing ones. Enum values the app does not know fall back to the field's default instead of failing.
 

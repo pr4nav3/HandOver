@@ -764,7 +764,7 @@ def _cli_init() -> int:
 
 def _cli_selftest(remote: bool = False) -> int:
     """Local JSONL round trip. Flushes to the real tables only with --remote, so a casual selftest never
-    leaves a 'selftest' run in the demo data."""
+    leaves a 'selftest' run in the real data."""
     import tempfile
 
     tmp = Path(tempfile.mkdtemp(prefix="handover-dbx-")) / "events.jsonl"
@@ -853,7 +853,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     g.add_argument("--init", action="store_true", help="print the DDL; with credentials, run it")
     g.add_argument("--selftest", action="store_true", help="emit events to a temp JSONL; flush if configured")
     g.add_argument("--tail", action="store_true", help="print the last 20 local events")
-    g.add_argument("--warm", action="store_true", help="SELECT 1 to start the warehouse before a demo")
+    g.add_argument("--warm", action="store_true", help="SELECT 1 to start the warehouse before use")
     g.add_argument("--upload", metavar="LESSON_ID", help="upload one lesson folder to the Volume and its rows to lessons/steps, then wait")
     p.add_argument("--remote", action="store_true", help="with --selftest: also flush the selftest run to the real tables")
     a = p.parse_args(argv)

@@ -1,4 +1,4 @@
-"""Mistake policy (M9): when to run the reference compare, and what to say after it.
+"""Mistake policy: when to run the reference compare, and what to say after it.
 
 Pure logic, no I/O. The engine feeds every check result for the current camera
 step to MistakeWatch.on_result. After 5 s of settled consecutive "no" on one

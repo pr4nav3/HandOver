@@ -2,7 +2,13 @@
 
 An expert records a task once on Meta glasses while narrating. HandOver cuts that take into captioned step clips and plays the expert's own clip for each step, moving on only when the learner's camera shows the step is done.
 
-Read in this order: `TEAM_RULES.md` (how we work), `docs/PLAN.md` (what and when), `CONTRACT.md` (wire formats), `docs/SCOPE.md` (what is in and out).
+Where to read next:
+
+- `docs/project.md`: what HandOver does and how it is built
+- `CONTRACT.md`: the wire contract between the hub and every client
+- `server/README.md`: the hub, its pipeline and its tests
+- `docs/privacy.md`: what happens to camera frames
+- `docs/voice.md`: the narration voice and the app's spoken cues
 
 ## Run (Mac)
 ```

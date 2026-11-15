@@ -6,11 +6,11 @@ Keep gemini-3.5-flash-lite two-image check. Add: motion gate, local OpenCV fallb
 ## 1. Flash-lite check
 - Stable, free tier (verified aistudio.google.com/docs/models, /pricing). Low media resolution ~280 tokens per image, ~700 input tokens per call (verified /docs/media-resolution). Limits per project, daily reset midnight Pacific (verified /docs/rate-limits).
 - Free-tier RPM/RPD not published; see aistudio.google.com/rate-limit. Third-party figures (10/500 or 30/1500) unverified.
-- Ungated 1 call per 1 to 2 s = 30 to 60 RPM, 1000+ per day of rehearsal: breaks likely limits. Gating is required.
+- Ungated 1 call per 1 to 2 s = 30 to 60 RPM, 1000+ per day of testing: breaks likely limits. Gating is required.
 - Latency guess 0.8 to 2 s (inferred). Measure with `python -m server.check --time`.
 - Fix in check.py: timeout 8 s to 3 s; circuit breaker after 3 errors or any 429: local only for 30 s, show "Offline check" badge.
 - Motion gate: 160x90 gray, 5x5 blur, absdiff vs previous; motion = fraction of pixels with diff > 25. Hold while > 2%. Call only when < 0.5% for 2 frames and differs > 3% from last checked frame. Heartbeat call every 6 s. Expect 3 to 5x fewer calls.
-- Rehearse on a different Google Cloud project key than the demo key. Paid billing costs money: ask first.
+- Test on a different Google Cloud project key than the one used live. Paid billing costs money.
 
 ## 2. Live API
 - gemini-3.8-live, free tier; JPEG max 1 fps, 16 kHz PCM; `client.aio.live.connect`, `send_realtime_input` (verified docs and SDK live.py). Audio+video session ends after 2 min without context compression.

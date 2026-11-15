@@ -682,7 +682,7 @@ Sections in order:
 1. **Title**: field "Step title", placeholder "Fold the corners to the center". Footer "Short and doable. Start with a verb."
 2. **Time**: "Start" and "End" (`MM:SS.s`, monospaced), stepper buttons of 0.1 s; "Length 0:21". Changes here move the timeline boundaries and vice versa.
 3. **How it is checked**: segmented "Camera" (`viewfinder`) / "Manual" (`hand.tap`). Step 1 shows a note when Camera: "Step 1 is often better as Manual: the camera has nothing to compare to yet."
-   - Camera: field "Check question", placeholder "Is the paper folded into a small square with four flaps?", footer "Ask about shape and folds you can see, not color." (M8 guidance).
+   - Camera: field "Check question", placeholder "Is the paper folded into a small square with four flaps?", footer "Ask about shape and folds you can see, not color."
    - Reference frame: the `frames/NN.jpg` image with "Change Frame" (scrub within the step to pick; writes `ref_time`).
    - **Test This Question** (secondary, `checkmark.seal`): runs the self-test for this step (**Needs hub**: an HTTP endpoint for the CLI `--self-test` per step). Result card with two rows:
      - "On this step's frame" with "Yes" in good or "No" or "Unsure" in caution. Expected: Yes.
@@ -797,7 +797,7 @@ Sheet from the gear on iPhone (pattern from Vibeflux `SettingsView.swift`), side
 | Camera | "Glasses" | row with status ("Connected", "Not connected") opening the glasses card (12.2) and "Disconnect Glasses" |
 | Account | name, role | only with accounts; "Sign Out" |
 | About | "Version" | e.g. "0.1.0" |
-| About | "Privacy" | note row: "The hub never saves your camera frames. Checks send frames to the hub's check service and nothing is kept." (backed by M15 test in `docs/PLAN.md`; keep wording in sync with what the hub does) |
+| About | "Privacy" | note row: "The hub never saves your camera frames. Checks send frames to the hub's check service and nothing is kept." (backed by `test_privacy_learn_frames_never_touch_disk` in `server/test_engine.py`; keep wording in sync with what the hub does) |
 | About | "Open Source Licenses" | push |
 
 Changing the theme redraws the app and reopens Settings at the picker (Vibeflux `RootView.reopenSettings`).

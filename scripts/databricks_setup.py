@@ -13,9 +13,9 @@ The token is never printed: every line of output is scrubbed.
 Steps
     1. Check the values, then ask the warehouse for its state; start it and wait (--warehouse-timeout).
     2. Catalog (created only when missing and allowed), then 01_setup.sql: schema, four tables, Volume.
-       Falls back to server/static/databricks_init.sql when Prayush's file is not available.
+       Falls back to server/static/databricks_init.sql when databricks/01_setup.sql is not available.
     3. Views: the 13 datasets of 02_dashboard_datasets.sql as ds_<name>, plus filtered ds_<name>_real views
-       over events_real and runs_real (team review, Prayush item 8): no mock or replay runs, no selftest rows,
+       over events_real and runs_real (the real-data filter): no mock or replay runs, no selftest rows,
        check_offline only with a reason, latency without mock or errored checks, timed_out from
        error_kind = 'timeout'.
     4. With --with-history only: real events from logs/events.jsonl (MERGE on event_id, so a rerun adds
@@ -24,7 +24,7 @@ Steps
        server.databricks.upload_lesson_files.
     6. Counts, then the dashboard and Genie next steps.
 
-Prayush's SQL files are read from databricks/ in the working tree, else from git ref origin/prayush/story-dbx.
+The SQL files are read from databricks/ in the working tree, else from git ref origin/main.
 Free Edition has a daily compute quota: this script runs a few dozen statements in total, batches rows (500
 per statement), polls every 5 s at most and cancels a statement it gives up on. Stdlib only.
 """
@@ -49,9 +49,9 @@ REPO = Path(__file__).resolve().parent.parent
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
-PRAYUSH_REFS = ("origin/prayush/story-dbx", "prayush/story-dbx")
-PRAYUSH_DIR = REPO / "databricks"
-PRANAV_DDL = REPO / "server" / "static" / "databricks_init.sql"
+SQL_REFS = ("origin/main", "main")
+SQL_DIR = REPO / "databricks"
+HUB_DDL = REPO / "server" / "static" / "databricks_init.sql"
 EVENTS_JSONL = REPO / "logs" / "events.jsonl"
 LESSONS_DIR = REPO / "lessons"
 
@@ -196,14 +196,14 @@ def fq(cfg: dict) -> str:
     return f"`{cfg['catalog']}`.`{cfg['schema']}`"
 
 
-# ---------------------------------------------------------------- Prayush's SQL files
+# ---------------------------------------------------------------- SQL files in databricks/
 
 def read_source(name: str, run: Callable = subprocess.run) -> tuple[Optional[str], str]:
     """(text, where it came from). Working tree databricks/<name>, else git show <ref>:databricks/<name>."""
-    local = PRAYUSH_DIR / name
+    local = SQL_DIR / name
     if local.is_file():
         return local.read_text(encoding="utf-8"), f"databricks/{name}"
-    for ref in PRAYUSH_REFS:
+    for ref in SQL_REFS:
         try:
             p = run(["git", "-C", str(REPO), "show", f"{ref}:databricks/{name}"], capture_output=True,
                     text=True, timeout=20)
@@ -211,7 +211,7 @@ def read_source(name: str, run: Callable = subprocess.run) -> tuple[Optional[str
             continue
         if p.returncode == 0 and p.stdout.strip():
             return p.stdout, f"{ref}:databricks/{name}"
-    return None, f"databricks/{name} (not in the working tree or {PRAYUSH_REFS[0]})"
+    return None, f"databricks/{name} (not in the working tree or {SQL_REFS[0]})"
 
 
 def split_sql(text: str) -> list[str]:
@@ -273,7 +273,7 @@ def parse_datasets(text: str) -> dict[str, str]:
     return out
 
 
-# ---------------------------------------------------------------- filtered views (team review, Prayush item 8)
+# ---------------------------------------------------------------- filtered views (real data only)
 
 def json_field(field: str, alias: str = "") -> str:
     return f"get_json_object({alias}extra, '$.{field}')"
@@ -321,7 +321,7 @@ WHERE coalesce(r.lesson_id, '') <> 'selftest' AND coalesce(r.learner, '') <> 'se
     return [("runs_excluded", excluded), ("events_real", events), ("runs_real", runs)]
 
 
-# Exact text edits per dataset, applied to Prayush's query before the catalog substitution. If his file
+# Exact text edits per dataset, applied to each dataset query before the catalog substitution. If the file
 # changes so that a pattern is gone, that one filtered view is reported and skipped, never guessed.
 REAL_EDITS: dict[str, list[tuple[str, str]]] = {
     "ds_check_offline": [
@@ -346,7 +346,7 @@ REAL_EDITS: dict[str, list[tuple[str, str]]] = {
 
 
 def real_query(name: str, query: str) -> str:
-    """Prayush's dataset over events_real and runs_real, plus the item 8 edits. Raises ValueError when an
+    """A dataset over events_real and runs_real, plus the REAL_EDITS. Raises ValueError when an
     expected pattern is missing."""
     q = re.sub(r"\bworkspace\.handover\.(events|runs)\b", r"workspace.handover.\1_real", query)
     for old, new in REAL_EDITS.get(name, []):
@@ -666,9 +666,9 @@ class Setup:
         text, where = read_source("01_setup.sql")
         if text:
             stmts = setup_statements(text, self.cfg)
-        elif PRANAV_DDL.is_file():
-            where = str(PRANAV_DDL.relative_to(REPO))
-            stmts = setup_statements(PRANAV_DDL.read_text(encoding="utf-8"), self.cfg)
+        elif HUB_DDL.is_file():
+            where = str(HUB_DDL.relative_to(REPO))
+            stmts = setup_statements(HUB_DDL.read_text(encoding="utf-8"), self.cfg)
         else:
             return self.record("schema, tables, Volume", False, f"no DDL found: {where}")
         self.say(f"      from {where}: {len(stmts)} statements")
@@ -825,15 +825,15 @@ def next_steps(cfg: dict, datasets: list[str]) -> list[str]:
         "    The _real views leave out mock and replay runs and selftest rows; ds_<name> (no suffix) is",
         "    02_dashboard_datasets.sql unfiltered. Then build page 1 and page 2 per dashboard.md, one Lesson",
         "    filter per page on lesson_id, colors from its table.",
-        "    Before judging: --teardown-test-data, refresh, Publish > Share with data permissions.",
+        "    Before sharing: --teardown-test-data, refresh, Publish > Share with data permissions.",
         "    Free Edition quota: never set a refresh schedule; close editor tabs you do not use.",
         "",
         "  Genie 'HandOver learner runs' (sidebar > Genie > New):",
         f"    Data: {t}.lessons, steps, runs, events (or events_real and runs_real to leave out mock and replay).",
         "    Default warehouse: this one. Then joins, general instructions, Q1 to Q8 and the common questions",
-        "    from genie.md section 2 to 4, and rehearse 'Which step do people get stuck on?' (section 5).",
+        "    from genie.md section 2 to 4, and try 'Which step do people get stuck on?' (section 5).",
         "",
-        "  Warm the warehouse before a demo: .venv/bin/python -m server.databricks --warm",
+        "  Start the warehouse ahead of use: .venv/bin/python -m server.databricks --warm",
     ]
     return lines
 
@@ -857,8 +857,8 @@ def check(cfg: dict, say: Out, events_path: Path = EVENTS_JSONL, lessons_root: P
     for name in ("01_setup.sql", "02_dashboard_datasets.sql", "04_cleanup_test_data.sql", "dashboard.md", "genie.md"):
         text, where = read_source(name)
         say(f"  {name:<26} {'from ' + where if text else 'MISSING: ' + where}")
-        if text is None and name == "01_setup.sql" and PRANAV_DDL.is_file():
-            say(f"  {'':<26} fallback: {PRANAV_DDL.relative_to(REPO)}")
+        if text is None and name == "01_setup.sql" and HUB_DDL.is_file():
+            say(f"  {'':<26} fallback: {HUB_DDL.relative_to(REPO)}")
         elif text is None and name != "01_setup.sql":
             warn.append(f"{name} not found; the step that needs it will fail")
     text, _ = read_source("02_dashboard_datasets.sql")

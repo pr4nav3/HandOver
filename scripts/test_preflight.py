@@ -307,24 +307,24 @@ def test_probe_frames_are_two_different_frames():
 
 # ---------------------------------------------------------------- 6. lessons
 
-def test_lessons_demo_missing_is_red():
+def test_lessons_sample_missing_is_red():
     repo = lessons_repo("demo-v1")
     (repo / "lessons" / "templates").mkdir()
     with env():
         rows = by_check(pf.check_lessons(repo))
     assert rows["demo-v1"].status in (pf.OK, pf.WARN) and "OK" in rows["demo-v1"].detail
     assert rows["templates"].status == pf.SKIP
-    for lid in pf.DEMO_LESSONS:
-        r = rows[f"demo {lid}"]
+    for lid in pf.SAMPLE_LESSONS:
+        r = rows[f"sample {lid}"]
         assert r.status == pf.FAIL and "scripts/new_lesson.sh" in r.fix
 
 
-def test_lessons_demo_present_and_broken_lesson_fails():
-    repo = lessons_repo(*pf.DEMO_LESSONS)
+def test_lessons_sample_present_and_broken_lesson_fails():
+    repo = lessons_repo(*pf.SAMPLE_LESSONS, "front-wheel-v1")
     (repo / "lessons" / "front-wheel-v1" / "clips" / "02.mp4").unlink()
     with env():
         rows = by_check(pf.check_lessons(repo))
-    assert rows["demo fortune-teller-v1"].status == pf.OK
+    assert rows["sample fortune-teller-v1"].status == pf.OK
     assert rows["front-wheel-v1"].status == pf.FAIL and "lesson_lint.py" in rows["front-wheel-v1"].fix
 
 
@@ -333,7 +333,7 @@ def test_lessons_honors_handover_lessons():
     other = lessons_repo("fortune-teller-v1") / "lessons"
     with env(HANDOVER_LESSONS=str(other)):
         rows = by_check(pf.check_lessons(repo))
-    assert rows["demo fortune-teller-v1"].status == pf.OK
+    assert rows["sample fortune-teller-v1"].status == pf.OK
 
 
 # ---------------------------------------------------------------- 7. web
@@ -540,12 +540,12 @@ def test_ports_name_a_stale_listener():
 # ---------------------------------------------------------------- 12. git
 
 def test_git():
-    table = {("git", "rev-parse"): (0, "soham/server\n", ""), ("git", "status"): (0, " M a.py\n?? b.py\n", ""),
+    table = {("git", "rev-parse"): (0, "feature/server\n", ""), ("git", "status"): (0, " M a.py\n?? b.py\n", ""),
              ("git", "rev-list"): (0, "2\t5\n", ""), ("git", "fetch"): (0, "", "")}
     run = fake_run(table)
     with patch(pf, "run", run):
         rows = by_check(pf.check_git(REPO))
-    assert rows["branch"].detail == "soham/server" and rows["changes"].detail == "2 uncommitted"
+    assert rows["branch"].detail == "feature/server" and rows["changes"].detail == "2 uncommitted"
     assert rows["origin/main"].status == pf.WARN and "5 ahead, 2 behind" in rows["origin/main"].detail
     assert not any(c[:2] == ["git", "fetch"] for c in run.calls)
     run = fake_run(table)

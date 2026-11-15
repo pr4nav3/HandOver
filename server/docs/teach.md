@@ -107,7 +107,7 @@ Gemini details:
 | Also | Transcript segments with start and end in seconds |
 | Mock | `HANDOVER_TEACH_MOCK=1`: three equal placeholder steps, all manual |
 
-On failure the error suggests `gemini-3.1-pro-preview`. That model is cut from scope in docs/PLAN.md; do not switch to it.
+On failure the error suggests `gemini-3.1-pro-preview`. That model is not used by HandOver; do not switch to it.
 
 ## 3. Clean
 

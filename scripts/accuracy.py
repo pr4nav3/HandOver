@@ -12,7 +12,7 @@ that is never the reference itself: a jittered variant of state k from scripts/s
   own   ref k vs a variant of state k        expect yes
   prev  ref k vs a variant of state k-1      expect no
   next  ref k vs a variant of state k+1      reported only
-  flip  ref of --flip-step vs fresh variants of the state before it: the planted skipped flip,
+  flip  ref of --flip-step vs fresh variants of the state before it: a skipped flip,
         expect no
   cmp   server.check.compare_refs over references k-1, k, k+1 (what the mistake check does):
         on the flip variants while on --flip-step it should match the step before (behind);

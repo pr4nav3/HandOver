@@ -27,20 +27,20 @@ Uses headless Google Chrome (`CHROME=/path/to/chrome` to override). It prints `p
 
 ## Swap in later
 
-- **Bike lesson frames.** The front wheel lesson (`lessons/front-wheel-v1`) was not in the repo when this was made, so its card is text only (from docs/HANDOFF.md). Once it is cut, you can replace the card's `<p>` with 3 to 5 of its `frames/NN.jpg` (crop square, as above). Keep the card's height: 373 px for the whole row.
+- **Bike lesson frames.** The front wheel lesson (`lessons/front-wheel-v1`) was not in the repo when this was made, so its card is text only. Once it is cut, you can replace the card's `<p>` with 3 to 5 of its `frames/NN.jpg` (crop square, as above). Keep the card's height: 373 px for the whole row.
 - **Databricks dashboard screenshot.** There is no slot on purpose; the Data lane of the diagram describes the layer. If a clean dashboard or Genie screenshot exists and you want it, the least disruptive swap is the hero callouts row (`figcaption` under the hero, about 1160 x 150 px) or replacing the Genie box text. Anything taller pushes the footer off the page: re-render and check.
 - **Bike step list.** If the final take differs from "wheel off, rim checked, wheel back on, spin, front brake", edit `.bike p`.
 
 ## Print
 
-- Print `poster.pdf` at 100% on 24 x 36 in, no scaling. Matte stock keeps the screenshot readable under hall lights.
+- Print `poster.pdf` at 100% on 24 x 36 in, no scaling. Matte stock keeps the screenshot readable under bright lights.
 - The background is a flat cream `#f1ece1`, printed edge to edge. Ask the shop for full bleed, or accept a thin white edge. Text keeps at least 0.5 in from every edge; the progress bar along the top edge is decoration and can be trimmed.
 - For a proof, print with "Fit to page" on letter or tabloid.
 
-## Content rules (team)
+## Content rules
 
 - No "first", no "only", no savings figure, no user counts, no past-winner claims. Numbers on the poster all come from the repo: 9 steps and the 2:37 take (`lessons/fortune-teller-v1`), 0.92 (`HANDOVER_FAST_CONF`), 4 tables (`databricks/01_setup.sql`).
 - The live check is "Claude Haiku or Gemini" (`HANDOVER_CHECK_PROVIDER=auto`: Claude when an Anthropic key is present, else Gemini). It compares before, done reference and live frames. Lesson extraction is one Gemini call; narration is written by Claude and spoken by Kokoro.
-- Glasses appear only as the expert's recorder ("Meta glasses or any camera"). The learner camera is a phone (HandOver app or browser page). Do not add glasses as a live learner camera unless it was demoed.
+- Glasses appear only as the expert's recorder ("Meta glasses or any camera"). The learner camera is a phone (HandOver app or browser page). Do not add glasses as a live learner camera; that path needs a paid Apple Developer team.
 - No voice "next" claim. The only spoken cue claimed is the mistake line, which the web Learn screen speaks with the browser's speech synthesis.
-- Privacy text follows `docs/PRIVACY.md`.
+- Privacy text follows `docs/privacy.md`.

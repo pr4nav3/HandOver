@@ -9,7 +9,7 @@ Code: `server/accounts.py` (users, tokens, rate limits), `server/library.py` (fi
 | Var | Default | Meaning |
 |---|---|---|
 | `HANDOVER_DATA` | `<repo>/data` | hub data folder (accounts, orgs, history, ratings, audit). Keep it out of git |
-| `HANDOVER_AUTH` | `optional` | `optional`: anonymous callers keep today's open demo flow on legacy lessons. `required`: every change needs a token; public reads stay open |
+| `HANDOVER_AUTH` | `optional` | `optional`: anonymous callers keep the open flow on legacy lessons (no sign-in needed). `required`: every change needs a token; public reads stay open |
 | `HANDOVER_TOKEN_DAYS` | 30 | sign-in token lifetime in days (0.0001 to 365) |
 | `HANDOVER_LOGIN_PER_MINUTE` | 5 | login attempts per name and per IP per minute; the same limit applies to org invite codes per user and per IP (1 to 100) |
 | `HANDOVER_HISTORY_DEPTH` | 20 | undo snapshots kept per course (1 to 100) |
@@ -92,7 +92,7 @@ Roles, strongest first: hub owner, course owner, course editor, org admin (of th
 | rate | yes, unless owner or editor | no | no | if they can view | if they can view | if they can view | no | `people who own or edit a course cannot rate it` |
 | create a course | yes | | | in that org | org teachers in that org | hub teachers | optional mode only (legacy) | `learners cannot create courses; ask the hub owner for the teacher role`, or `only teachers and admins of this organization can create courses in it` |
 
-Legacy lessons: edit and insights are open to everyone while `HANDOVER_AUTH=optional` (the demo as it was); with `required`, only the hub owner (`only the hub owner can edit a lesson that has no course owner`).
+Legacy lessons: edit and insights are open to everyone while `HANDOVER_AUTH=optional` (no sign-in needed); with `required`, only the hub owner (`only the hub owner can edit a lesson that has no course owner`).
 
 Organizations:
 

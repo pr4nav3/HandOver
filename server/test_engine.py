@@ -1,5 +1,5 @@
 """Learn engine and hub protocol tests: /ws/camera (hello, active camera, replace, nav, frame limits), state
-fields, motion gate, breaker, mistake check, web app serving, DELETE, and the M15 privacy guarantee.
+fields, motion gate, breaker, mistake check, web app serving, DELETE, and the privacy guarantee.
 
 No network and no ffmpeg: lessons are written with Pillow into a temp folder, Gemini is replaced by fakes.
 
@@ -1198,7 +1198,7 @@ def test_ui_frames_0_gets_no_live_frames() -> None:
         assert recv_json(phone, lambda m: m["type"] == "advance")["to"] == 1  # text still arrives
 
 
-# ---------------------------------------------------------------- mistake check (M9)
+# ---------------------------------------------------------------- mistake check
 
 def test_mistake_behind_gemini_once_then_yes_clears() -> None:
     make_lesson()
@@ -1890,7 +1890,7 @@ def test_mock_mistake_hook_not_after_yes() -> None:
 
 
 def test_mock_mistake_fires_with_gate_on() -> None:
-    """Identical frames: the gate holds checks back after the first, yet the planted mistake still fires."""
+    """Identical frames: the gate holds checks back after the first, yet the injected mistake still fires."""
     make_lesson()
     fired_at = None
     with env(HANDOVER_GATE="1", HANDOVER_MOCK_MISTAKE="behind:1", HANDOVER_MOCK_PASS_SECONDS="100"), \
@@ -2017,7 +2017,7 @@ def test_rev_only_increases() -> None:
     assert newer.exists()
 
 
-# ---------------------------------------------------------------- M15: learn frames never touch disk
+# ---------------------------------------------------------------- privacy: learn frames never touch disk
 
 class WriteGuard:
     """Fails every file write outside `allowed` and records it, so a write caught by a broad except still counts."""
@@ -2134,7 +2134,7 @@ def test_privacy_learn_frames_never_touch_disk() -> None:
     assert leaked == [], leaked
 
 
-# ---------------------------------------------------------------- demo path (Windows demo review, 2026-11-14)
+# ---------------------------------------------------------------- learn path on Windows
 
 def test_end_lesson_from_an_older_run_of_the_same_lesson_is_ignored() -> None:
     """A screen still showing the previous run of the same lesson (the learner restarted it elsewhere) must not
@@ -2219,7 +2219,7 @@ def claude_provider(behavior: Callable[[], Any], key: str | None = "sk-ant-test-
 
 def test_offline_reasons_reached_through_the_real_check_path() -> None:
     """no_key, budget, rate_limited and errors each turn checks off with that reason when the real check_frame
-    runs (only the SDK client is faked): what the demo shows when a key is missing or invalid, the ledger is
+    runs (only the SDK client is faked): what the learner sees when a key is missing or invalid, the ledger is
     full, the provider says 429, or calls keep failing."""
     import anthropic
     import httpx2

@@ -126,5 +126,5 @@ JOIN workspace.handover.steps s ON s.lesson_id = c.lesson_id AND s.n = c.step + 
 GROUP BY c.lesson_id, s.n, s.title
 ORDER BY false_passes DESC;
 
--- Genie question for the demo:
+-- Main Genie question:
 --   "Which step do people get stuck on?"

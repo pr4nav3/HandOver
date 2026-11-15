@@ -9,7 +9,7 @@ struct ModelDecodingTests {
     }
 
     @Test func stateFromTheContract() throws {
-        // CONTRACT.md section 7, verbatim, plus check_mode and next_clip from the hub on soham/server.
+        // CONTRACT.md section 7, verbatim, plus check_mode and next_clip from the hub.
         let json = """
         {"type":"state","lesson_id":"fortune-teller-v1","rev":1763154180123,"step":4,"total":8,"status":"watching",
          "last_check":{"done":"no","confidence":0.82,"latency_ms":910,"reason":"seams still facing up"},

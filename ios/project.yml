@@ -1,4 +1,4 @@
-# xcodegen spec for the HandOver iPhone camera app (PLAN.md W8).
+# xcodegen spec for the HandOver iPhone camera app.
 # Compiles with Xcode on macOS against MWDAT 1.0.1; not yet run on a device. See README.md.
 #
 #   brew install xcodegen

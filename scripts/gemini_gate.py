@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""M1 Gemini gate: time real two-image checks and write the 6 PM verdict to a report.
+"""Gemini latency check: time real two-image checks and write a latency verdict to a report.
 
     .venv/bin/python scripts/gemini_gate.py [--lesson lessons/demo-v1] [-n 20] [--step N] [--also-no]
 
@@ -16,7 +16,7 @@ The live hub gives up on a call after 3 s; here the timeout is raised (default 1
 measured instead of cut off, and the report counts how many would have timed out live.
 Always times Gemini (HANDOVER_CHECK_PROVIDER=gemini is pinned for the child), even when a Claude key exists.
 Refuses without a key (GEMINI_API_KEY, GOOGLE_API_KEY, or the repo .env). The key is never printed.
---mock runs with HANDOVER_CHECK=mock to test this script; its report is marked as not a real gate.
+--mock runs with HANDOVER_CHECK=mock to test this script; its report is marked as not a real measurement.
 """
 
 from __future__ import annotations
@@ -60,7 +60,7 @@ def pct(sorted_vals: list[int], p: float) -> int:
 
 def verdict(p50_ms: float) -> str:
     if p50_ms <= 2000:
-        return "PASS: median 2.0 s or less. Keep the planned frame interval and debounce."
+        return "PASS: median 2.0 s or less. Keep the default frame interval and debounce."
     if p50_ms <= 2500:
         return "WIDEN THE MOTION GATE: median between 2.0 and 2.5 s. Check less often, only on still frames."
     return "ONE CONFIDENT YES PLUS NEXT: median over 2.5 s. Advance on one confident yes; lean on Next."
@@ -102,7 +102,7 @@ def summarize(name: str, expect: str, stdout: str, stderr: str) -> dict:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(prog="scripts/gemini_gate.py", description="M1 Gemini gate runner")
+    ap = argparse.ArgumentParser(prog="scripts/gemini_gate.py", description="Gemini latency check")
     ap.add_argument("--lesson", type=Path, default=REPO / "lessons" / "demo-v1", help="lesson folder")
     ap.add_argument("-n", type=int, default=20, help="calls per pass (default 20)")
     ap.add_argument("--step", type=int, help="1-based camera step to time (default: first camera step after step 1)")
@@ -112,7 +112,7 @@ def main() -> int:
     a = ap.parse_args()
 
     env = dict(os.environ)
-    # This is the Gemini gate: pin the provider, or auto would time Claude whenever ANTHROPIC_API_KEY is set.
+    # This times Gemini: pin the provider, or auto would time Claude whenever ANTHROPIC_API_KEY is set.
     env["HANDOVER_CHECK_PROVIDER"] = "gemini"
     if a.mock:
         env["HANDOVER_CHECK"] = "mock"
@@ -120,7 +120,7 @@ def main() -> int:
     else:
         env.pop("HANDOVER_CHECK", None)
         if not have_key():
-            print("No Gemini key found, so the gate cannot run.\n"
+            print("No Gemini key found, so the latency check cannot run.\n"
                   "Add GEMINI_API_KEY=... to .env at the repo root (or export GEMINI_API_KEY or GOOGLE_API_KEY),\n"
                   "then run this again. Nothing was called and no report was written.")
             return 2
@@ -194,9 +194,9 @@ def main() -> int:
     report = OUT / f"gemini-gate-{stamp}.md"
     fmt_ms = lambda v: "n/a" if v is None else f"{v / 1000:.2f} s"
     lines = [
-        f"# Gemini gate (M1), {dt.datetime.now().strftime('%Y-%m-%d %H:%M')}",
+        f"# Gemini latency check, {dt.datetime.now().strftime('%Y-%m-%d %H:%M')}",
         "",
-        "**MOCK RUN: no Gemini calls were made. This is not a real gate.**" if a.mock else "",
+        "**MOCK RUN: no Gemini calls were made. This is not a real measurement.**" if a.mock else "",
         "",
         f"- Model: `{model}`",
         f"- Lesson: `{lesson_dir.name}`, step {k + 1}: \"{steps[k].get('title', '')}\"",
@@ -205,7 +205,7 @@ def main() -> int:
         "",
         f"## Verdict: {final}",
         "",
-        "Rule (docs/PLAN.md, 6 PM): median 2.0 s or less passes; 2.0 to 2.5 s widens the motion gate; "
+        "Rule: median 2.0 s or less passes; 2.0 to 2.5 s widens the motion gate; "
         "over 2.5 s means one confident yes plus Next.",
         "",
         "| Pass | Expect | Calls | p50 | p90 | Max | Right answer | Unsure | Over 3 s | Errors | 429 |",
@@ -218,7 +218,7 @@ def main() -> int:
     notes = []
     if any(r["rate_limited"] for r in results):
         notes.append("Rate limited (429) during the run: the live breaker would turn checks off for 30 s. "
-                     "Check the limits page for this key before the demo.")
+                     "Check the limits page for this key before relying on it.")
     if any(r["errors"] for r in results):
         notes.append("Errors and timeouts count as unsure; their latency is included above.")
     if notes:
@@ -227,7 +227,7 @@ def main() -> int:
     for name, out, err in raw:
         lines += ["", f"### {name}", "", "```", out.strip("\n"), *([l for l in err.splitlines() if "WARNING" in l][:20]), "```"]
     report.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    print(f"\ngate verdict: {final}")
+    print(f"\nlatency verdict: {final}")
     print(f"report: {report.relative_to(REPO)}")
     return 0
 

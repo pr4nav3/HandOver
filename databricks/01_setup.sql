@@ -5,9 +5,9 @@
 --
 -- Normal path: scripts/databricks_setup.py runs the CREATE statements of this file (step 2 of its run).
 -- By hand: SQL editor, the one Free Edition warehouse, Run all. Every statement is IF NOT EXISTS, so
--- running it twice is safe. python -m server.databricks --init does the same from Pranav's copy.
+-- running it twice is safe. python -m server.databricks --init does the same from server/static/databricks_init.sql.
 --
--- Conventions (from CONTRACT.md and Pranav's header)
+-- Conventions (from CONTRACT.md and the server/databricks.py header)
 --   events.step   0-based step index (the hub's state.step)
 --   steps.n       1-based step number (lesson.json n). Join: steps.n = events.step + 1
 --   ts, *_at      UTC

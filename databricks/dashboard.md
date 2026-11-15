@@ -21,7 +21,7 @@ The `_real` views leave out replay runs, mock runs and selftest rows. They keep 
 
 ## Page 1: Where learners get stuck
 
-The judge page. Positions are (x, y, width, height) on the 6-column grid.
+The main page. Positions are (x, y, width, height) on the 6-column grid.
 
 | Widget | Type | Dataset | Position | Shows |
 |---|---|---|---|---|

@@ -1149,7 +1149,7 @@ def summarize(latencies: list[int], errors: list[Optional[CheckError]]) -> str:
 
 
 def gate_verdict(latencies: list[int], errors: list[Optional[CheckError]]) -> str:
-    """The 6 PM Gemini gate from docs/PLAN.md, on the median of successful calls. A run with
+    """Latency verdict on the median of successful calls (thresholds 2.0 s and 2.5 s). A run with
     more than 10% failures never passes: the failures are the finding, not the latency."""
     ok = [lat for lat, e in zip(latencies, errors) if e is None]
     failed = len(errors) - len(ok)
@@ -1158,7 +1158,7 @@ def gate_verdict(latencies: list[int], errors: list[Optional[CheckError]]) -> st
     if failed / len(errors) > MAX_FAIL_SHARE:
         return (
             f"verdict: UNRELIABLE, {failed} of {len(errors)} calls failed ({_failures(errors)}); "
-            "fix the failures and run again before deciding the gate"
+            "fix the failures and run again before deciding"
         )
     median_s = statistics.median(ok) / 1000
     if median_s <= 2.0:

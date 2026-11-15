@@ -138,7 +138,7 @@ flowchart TD
 | Setting | Behavior |
 |---|---|
 | `HANDOVER_CHECK=mock` | No network. Each check waits 0.6 s, then answers yes 0.9 once the step has been active `HANDOVER_MOCK_PASS_SECONDS` (6), else no 0.85. 0.9 is under the fast-path bar, so mock always needs two yes answers |
-| `HANDOVER_MOCK_MISTAKE=behind:<n>` or `ahead:<n>` | Mock mode only. After 4 s on 0-based step n, sends one mistake with `source: "mock"`, once per visit. Never set in a demo |
+| `HANDOVER_MOCK_MISTAKE=behind:<n>` or `ahead:<n>` | Mock mode only. After 4 s on 0-based step n, sends one mistake with `source: "mock"`, once per visit. Test only |
 | `HANDOVER_TEACH_MOCK=1` | Teach side: no model, three placeholder manual steps |
 
 ## 7. Timing a provider

@@ -12,7 +12,7 @@ Everything lives in plain files, written atomically (temp file, then rename) und
 
 <data> is HANDOVER_DATA (default <repo>/data). A lesson folder without course.json, or a course.json whose
 owner_id is null, is "legacy": owned by nobody, readable per its status and visibility (everyone, by default),
-and editable by the hub owner, or by anyone while HANDOVER_AUTH=optional (the demo flow as it was).
+and editable by the hub owner, or by anyone while HANDOVER_AUTH=optional (no sign-in needed).
 
 Learn events are read from the local mirror server/databricks.py writes (HANDOVER_EVENTS_JSONL, default
 <repo>/logs/events.jsonl). Only real events count; nothing here invents a number.
@@ -76,7 +76,7 @@ def setting(name: str) -> Any:
 
 
 def auth_mode() -> str:
-    """HANDOVER_AUTH: "optional" (default; anonymous callers keep today's open demo flow) or "required"."""
+    """HANDOVER_AUTH: "optional" (default; anonymous callers keep the open flow, no sign-in) or "required"."""
     return str(setting("HANDOVER_AUTH"))
 
 

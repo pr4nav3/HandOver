@@ -344,9 +344,9 @@ def need(feature: str) -> None:
 
 async def probe() -> None:
     st = await current_state()
-    FEATURES["camera"] = "camera" in st  # W8 / W5: hello, identity, active camera, camera messages
-    FEATURES["mistake"] = "mistake" in st  # M9
-    FEATURES["check_offline"] = "check_offline" in st  # M6
+    FEATURES["camera"] = "camera" in st  # hello, identity, active camera, camera messages
+    FEATURES["mistake"] = "mistake" in st
+    FEATURES["check_offline"] = "check_offline" in st
     status, _, _ = await http("DELETE", "/api/lessons/no-such-lesson-probe")
     FEATURES["delete"] = status not in (404, 405)
     if status == 404:  # 404 from a real route has the JSON detail; FastAPI's no-route 404 is "Not Found"

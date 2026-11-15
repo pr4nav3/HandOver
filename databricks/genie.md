@@ -2,7 +2,7 @@
 
 Genie space id `01f1e086eb621d8d990021c7016818de`: https://dbc-a03072b4-3eeb.cloud.databricks.com/genie/rooms/01f1e086eb621d8d990021c7016818de
 
-This file is what is live, saved through the Genie API (serialized space version 2). Demo question: "Which step do people get stuck on?"
+This file is what is live, saved through the Genie API (serialized space version 2). Main question: "Which step do people get stuck on?"
 
 ## Settings
 
@@ -59,7 +59,7 @@ Eight examples, each run once on the warehouse against the current views (all su
 
 ### Q1. Which step do people get stuck on?
 
-The demo question. Ranks steps by learner median / expert time, top 3, with the manual-advance rate and mistakes.
+The main question. Ranks steps by learner median / expert time, top 3, with the manual-advance rate and mistakes.
 
 ```sql
 WITH ev AS (
@@ -281,9 +281,9 @@ WHERE kind = 'check_offline' AND reason IS NOT NULL
 ORDER BY ts DESC
 ```
 
-## Rehearsal, Sunday about 2:30 AM
+## Sample answers on test data
 
-Run through the conversation API. At that time the only runs were the 5 synthetic test runs, so a correct answer says there is no real data yet.
+Run through the conversation API while the only runs were 5 synthetic test runs, so a correct answer says there is no real data yet.
 
 | Question | SQL Genie ran | Answer |
 |---|---|---|
@@ -293,12 +293,9 @@ Run through the conversation API. At that time the only runs were the 5 syntheti
 
 After this, the "Lesson names" paragraph was added to the instructions, so "the fortune teller" now matches `fortune-teller-v2` once it has runs.
 
-## Rehearse again on real runs (before judges)
+## Checking Genie on real runs
 
 1. Open the space, start a **new chat**, click "Which step do people get stuck on?" (clicking avoids typos).
 2. Pass: **Show code** shows the Q1 SQL, the table has up to three rows named "Step n: title", and the summary names one step with learner and expert seconds.
-3. Ask one rephrasing, "What's the hardest step?", and one off-script question, "How many people finished the fortune teller?".
-4. Wrong answer: fix the instructions or examples, never the data. If the step it names differs from what the team saw, trust the data and say so.
-5. Screenshot the answer as the fallback. Start a new chat right before the judges arrive.
-
-Demo line, with the numbers read off the screen: "Anyone can ask it: which step do people get stuck on? Genie says step N, [title]: N seconds against the expert's M, and the camera caught K mistakes there."
+3. Ask one rephrasing, "What's the hardest step?", and one other question, "How many people finished the fortune teller?".
+4. Wrong answer: fix the instructions or examples, never the data.

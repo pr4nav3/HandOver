@@ -1,6 +1,6 @@
 # Proposed changes to CONTRACT.md (for Revision 6)
 
-From Soham, for Pranav to approve. Each proposal compares CONTRACT.md Revision 5 with the code in `server/` on branch `soham/server`. Where a review note and the code disagreed, the code wins and the block says so.
+Each proposal compares CONTRACT.md Revision 5 with the code in `server/`. Where an earlier note and the code disagreed, the code wins and the block says so.
 
 Line numbers come from the working tree at the time of writing. `main.py` was being edited at the same time, so its numbers may be off by a few lines.
 
@@ -46,7 +46,7 @@ Risk key: **none** means docs only. **low** means behavior a careful client may 
 
 **Proposed**: add below the table:
 
-> Tuning (EXISTS, owner only; demo clients never set these). A bad or out-of-range value logs one warning and uses the default. `python -m server.config` prints every value in effect.
+> Tuning (EXISTS, owner only; clients never set these). A bad or out-of-range value logs one warning and uses the default. `python -m server.config` prints every value in effect.
 >
 > | Var | Default | Meaning |
 > |---|---|---|
@@ -106,7 +106,7 @@ Not listed on purpose: `HANDOVER_MAX_UPLOAD_MB` and `HANDOVER_MAX_FRAME_MB` are 
 
 **Current**: these are marked NEW.
 
-**Proposed**: once `soham/server` is merged to main, mark EXISTS:
+**Proposed**: once the server changes are merged to main, mark EXISTS:
 > - Section 1: `HANDOVER_GATE` (M5), `HANDOVER_BREAKER_SECONDS` (M6), `HANDOVER_MOCK_MISTAKE` (M9)
 > - Section 3: `safety`, `tools` (S-S), `ref_time` (M8), `common_mistake` (M9), `self_test` (S-T), Recut rule (M8)
 > - Section 4: `GET /` serving `web/dist` (W1, server side), `DELETE /api/lessons/{id}`
@@ -277,7 +277,7 @@ And for `hello`: "`device_id` is cut to 128 characters and `name` to 64, both tr
 **Proposed**
 > Breaker: 3 consecutive errors or timeouts, or any 429 (`RESOURCE_EXHAUSTED`), sets `check_offline` for `HANDOVER_BREAKER_SECONDS`, then one trial call; its result closes or reopens it. A missing key, or a key the API rejects (400 `API_KEY_INVALID`, 401, 403), sets reason `no_key`, which stays open with no trial until the hub restarts. Mistake compares and ahead confirmations count toward the breaker too. While open, no checks run; the learner uses Next. Mock mode is never offline. With no key in gemini mode, `check_offline` turns true at the first check attempt.
 
-Correction to the review: it said `check_offline` is already true at startup with no key. The hub asks `check.has_key()` at startup (main.py:487-493), but check.py does not define it yet, so today the flag turns true at the first check. Soham will add `has_key`; the last sentence then becomes "is true from startup".
+Correction to an earlier note: it said `check_offline` is already true at startup with no key. The hub asks `check.has_key()` at startup (main.py:487-493), but check.py does not define it yet, so today the flag turns true at the first check. Once `has_key` is added, the last sentence then becomes "is true from startup".
 
 **Code**: server/check.py:242-267, 558-626, server/main.py:444-448, 487-493, 915-951
 
@@ -344,14 +344,14 @@ What exists today: `Engine.snapshot()` returns everything above except `ffmpeg` 
 > | `run_done` | first time the run reaches done | `total_seconds`, `camera_steps`, `manual_steps`, `mistakes` |
 > | `breaker` | `check_offline` or its reason changes | `open`, `reason` |
 >
-> When `server/databricks.py` (Pranav) can be imported, the hub adds one adapter sink at startup. `run_start` calls `end_run()` then `start_run(lesson_id)`; `run_done` calls `end_run()`; `advance` becomes `emit("advance", from_step, to_step, ...)`; `mistake` becomes `emit("mistake", kind=..., ...)`; `breaker` becomes `emit("check_offline", reason)` only when it opens; `step_enter` and `check` pass through. Fields Databricks does not name go to its `extra` column. After a teach job or a recut succeeds, the hub calls `upload_lesson_files(lesson_dir, lesson_id)`.
+> When `server/databricks.py` can be imported, the hub adds one adapter sink at startup. `run_start` calls `end_run()` then `start_run(lesson_id)`; `run_done` calls `end_run()`; `advance` becomes `emit("advance", from_step, to_step, ...)`; `mistake` becomes `emit("mistake", kind=..., ...)`; `breaker` becomes `emit("check_offline", reason)` only when it opens; `step_enter` and `check` pass through. Fields Databricks does not name go to its `extra` column. After a teach job or a recut succeeds, the hub calls `upload_lesson_files(lesson_dir, lesson_id)`.
 
-Open points for Pranav (code facts, not proposals to change his file):
+Open points on databricks.py (code facts, not proposals to change it):
 - The hub's `event_id`, `ts`, `run_id` and `rev` are dropped by the adapter; databricks.py makes its own run id.
 - `check` events carry no `reason`, although the databricks.py docstring example shows one.
 - `run_done` totals and breaker closing are not forwarded.
 - A run ends only on done or the next `select_lesson`. Deleting the active lesson or stopping the hub leaves it open.
-- `DATABRICKS_*` and `HANDOVER_EVENTS_JSONL` are read by databricks.py and are not in section 1. Pranav may want to list them.
+- `DATABRICKS_*` and `HANDOVER_EVENTS_JSONL` are read by databricks.py and are not in section 1 and could be listed there.
 
 **Code**: server/main.py:293-338, 495-521, 555, 611, 615-628, 855, 962, 1016-1017, 1157, 1293; server/databricks.py:232-314
 

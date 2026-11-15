@@ -24,8 +24,8 @@
 --   ds_time_per_step           learner median vs expert seconds per step (long format, for the bar chart)
 --   ds_step_summary            one row per step: time, slowdown, manual rate, mistakes, false passes, drop-offs
 --   ds_advance_method          how learners left each step: camera, button, voice (long format)
---   ds_manual_rate             camera steps only: share of advances forced by hand (Pranav's query 2)
---   ds_false_passes            camera passes the learner undid with Back within 60 s (Pranav's query 3)
+--   ds_manual_rate             camera steps only: share of advances forced by hand (query 2 of server/static/databricks_init.sql)
+--   ds_false_passes            camera passes the learner undid with Back within 60 s (query 3 of server/static/databricks_init.sql)
 --   ds_checks                  one row per camera check: verdict, confidence, latency
 --   ds_check_latency_by_step   p50 and p90 check latency per step (long format)
 --   ds_check_latency_overall   p50 and p90 check latency per lesson
@@ -297,10 +297,10 @@ ORDER BY s.lesson_id, s.n, method;
 
 
 -- @dataset ds_manual_rate
--- Pranav's query 2, refined: camera steps only; share of forward advances the learner forced with
+-- Query 2 of databricks_init.sql, refined: camera steps only; share of forward advances the learner forced with
 -- Next (button or voice) instead of the camera check passing. A high rate means the check is too strict
 -- for that step, or the step is hard to show to the camera.
--- Change from Pranav's version: counts any forward advance (to_step > from_step), so the "ahead" jump
+-- Change from the original: counts any forward advance (to_step > from_step), so the "ahead" jump
 -- (k -> k + 2 by camera) is counted for step k instead of being dropped.
 SELECT
   e.lesson_id,
@@ -319,10 +319,10 @@ ORDER BY e.lesson_id, s.n;
 
 
 -- @dataset ds_false_passes
--- Pranav's query 3, refined: a camera pass is "false" when the learner pressed Back to that same step
+-- Query 3 of databricks_init.sql, refined: a camera pass is "false" when the learner pressed Back to that same step
 -- within 60 s (the check said done when it was not). Lower bound: a learner who just carries on is not
 -- counted.
--- Change from Pranav's version: one row per camera pass before counting, so two Back presses after one
+-- Change from the original: one row per camera pass before counting, so two Back presses after one
 -- pass do not count twice, and camera_passes is not inflated by the join.
 WITH cam AS (
   SELECT event_id, run_id, lesson_id, from_step AS step, ts

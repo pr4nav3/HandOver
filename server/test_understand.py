@@ -546,7 +546,7 @@ def test_bench_metrics_and_hard_stop():
     m = ub.metrics(rows, factory)
     assert m["progress_pairs_monotonic"] == (4, 4) and m["stage_exact"] == (6, 6)
     assert m["mistake_detected"] == (2, 2) and m["mistake_false_alarm"] == (0, 6)
-    assert m["tracker_fired_on_planted"] == (1, 1) and m["tracker_false_fire_on_clean_series"] == (0, 2)
+    assert m["tracker_fired_on_injected"] == (1, 1) and m["tracker_false_fire_on_clean_series"] == (0, 2)
     assert m["understand_done"]["done_yes"] == (2, 2) and m["understand_done"]["false_pass_all"] == (0, 6)
     assert ub.expected_stage(0.85, 4) == 3 and ub.expected_stage(0.25, 4) == 0 and ub.expected_stage(0, 3) == -1
     # a budget below the first call estimate stops before any call

@@ -306,14 +306,14 @@ def parse_hello(msg: dict) -> Optional[dict]:
 
 EVENT_SINKS: list[Callable[[dict], None]] = []
 """Subscribers for learn events (server/databricks.py appends one). Called inline on the event loop, so a sink
-must return at once. Events hold no frames and nothing here writes to disk, so M15 holds."""
+must return at once. Events hold no frames and nothing here writes to disk, so the privacy guarantee holds."""
 
 
 ENVELOPE = ("event_id", "ts", "run_id", "lesson_id", "rev", "kind")  # fields every learn event carries
 
 
 def databricks_module() -> Any:
-    """server.databricks (Pranav's uploader) when it can be imported, else None; the hub runs either way."""
+    """server.databricks (the Databricks uploader) when it can be imported, else None; the hub runs either way."""
     try:
         return importlib.import_module("server.databricks")
     except ImportError:
@@ -1099,7 +1099,7 @@ class Engine:
     # ---- frames
 
     def on_frame(self, data: bytes) -> None:
-        """A frame from the active camera. Held in memory only; frames never touch disk (M15)."""
+        """A frame from the active camera. Held in memory only; frames never touch disk."""
         self.frame = data
         self.frame_seq += 1
         self.frame_event.set()
@@ -1390,7 +1390,7 @@ class Engine:
         return (st.get("status"), lc.get("done"), lc.get("confidence"), lc.get("reason"), st.get("next_clip"),
                 st.get("progress"), st.get("stage"))
 
-    # ---- mistake check (M9)
+    # ---- mistake check
 
     async def _after_result(self, job: CheckJob, done: str) -> None:
         """Feed the mistake policy after a check that did not pass. A due compare runs as its own task (one at a

@@ -1,7 +1,7 @@
-"""Preflight: one command before every rehearsal and before judging.
+"""Preflight: one command that checks the machine, the hub and the lessons before a session.
 
     .venv/bin/python scripts/preflight.py            the checklist (no money spent, no network calls to AI)
-    .venv/bin/python scripts/preflight.py --probe    also one real check call on two demo frames (costs money)
+    .venv/bin/python scripts/preflight.py --probe    also one real check call on two lesson frames (costs money)
     .venv/bin/python scripts/preflight.py --fetch    git fetch origin main first, so ahead/behind is current
     .venv/bin/python scripts/preflight.py --json     machine-readable output
 
@@ -46,7 +46,7 @@ OK, WARN, FAIL, SKIP = "OK", "WARN", "FAIL", "SKIP"
 _RANK = {SKIP: 0, OK: 0, WARN: 1, FAIL: 2}
 
 IMPORTS = ("fastapi", "google.genai", "anthropic", "PIL")
-DEMO_LESSONS = ("fortune-teller-v1",)  # the bike front wheel lesson was never recorded
+SAMPLE_LESSONS = ("fortune-teller-v1",)  # lessons that must be present
 SECRET_NAMES = ("ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "DATABRICKS_TOKEN")
 DATABRICKS_NAMES = ("DATABRICKS_HOST", "DATABRICKS_TOKEN", "DATABRICKS_WAREHOUSE_ID")
 FFMPEG_MIN = (5, 1)
@@ -374,7 +374,7 @@ def check_keys(repo: Path = REPO) -> list[Row]:
         rows.append(Row(A, "check provider", FAIL, "server/check.py does not import", INSTALL_FIX))
     elif check.is_mock():
         rows.append(Row(A, "check provider", WARN, "mock (HANDOVER_CHECK=mock): checks are fake",
-                        "unset HANDOVER_CHECK for a real demo"))
+                        "unset HANDOVER_CHECK for real checks"))
     else:
         prov = check.provider() if hasattr(check, "provider") else "gemini"
         model = check.active_model() if hasattr(check, "active_model") else check._model()
@@ -462,9 +462,9 @@ def check_budget(repo: Path = REPO) -> list[Row]:
 # ---------------------------------------------------------------- 5. live probe (only with --probe)
 
 def probe_frames(lessons: Path) -> Optional[tuple[Path, Path, str]]:
-    """(reference, live, question): a demo lesson's step 2 reference against its step 3 reference, so the
+    """(reference, live, question): a sample lesson's step 2 reference against its step 3 reference, so the
     expected answer is a real call on two different frames. Prefers the fortune teller."""
-    for lid in (*DEMO_LESSONS, "demo-v1"):
+    for lid in (*SAMPLE_LESSONS, "demo-v1"):
         folder = lessons / lid
         try:
             data = json.loads((folder / "lesson.json").read_text(encoding="utf-8"))
@@ -503,7 +503,7 @@ def check_probe(repo: Path = REPO) -> list[Row]:
                         "raise the cap or HANDOVER_CHECK_PROVIDER=gemini")]
     frames = probe_frames(_dir_from_env("HANDOVER_LESSONS", repo / "lessons", repo))
     if frames is None:
-        return [Row(A, "live check", FAIL, "no demo lesson with two reference frames", "cut a lesson first")]
+        return [Row(A, "live check", FAIL, "no sample lesson with two reference frames", "cut a lesson first")]
     ref, live, question = frames
     r = asyncio.run(check.check_frame(ref.read_bytes(), live.read_bytes(), question, timeout=10))
     cost = getattr(r, "cost_usd", 0.0)
@@ -566,11 +566,11 @@ def check_lessons(repo: Path = REPO) -> list[Row]:
                         "" if status == OK else f"{PY_CMD} scripts/lesson_lint.py lessons/{folder.name}",
                         {"counts": c}))
     names = {f.name for f in folders if (f / "lesson.json").is_file()}
-    for lid in DEMO_LESSONS:
+    for lid in SAMPLE_LESSONS:
         if lid in names:
-            rows.append(Row(A, f"demo {lid}", OK, "present"))
+            rows.append(Row(A, f"sample {lid}", OK, "present"))
         else:
-            rows.append(Row(A, f"demo {lid}", FAIL, "missing",
+            rows.append(Row(A, f"sample {lid}", FAIL, "missing",
                             f"cut it with scripts/new_lesson.sh --id {lid} --title \"...\" take.mov"))
     return rows
 
@@ -948,7 +948,7 @@ def check_git(repo: Path = REPO, fetch: bool = False) -> list[Row]:
     rc, out, _ = run(["git", "status", "--porcelain"], timeout=5, cwd=repo)
     n = len([ln for ln in out.splitlines() if ln.strip()]) if rc == 0 else 0
     rows.append(Row(A, "changes", WARN if n else OK, f"{n} uncommitted" if n else "clean",
-                    "commit them (small, real messages) before the demo" if n else ""))
+                    "commit them (small, real messages)" if n else ""))
     fetched = ""
     if fetch:
         frc, _, ferr = run(["git", "fetch", "origin", "main", "--quiet"], timeout=8, cwd=repo)
@@ -1047,7 +1047,7 @@ def as_json(rows: list[Row], elapsed: float = 0.0) -> dict:
 
 def main(argv: Optional[list[str]] = None, repo: Path = REPO) -> int:
     ap = argparse.ArgumentParser(prog="preflight.py", description="HandOver readiness checklist.")
-    ap.add_argument("--probe", action="store_true", help="one real check call on two demo frames (costs money)")
+    ap.add_argument("--probe", action="store_true", help="one real check call on two lesson frames (costs money)")
     ap.add_argument("--fetch", action="store_true", help="git fetch origin main before comparing")
     ap.add_argument("--json", action="store_true", help="print JSON")
     ap.add_argument("--no-color", action="store_true", help="plain text even on a terminal")
