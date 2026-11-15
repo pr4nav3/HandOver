@@ -174,3 +174,7 @@ What this shows:
 | Ahead recovery | 3 confirmed ahead verdicts in a row at 0.8 or more (`HANDOVER_AHEAD_CONFIRM_N`, `HANDOVER_AHEAD_CONFIRM_CONF`) | `main.py`, `_ahead_confirm_due` |
 | Understanding fallback | 3 check yes answers in a row at 0.8 or more while understanding says no (`HANDOVER_UNDERSTAND_OVERRIDE_N`, `HANDOVER_UNDERSTAND_OVERRIDE_CONF`) | `main.py`, `_override_due` |
 | Active camera silence | 5 s | `main.py` |
+
+## Ending a lesson and pairing (2026-11-14)
+- `/ws/ui` accepts `{"type":"end_lesson"}`: emits run_stop (reason "ended"), unloads the lesson so no checks run, and broadcasts a state with `lesson_id` null. A no-op when nothing is loaded. Lesson files are never touched.
+- `GET /api/hub-info` returns `lan_ip`, `http_port`, `https_port`, `hub_url`, `pair_link` (`handover://connect?hub=<encoded hub_url>`, what the apps scan) and `capture_url` (the https phone browser camera page). Null fields when no LAN address is found. The hub also logs the pairing address at startup.

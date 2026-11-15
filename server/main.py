@@ -887,12 +887,23 @@ class Engine:
         """The lesson is being deleted: unload it so nothing reads its files, and tell the clients."""
         if self.lesson_id != lesson_id:
             return
-        self.stop_run("deleted")
+        self.unload("deleted")
+        log.info("cleared deleted lesson %s", lesson_id)
+
+    def end_lesson(self) -> None:
+        """A learner pressed End: stop the run (run_stop, reason "ended"), unload the lesson so no more checks
+        run, and tell every client (state with no lesson). A no-op when nothing is loaded."""
+        if self.lesson is None:
+            return
+        log.info("lesson %s ended by the learner", self.lesson_id)
+        self.unload("ended")
+
+    def unload(self, why: str) -> None:
+        self.stop_run(why)
         self.lesson_id, self.lesson = None, None
         self.step, self.done = 0, False
         self.ref_cache.clear()
         self._enter_step()
-        log.info("cleared deleted lesson %s", lesson_id)
         self.broadcast_state()
 
     def go(self, to: int, reason: str) -> None:
@@ -1633,6 +1644,35 @@ def capture() -> FileResponse:
     return FileResponse(STATIC / "capture.html", media_type="text/html", headers={"Cache-Control": "no-cache"})
 
 
+def lan_ip() -> Optional[str]:
+    """This computer's address on the local network, or None. Connecting a UDP socket sends no packet; it only
+    asks the OS which interface would route outward."""
+    import socket
+
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("10.255.255.255", 1))
+            ip = s.getsockname()[0]
+    except OSError:
+        return None
+    return None if ip.startswith("127.") else ip
+
+
+@app.get("/api/hub-info")
+def hub_info() -> dict:
+    """What a screen needs to pair a phone: the hub's LAN address, its ports, the handover:// pairing link the
+    apps scan, and the phone browser camera page (https, since phone browsers only allow the camera there)."""
+    from urllib.parse import quote
+
+    ip = lan_ip()
+    http_port = int(config.get("HANDOVER_PORT"))  # type: ignore[arg-type]
+    https_port = int(config.get("HANDOVER_HTTPS_PORT"))  # type: ignore[arg-type]
+    hub = f"http://{ip}:{http_port}" if ip else None
+    return {"lan_ip": ip, "http_port": http_port, "https_port": https_port, "hub_url": hub,
+            "pair_link": f"handover://connect?hub={quote(hub, safe='')}" if hub else None,
+            "capture_url": f"https://{ip}:{https_port}/capture" if ip else None}
+
+
 @app.get("/api/lessons")
 def list_lessons() -> list:
     out = []
@@ -1996,6 +2036,8 @@ def handle_ui_message(client: UIClient, text: str) -> None:
             engine.select(str(msg.get("id", "")), learner=learner_id(msg.get("token")))
         except HTTPException as e:
             client.push({"type": "error", "message": e.detail})
+    elif kind == "end_lesson":
+        engine.end_lesson()
     elif engine.lesson is None:
         client.push({"type": "error", "message": "no lesson selected"})
     elif kind in ("next", "back"):
@@ -2085,6 +2127,9 @@ def serve() -> None:
             yield
 
     servers = [Server(c) for c in configs]
+    info = hub_info()
+    if info["hub_url"]:
+        log.info("pair a phone: open HandOver and enter %s (QR: %s)", info["hub_url"], info["pair_link"])
 
     async def run_all() -> None:
         import signal

@@ -1621,6 +1621,30 @@ def test_delete_lesson_clears_active() -> None:
         assert c.delete("/api/lessons/half-built").status_code == 404 and (main.LESSONS / "half-built").exists()
 
 
+def test_end_lesson_unloads_and_stops_run() -> None:
+    make_lesson("to-end")
+    with hub() as c, c.websocket_connect("/ws/ui") as ui:
+        select(ui, "to-end")
+        ui.send_text(json.dumps({"type": "end_lesson"}))
+        st = recv_json(ui, lambda m: is_state(m) and m["lesson_id"] is None)
+        assert st["total"] == 0 and st["step"] == 0
+        assert main.engine.run is None and main.engine.lesson is None
+        ui.send_text(json.dumps({"type": "end_lesson"}))  # nothing loaded: a quiet no-op
+        assert (main.LESSONS / "to-end").exists()  # ending never touches the lesson files
+
+
+def test_hub_info_pairing_fields() -> None:
+    with hub() as c, patched(main, lan_ip=lambda: "192.168.1.20"):
+        info = c.get("/api/hub-info").json()
+        port = info["http_port"]
+        assert info["hub_url"] == f"http://192.168.1.20:{port}"
+        assert info["pair_link"] == f"handover://connect?hub=http%3A%2F%2F192.168.1.20%3A{port}"
+        assert info["capture_url"] == f"https://192.168.1.20:{info['https_port']}/capture"
+    with hub() as c, patched(main, lan_ip=lambda: None):
+        info = c.get("/api/hub-info").json()
+        assert info["hub_url"] is None and info["pair_link"] is None
+
+
 # ---------------------------------------------------------------- hardening (Phase 4)
 
 class HeldLock:
