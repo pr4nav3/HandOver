@@ -19,8 +19,8 @@
       "prerequisites": [],
       "ref_time": "00:06.3",
       "common_mistake": "Squeeze the lever once before you start, so you know how the brake felt.",
-      "clip": "clips/01.mp4",
-      "captions": "captions/01.vtt",
+      "clip": "clips_produced/01.mp4",
+      "captions": "clips_produced/01.vtt",
       "ref_frame": "frames/01.jpg"
     },
     {
@@ -35,165 +35,226 @@
       ],
       "ref_time": "00:18.5",
       "common_mistake": "Flip the lever open first, then lift the frame so the wheel drops out.",
-      "clip": "clips/02.mp4",
-      "captions": "captions/02.vtt",
+      "clip": "clips_produced/02.mp4",
+      "captions": "clips_produced/02.vtt",
       "ref_frame": "frames/02.jpg"
     },
     {
       "n": 3,
-      "title": "Unscrew the nut off the end of the skewer",
+      "title": "Take the skewer out: nut off, slide it out, springs narrow end in",
       "start": "00:19",
-      "end": "00:46",
-      "check_type": "manual",
-      "check_question": "",
-      "prerequisites": [
-        2
-      ],
-      "ref_time": "00:40.5",
-      "common_mistake": "Hold the lever still and turn the nut; it comes off in a few turns.",
-      "clip": "clips/03.mp4",
-      "captions": "captions/03.vtt",
-      "ref_frame": "frames/03.jpg",
-      "self_test": {
-        "own": "yes",
-        "prev": "unsure",
-        "ok": false
-      }
-    },
-    {
-      "n": 4,
-      "title": "Pull the skewer out and check both springs sit narrow end inward",
-      "start": "00:46",
-      "end": "01:12.4",
+      "end": "01:13",
       "check_type": "camera",
       "check_question": "Is the skewer out of the wheel, held apart from the hub?",
       "prerequisites": [
+        2
+      ],
+      "ref_time": "01:12.5",
+      "common_mistake": "Keep both springs; each one points its narrow end toward the hub.",
+      "clip": "clips_produced/03.mp4",
+      "captions": "clips_produced/03.vtt",
+      "ref_frame": "frames/03.jpg"
+    },
+    {
+      "n": 4,
+      "title": "Spin the wheel and run your fingers round the braking track",
+      "start": "01:13",
+      "end": "01:31",
+      "check_type": "manual",
+      "check_question": "",
+      "prerequisites": [
         3
       ],
-      "ref_time": "01:12.2",
-      "common_mistake": "Keep both springs; each one points its narrow end toward the hub.",
-      "clip": "clips/04.mp4",
-      "captions": "captions/04.vtt",
+      "ref_time": "01:27.4",
+      "common_mistake": "Feel the flat metal band the pads touch, all the way round.",
+      "clip": "clips_produced/04.mp4",
+      "captions": "clips_produced/04.vtt",
       "ref_frame": "frames/04.jpg"
     },
     {
       "n": 5,
-      "title": "Hold the wheel up, spin it and look over the tire and spokes",
-      "start": "01:12.4",
-      "end": "01:30",
+      "title": "Check the brake calipers and pads from above",
+      "start": "01:31",
+      "end": "01:40",
       "check_type": "manual",
       "check_question": "",
       "prerequisites": [
         4
       ],
-      "ref_time": "01:26",
-      "common_mistake": "Turn the wheel a full circle; look at the tread and both sidewalls.",
-      "clip": "clips/05.mp4",
-      "captions": "captions/05.vtt",
+      "ref_time": "01:38.6",
+      "common_mistake": "Each pad should face the braking track, not the tire.",
+      "clip": "clips_produced/05.mp4",
+      "captions": "clips_produced/05.vtt",
       "ref_frame": "frames/05.jpg"
     },
     {
       "n": 6,
-      "title": "Set the wheel back between the fork blades",
-      "start": "01:30",
-      "end": "01:41",
+      "title": "Set the wheel back in the fork with the tread arrow pointing forward, then check the rear tire the same way",
+      "start": "01:40",
+      "end": "02:05",
       "check_type": "camera",
       "check_question": "Is the wheel sitting between the fork blades with the axle in the fork ends?",
       "prerequisites": [
         5
       ],
-      "ref_time": "01:40.5",
-      "common_mistake": "Lower the fork onto the axle so it reaches the top of both slots.",
-      "clip": "clips/06.mp4",
-      "captions": "captions/06.vtt",
+      "ref_time": "01:44.5",
+      "common_mistake": "The arrow on the sidewall points the way the bike rolls.",
+      "clip": "clips_produced/06.mp4",
+      "captions": "clips_produced/06.vtt",
       "ref_frame": "frames/06.jpg"
     },
     {
       "n": 7,
-      "title": "Run your fingers round the rim's braking track and the tire",
-      "start": "01:41",
-      "end": "01:56",
-      "check_type": "manual",
-      "check_question": "",
+      "title": "Slide the skewer back through the hub and thread the nut on",
+      "start": "02:05",
+      "end": "02:36",
+      "check_type": "camera",
+      "check_question": "Is the skewer through the hub with the lever on one side and the nut on the other?",
       "prerequisites": [
         6
       ],
-      "ref_time": "01:54.8",
-      "common_mistake": "Feel the flat metal band the pads touch, all the way round.",
-      "clip": "clips/07.mp4",
-      "captions": "captions/07.vtt",
+      "ref_time": "02:35.5",
+      "common_mistake": "The lever goes on the left side of the bike, away from the chain.",
+      "clip": "clips_produced/07.mp4",
+      "captions": "clips_produced/07.vtt",
       "ref_frame": "frames/07.jpg"
     },
     {
       "n": 8,
-      "title": "Check the brake pads line up with the rim",
-      "start": "01:56",
-      "end": "02:05",
-      "check_type": "manual",
-      "check_question": "",
-      "prerequisites": [
-        7
-      ],
-      "ref_time": "02:04.3",
-      "common_mistake": "Each pad should meet the flat braking track, not the tire.",
-      "clip": "clips/08.mp4",
-      "captions": "captions/08.vtt",
-      "ref_frame": "frames/08.jpg"
-    },
-    {
-      "n": 9,
-      "title": "Slide the skewer back through the hub and thread the nut on",
-      "start": "02:05",
-      "end": "02:36",
-      "check_type": "manual",
-      "check_question": "",
-      "prerequisites": [
-        8
-      ],
-      "ref_time": "02:28.7",
-      "common_mistake": "The lever goes on the left side of the bike, away from the chain.",
-      "clip": "clips/09.mp4",
-      "captions": "captions/09.vtt",
-      "ref_frame": "frames/09.jpg",
-      "self_test": {
-        "own": "unsure",
-        "prev": "unsure",
-        "ok": false
-      }
-    },
-    {
-      "n": 10,
-      "title": "Snug the nut, then close the lever flat along the fork",
+      "title": "Snug the nut and close the lever flat along the fork",
       "start": "02:36",
       "end": "03:03.1",
       "check_type": "camera",
       "check_question": "Is the quick release lever folded closed, lying flat along the fork blade?",
       "prerequisites": [
-        9
+        7
       ],
-      "ref_time": "03:03.0",
+      "ref_time": "03:03",
       "common_mistake": "Fold the lever back along the fork. A lever pointing forward can catch and open.",
-      "clip": "clips/10.mp4",
-      "captions": "captions/10.vtt",
-      "ref_frame": "frames/10.jpg"
+      "clip": "clips_produced/08.mp4",
+      "captions": "clips_produced/08.vtt",
+      "ref_frame": "frames/08.jpg"
     },
     {
-      "n": 11,
+      "n": 9,
       "title": "Turn the bike upright, spin the wheel and squeeze the brake",
       "start": "03:03.1",
       "end": "03:18.6",
       "check_type": "camera",
       "check_question": "Is the bike upright on its wheels with the front wheel in the fork?",
       "prerequisites": [
-        10
+        8
       ],
-      "ref_time": "03:18.0",
+      "ref_time": "03:18",
       "common_mistake": "Spin the wheel once and squeeze the brake before you ride.",
-      "clip": "clips/11.mp4",
-      "captions": "captions/11.vtt",
-      "ref_frame": "frames/11.jpg"
+      "clip": "clips_produced/09.mp4",
+      "captions": "clips_produced/09.vtt",
+      "ref_frame": "frames/09.jpg"
     }
   ],
+  "production": {
+    "theme": "ivory",
+    "title_cards": "off",
+    "accent": "#1F49D6",
+    "zoom": true,
+    "highlight": true,
+    "burn_captions": false,
+    "steps": {
+      "1": {
+        "zoom": false,
+        "highlight": false
+      },
+      "2": {
+        "region": [
+          0.1,
+          0.55,
+          0.6,
+          0.95
+        ],
+        "key_time": 10.9
+      },
+      "3": {
+        "region": [
+          0.42,
+          0.48,
+          0.92,
+          0.88
+        ],
+        "key_time": 53.0
+      },
+      "4": {
+        "region": [
+          0.47,
+          0.52,
+          0.97,
+          0.94
+        ],
+        "key_time": 13.0
+      },
+      "5": {
+        "region": [
+          0.22,
+          0.4,
+          0.72,
+          0.8
+        ],
+        "key_time": 4.0
+      },
+      "6": {
+        "region": [
+          0.25,
+          0.36,
+          0.75,
+          0.76
+        ],
+        "key_time": 12.0
+      },
+      "7": {
+        "region": [
+          0.25,
+          0.46,
+          0.75,
+          0.88
+        ],
+        "key_time": 23.0
+      },
+      "8": {
+        "region": [
+          0.47,
+          0.46,
+          0.97,
+          0.88
+        ],
+        "key_time": 26.0
+      },
+      "9": {
+        "zoom": false,
+        "highlight": false
+      }
+    },
+    "output": {
+      "clips": "clips_produced",
+      "course": "produced/course.mp4",
+      "cover": "produced/cover.jpg",
+      "chapters": "produced/chapters.vtt",
+      "captions": "produced/course.vtt",
+      "seconds": 200.07,
+      "steps": 9,
+      "assist": "none",
+      "sources": {
+        "1": "3259181:1794733245",
+        "2": "4996296:1794733247",
+        "3": "18470657:1794733250",
+        "4": "8682247:1794733252",
+        "5": "3477519:1794733253",
+        "6": "9141739:1794733255",
+        "7": "11972102:1794733257",
+        "8": "9285987:1794733259",
+        "9": "6664765:1794733260"
+      },
+      "rendered_at": "2026-11-15T03:04:11-0600"
+    }
+  },
   "voiceover": {
     "engine": "kokoro",
     "voice": "af_heart",
@@ -227,12 +288,6 @@
         "script_source": "file"
       },
       "9": {
-        "script_source": "file"
-      },
-      "10": {
-        "script_source": "file"
-      },
-      "11": {
         "script_source": "file"
       }
     }

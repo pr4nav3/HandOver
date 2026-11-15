@@ -20,7 +20,12 @@
       "check_type": "camera",
       "check_question": "Is the paper folded into a single triangle with three corners?",
       "prerequisites": [],
-      "common_mistake": "Line up the two corners exactly before pressing the crease."
+      "common_mistake": "Line up the two corners exactly before pressing the crease.",
+      "self_test": {
+        "own": "yes",
+        "prev": "no",
+        "ok": true
+      }
     },
     {
       "n": 2,
@@ -36,7 +41,12 @@
       "prerequisites": [
         1
       ],
-      "common_mistake": "Open the first fold, then bring the other pair of corners together."
+      "common_mistake": "Open the first fold, then bring the other pair of corners together.",
+      "self_test": {
+        "own": "yes",
+        "prev": "no",
+        "ok": true
+      }
     },
     {
       "n": 3,
@@ -52,7 +62,12 @@
       "prerequisites": [
         2
       ],
-      "common_mistake": "Match the opposite edges before pressing the straight crease."
+      "common_mistake": "Match the opposite edges before pressing the straight crease.",
+      "self_test": {
+        "own": "yes",
+        "prev": "no",
+        "ok": true
+      }
     },
     {
       "n": 4,
@@ -63,12 +78,17 @@
       "captions": "captions/04.vtt",
       "ref_frame": "frames/04.jpg",
       "ref_time": "01:05.9",
-      "check_type": "manual",
-      "check_question": "",
+      "check_type": "camera",
+      "check_question": "Is the paper lying open and flat as one square, showing two creases that cross at its center and one more crease across the middle?",
       "prerequisites": [
         3
       ],
-      "common_mistake": "Turn the fold a quarter turn before pressing the second straight crease."
+      "common_mistake": "Turn the fold a quarter turn before pressing the second straight crease.",
+      "self_test": {
+        "own": "yes",
+        "prev": "no",
+        "ok": true
+      }
     },
     {
       "n": 5,
@@ -84,7 +104,12 @@
       "prerequisites": [
         4
       ],
-      "common_mistake": "Bring every corner point to the exact center without gaps."
+      "common_mistake": "Bring every corner point to the exact center without gaps.",
+      "self_test": {
+        "own": "yes",
+        "prev": "no",
+        "ok": true
+      }
     },
     {
       "n": 6,
@@ -100,7 +125,12 @@
       "prerequisites": [
         5
       ],
-      "common_mistake": "Flip it over first. The seams should face down."
+      "common_mistake": "Flip it over first. The seams should face down.",
+      "self_test": {
+        "own": "yes",
+        "prev": "no",
+        "ok": true
+      }
     },
     {
       "n": 7,
@@ -112,11 +142,16 @@
       "ref_frame": "frames/07.jpg",
       "ref_time": "02:31.4",
       "check_type": "camera",
-      "check_question": "Do four triangular flaps form a smaller square with all four points meeting at the center?",
+      "check_question": "Do four triangular flaps with visible seams meet at the center of the top face, forming a smaller square than before?",
       "prerequisites": [
         6
       ],
-      "common_mistake": "Bring each corner to the center on this side and keep all four points touching."
+      "common_mistake": "Bring each corner to the center on this side and keep all four points touching.",
+      "self_test": {
+        "own": "yes",
+        "prev": "unsure",
+        "ok": false
+      }
     },
     {
       "n": 8,
@@ -127,12 +162,17 @@
       "captions": "captions/08.vtt",
       "ref_frame": "frames/08.jpg",
       "ref_time": "02:51.2",
-      "check_type": "manual",
-      "check_question": "",
+      "check_type": "camera",
+      "check_question": "Does the small square show a fresh crease across its middle, lying flat with its four flaps still closed?",
       "prerequisites": [
         7
       ],
-      "common_mistake": "Make both half-folds through the center, not along a diagonal."
+      "common_mistake": "Make both half-folds through the center, not along a diagonal.",
+      "self_test": {
+        "own": "yes",
+        "prev": "no",
+        "ok": true
+      }
     },
     {
       "n": 9,
@@ -148,7 +188,12 @@
       "prerequisites": [
         8
       ],
-      "common_mistake": "Slide one finger under each flap, then push all four pockets toward the center."
+      "common_mistake": "Slide one finger under each flap, then push all four pockets toward the center.",
+      "self_test": {
+        "own": "yes",
+        "prev": "no",
+        "ok": true
+      }
     }
   ],
   "voiceover": {
