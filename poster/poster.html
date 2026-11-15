@@ -2,435 +2,286 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>HandOver Poster</title>
-<meta name="viewport" content="width=2304">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=block" rel="stylesheet">
+<title>HandOver poster</title>
+<!--
+  HandOver, MadHacks 2026. 24 x 36 in portrait, one page.
+  Canvas: 2304 x 3456 CSS px (96 px per inch), so 28 pt = 37.3 px.
+  Look: "Field manual, cream", the same tokens as web/src/styles.css.
+  Fonts are local files in fonts/ (Barlow Condensed, Public Sans; SIL OFL), so rendering needs no network.
+  The QR code is inline SVG made locally with segno (see README.md).
+-->
 <style>
-  /* 24 x 36 in at 96 px/in = 2304 x 3456 px. Every size below is in px of that canvas. */
-  @page { size: 24in 36in; margin: 0; }
+  @font-face { font-family: 'Barlow Condensed'; font-weight: 500; src: url(fonts/barlow-condensed-latin-500-normal.woff2) format('woff2'); }
+  @font-face { font-family: 'Barlow Condensed'; font-weight: 600; src: url(fonts/barlow-condensed-latin-600-normal.woff2) format('woff2'); }
+  @font-face { font-family: 'Barlow Condensed'; font-weight: 700; src: url(fonts/barlow-condensed-latin-700-normal.woff2) format('woff2'); }
+  @font-face { font-family: 'Public Sans'; font-weight: 400; src: url(fonts/public-sans-latin-400-normal.woff2) format('woff2'); }
+  @font-face { font-family: 'Public Sans'; font-weight: 500; src: url(fonts/public-sans-latin-500-normal.woff2) format('woff2'); }
+  @font-face { font-family: 'Public Sans'; font-weight: 600; src: url(fonts/public-sans-latin-600-normal.woff2) format('woff2'); }
+  @font-face { font-family: 'Public Sans'; font-weight: 700; src: url(fonts/public-sans-latin-700-normal.woff2) format('woff2'); }
 
   :root {
-    --bg: #fafaf9;
-    --ink: #0c0c0d;
-    --ink-2: #3a3a3c;
-    --muted: #6e6e73;
-    --faint: #a1a1a6;
-    --line: #e4e2df;
-    --frame: #d9d7d3;
-    --green: #30d158;
-    --green-ink: #1f8a3b;
-    --amber: #ffb340;
-    --shotbg: #0b0b0c;
-    --m: 168px;          /* outer margin */
-    --g: 56px;           /* gutter */
+    --paper: #f1ece1;
+    --card: #faf6ed;
+    --well: #e3dccd;
+    --ink: #15213b;
+    --ink2: #4e5a6e;
+    --ink3: #8c96a8;
+    --rule: rgba(21, 33, 59, 0.18);
+    --cobalt: #1f49d6;
+    --cobalt-soft: #e6ebfa;
+    --warn: #b7791f;
+    --cond: 'Barlow Condensed', 'Arial Narrow', sans-serif;
+    --sans: 'Public Sans', 'Helvetica Neue', Arial, sans-serif;
   }
 
+  @page { size: 24in 36in; margin: 0; }
   * { box-sizing: border-box; margin: 0; padding: 0; }
-
-  html, body {
-    width: 2304px;
-    height: 3450px;
-    background: var(--bg);
-  }
-
+  html, body { width: 2304px; height: 3456px; background: var(--paper); overflow: hidden; }
   body {
     color: var(--ink);
-    font-family: Inter, -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
-    font-feature-settings: "tnum" 1, "cv11" 1, "ss01" 1;
+    font: 400 40px/1.36 var(--sans);
     -webkit-font-smoothing: antialiased;
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
-    overflow: hidden;
   }
 
-  .page {
-    position: relative;
-    width: 2304px;
-    height: 3450px;
-    padding: 140px var(--m) 0;
-    display: flex;
-    flex-direction: column;
-  }
+  .page { width: 2304px; height: 3456px; padding: 0 112px 92px; display: flex; flex-direction: column; }
+  .page > * { flex-shrink: 0; }
 
-  .grid {
-    display: grid;
-    grid-template-columns: repeat(12, 1fr);
-    column-gap: var(--g);
-  }
+  /* The app's top progress bar: one segment per step, done in ink, current in cobalt. */
+  .progress { display: grid; grid-template-columns: repeat(9, 1fr); gap: 8px; margin: 0 -112px; height: 20px; }
+  .progress i { background: var(--well); }
+  .progress i.d { background: var(--ink); }
+  .progress i.c { background: var(--cobalt); }
 
   /* ---------- header ---------- */
-  .top {
-    align-items: center;
-    font-size: 30px;
-    line-height: 1;
-    color: var(--muted);
-  }
-  .brand {
-    grid-column: 1 / span 6;
-    display: flex;
-    align-items: center;
-    gap: 18px;
-    font-size: 44px;
-    font-weight: 600;
-    letter-spacing: -0.02em;
-    color: var(--ink);
-  }
-  .dot {
-    width: 18px;
-    height: 18px;
-    border-radius: 50%;
-    background: var(--green);
-    flex: none;
-  }
-  .event {
-    grid-column: 7 / span 6;
-    text-align: right;
-    letter-spacing: -0.005em;
-  }
-  .event b { color: var(--ink); font-weight: 500; }
+  .top { display: flex; justify-content: space-between; align-items: center; padding-top: 52px; font: 600 36px/1 var(--cond); letter-spacing: 0.14em; text-transform: uppercase; }
+  .top .ev { color: var(--cobalt); }
+  .top .who { color: var(--ink2); }
+  .mast { display: grid; grid-template-columns: auto 1fr; column-gap: 76px; align-items: end; margin-top: 26px; padding-bottom: 46px; border-bottom: 5px solid var(--ink); }
+  .word { font: 700 316px/0.8 var(--cond); text-transform: uppercase; margin-left: -8px; }
+  .hook { font: 500 58px/1.16 var(--sans); letter-spacing: -0.02em; }
+  .hook b { font-weight: 600; color: var(--cobalt); }
 
-  /* ---------- headline ---------- */
-  .hook {
-    margin-top: 120px;
-    font-size: 98px;
-    line-height: 1.08;
-    font-weight: 600;
-    letter-spacing: -0.042em;
-    max-width: 1968px;
-  }
-  .hook span { color: var(--faint); }
+  /* ---------- section heads ---------- */
+  .sec { display: flex; align-items: baseline; gap: 24px; padding-bottom: 14px; border-bottom: 2px solid var(--rule); margin-bottom: 26px; }
+  .sec .n { font: 600 44px/1 var(--cond); color: var(--cobalt); letter-spacing: 0.06em; }
+  .sec h2 { font: 600 56px/1 var(--cond); text-transform: uppercase; letter-spacing: 0.05em; }
+  .sec .aside { margin-left: auto; font: 500 34px/1 var(--cond); letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink2); }
 
-  /* ---------- hero ---------- */
-  .hero {
-    margin-top: 100px;
-    align-items: start;
-  }
-  .shot {
-    border-radius: 22px;
-    border: 1px solid var(--frame);
-    background: #0b0b0c;
-    padding: 0;
-    overflow: hidden;
-    box-shadow: 0 1px 0 rgba(0,0,0,0.02), 0 24px 48px -32px rgba(0,0,0,0.18);
-  }
-  .shot img { display: block; width: 100%; height: auto; }
-  .hero .shot {
-    grid-column: 1 / span 7;
-    position: relative;
-  }
-  .pin {
-    position: absolute;
-    width: 48px;
-    height: 48px;
-    border-radius: 50%;
-    background: #fff;
-    color: var(--ink);
-    font-size: 24px;
-    font-weight: 600;
-    display: grid;
-    place-items: center;
-    box-shadow: 0 0 0 6px rgba(255,255,255,0.18);
-  }
-  .notes {
-    grid-column: 8 / span 5;
-    padding-left: 24px;
-    display: flex;
-    flex-direction: column;
-    justify-content: space-between;
-    height: 100%;
-    padding-top: 4px;
-  }
-  .note { display: grid; grid-template-columns: 48px 1fr; column-gap: 24px; }
-  .note .n {
-    width: 48px; height: 48px; border-radius: 50%;
-    border: 1.5px solid var(--ink);
-    display: grid; place-items: center;
-    font-size: 24px; font-weight: 600;
-  }
-  .note h3 {
-    font-size: 36px; line-height: 48px; font-weight: 600; letter-spacing: -0.02em;
-  }
-  .note p {
-    grid-column: 2;
-    margin-top: 10px;
-    font-size: 29px; line-height: 1.42; color: var(--muted); letter-spacing: -0.01em;
-  }
+  /* ---------- row A: problem + how it works | hero ---------- */
+  .rowA { display: grid; grid-template-columns: 800px 1fr; column-gap: 72px; margin-top: 50px; }
+  .problem p { font-size: 40px; line-height: 1.36; }
+  .how { margin-top: 40px; }
+  .how ol { list-style: none; }
+  .how li { display: grid; grid-template-columns: 82px 1fr; padding: 16px 0 16px; border-top: 2px solid var(--rule); }
+  .how li:first-child { border-top: 0; padding-top: 0; }
+  .how .k { font: 700 80px/0.84 var(--cond); color: var(--ink3); }
+  .how li.on .k { color: var(--cobalt); }
+  .how h3 { font: 600 46px/1.04 var(--cond); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 8px; }
+  .how p { font-size: 38px; line-height: 1.32; color: var(--ink2); }
 
-  /* ---------- section label ---------- */
-  .label {
-    display: flex;
-    align-items: center;
-    gap: 24px;
-    font-size: 26px;
-    font-weight: 500;
-    color: var(--muted);
-    letter-spacing: 0.01em;
-  }
-  .label::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+  .hero .frame { border: 3px solid var(--ink); background: var(--ink); }
+  .hero .frame img { display: block; width: 100%; }
+  .hero figcaption { margin-top: 22px; display: grid; grid-template-columns: repeat(3, 1fr); column-gap: 30px; }
+  .hero figcaption div { border-top: 5px solid var(--ink); padding-top: 14px; font-size: 34px; line-height: 1.28; color: var(--ink2); }
+  .hero figcaption div.b { border-top-color: var(--cobalt); }
+  .hero figcaption div.a { border-top-color: var(--warn); }
+  .hero figcaption strong { display: block; font: 600 38px/1.05 var(--cond); text-transform: uppercase; letter-spacing: 0.05em; color: var(--ink); margin-bottom: 6px; }
 
-  /* ---------- flow ---------- */
-  .flow-wrap { margin-top: 96px; }
-  .flow { margin-top: 52px; }
-  .step { grid-column: span 4; display: flex; flex-direction: column; }
-  .step .num {
-    display: flex; align-items: center; gap: 20px;
-    font-size: 28px; font-weight: 500; color: var(--muted);
-  }
-  .step .num .rule { flex: 1; height: 2px; background: var(--line); }
-  .step:last-child .num .rule { background: var(--green); }
-  .step h2 {
-    margin-top: 24px;
-    font-size: 46px; line-height: 1.05; font-weight: 600; letter-spacing: -0.035em;
-  }
-  .step p {
-    margin-top: 22px;
-    font-size: 30px; line-height: 1.42; color: var(--muted); letter-spacing: -0.01em;
-    height: 128px;
-    margin-bottom: 0;
-  }
-  .step .shot { margin-top: 36px; aspect-ratio: 16 / 10; }
-  .step .shot img { width: 100%; height: 100%; object-fit: cover; object-position: center top; }
-  .step .shot.contain { background: var(--shotbg); display: grid; place-items: center; }
-  .step .shot.contain img { object-fit: contain; width: auto; height: auto; max-width: 88%; max-height: 88%; }
+  /* ---------- row B: lessons ---------- */
+  .rowB { margin-top: 56px; }
+  .lessons { display: grid; grid-template-columns: 1fr 560px; column-gap: 56px; }
+  .lesson-h { display: flex; align-items: baseline; gap: 20px; margin-bottom: 18px; }
+  .lesson-h h3 { font: 600 48px/1 var(--cond); text-transform: uppercase; letter-spacing: 0.04em; }
+  .lesson-h span { font-size: 34px; color: var(--ink2); }
+  .strip { display: grid; grid-template-columns: repeat(9, 1fr); gap: 12px; }
+  .tile .img { border: 2px solid var(--ink); aspect-ratio: 1; overflow: hidden; background: var(--ink); }
+  .tile img { display: block; width: 100%; height: 100%; object-fit: cover; }
+  .tile .cap { margin-top: 10px; line-height: 1.1; font: 600 36px/1 var(--cond); letter-spacing: 0.06em; color: var(--ink2); }
+  .tile.cam .img { border: 5px solid var(--cobalt); }
+  .tile.cam .cap { color: var(--cobalt); }
+  .tile .img { position: relative; }
+  .tile.cam .img::after { content: 'Camera'; position: absolute; left: 0; top: 0; background: var(--cobalt); color: #fff; font: 600 24px/1 var(--cond); letter-spacing: 0.12em; text-transform: uppercase; padding: 7px 10px 6px; }
+  .bike { background: var(--card); border: 3px solid var(--ink); padding: 30px 34px; }
+  .bike h3 { font: 600 48px/1 var(--cond); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 14px; }
+  .bike p { font-size: 37px; line-height: 1.32; color: var(--ink2); }
 
-  /* ---------- details row ---------- */
-  .more-wrap { margin-top: 96px; }
-  .more { margin-top: 52px; align-items: start; }
-  .cell { grid-column: span 4; }
-  .cell h3 {
-    font-size: 38px; line-height: 1.12; font-weight: 600; letter-spacing: -0.025em;
-  }
-  .cell p {
-    margin-top: 14px;
-    font-size: 27px; line-height: 1.42; color: var(--muted); letter-spacing: -0.01em;
-  }
-  .cell .vis { margin-bottom: 32px; height: 340px; }
-
-  /* the catch */
-  .catch {
-    height: 100%;
-    border-radius: 22px;
-    border: 1px solid var(--frame);
-    background: #0b0b0c;
-    padding: 36px;
-    display: flex;
-    flex-direction: column;
-    justify-content: flex-start;
-    gap: 28px;
-  }
-  .catch .bar {
-    display: flex; align-items: center; justify-content: space-between; gap: 20px;
-    padding: 22px 22px 22px 30px;
-    border-radius: 14px;
-    background: rgba(40, 28, 8, 0.96);
-    border: 1px solid rgba(255, 179, 64, 0.35);
-    color: var(--amber);
-    font-size: 27px; font-weight: 600; letter-spacing: -0.01em;
-  }
-  .catch .acts { display: flex; gap: 10px; flex: none; }
-  .catch .btn {
-    font-size: 20px; font-weight: 500; color: #f5f5f7;
-    padding: 9px 16px; border-radius: 10px;
-    border: 1px solid rgba(255, 179, 64, 0.4);
-  }
-  .catch .frames { flex: 1; display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
-  .catch .f {
-    border-radius: 12px;
-    background: #161618;
-    border: 1px solid rgba(255,255,255,0.07);
-    display: flex; flex-direction: column; justify-content: flex-end;
-    padding: 18px;
-    font-size: 21px; color: rgba(235,235,245,0.5);
-  }
-  .catch .f b { display: block; font-weight: 500; color: #f5f5f7; font-size: 23px; margin-bottom: 4px; }
-  .catch .f.hit { border-color: rgba(255,179,64,0.65); }
-  .catch .f.hit b { color: var(--amber); }
-
-  /* done */
-  .vis.shot { background: #141416; }
-  .vis.shot img { width: 100%; height: 100%; object-fit: cover; object-position: center; }
-
-  /* databricks */
-  .db {
-    height: 100%;
-    border-radius: 22px;
-    border: 1px solid var(--frame);
-    background: #fff;
-    padding: 28px 32px;
-    display: flex; flex-direction: column;
-    font-size: 23px;
-  }
-  .db .q {
-    display: flex; flex-direction: column; gap: 6px;
-    padding: 18px 22px;
-    border-radius: 14px;
-    background: #f3f2f0;
-    font-size: 27px; font-weight: 500; letter-spacing: -0.01em;
-  }
-  .db .q .who { font-size: 18px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
-  .db table { margin-top: 18px; width: 100%; border-collapse: collapse; }
-  .db th, .db td { text-align: left; padding: 8px 0; border-bottom: 1px solid var(--line); }
-  .db th { font-size: 19px; font-weight: 500; color: var(--faint); letter-spacing: 0.02em; }
-  .db td { color: var(--ink-2); }
-  .db td.k { color: var(--ink); font-weight: 500; }
-  .db .tname { margin-top: auto; padding-top: 12px; font-size: 19px; color: var(--faint); }
+  /* ---------- row C: architecture ---------- */
+  .rowC { margin-top: 56px; margin-bottom: 52px; }
+  .arch { position: relative; width: 2080px; height: 724px; }
+  .arch svg { position: absolute; left: 0; top: 0; }
+  .lane { position: absolute; left: 0; width: 60px; display: flex; align-items: center; justify-content: center; }
+  .lane span { display: block; font: 600 34px/1 var(--cond); letter-spacing: 0.18em; text-transform: uppercase; color: var(--cobalt); transform: rotate(-90deg); white-space: nowrap; }
+  .box { position: absolute; background: var(--card); border: 3px solid var(--ink); padding: 16px 20px; }
+  .box b { display: block; font: 600 38px/1.02 var(--cond); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; }
+  .box span { display: block; font-size: 31px; line-height: 1.22; color: var(--ink2); }
+  .box.in { background: #fff; border-width: 2px; }
+  .box.out { border-color: var(--cobalt); }
+  .hub { position: absolute; border: 4px solid var(--cobalt); background: var(--cobalt-soft); }
+  .hub .lbl { position: absolute; top: 14px; left: 22px; font: 600 34px/1 var(--cond); letter-spacing: 0.12em; color: var(--cobalt); text-transform: uppercase; }
+  .box.genie { background: var(--ink); border-color: var(--ink); }
+  .box.genie b { color: #fff; }
+  .box.genie span { color: #dfe4ef; font-size: 31px; }
 
   /* ---------- footer ---------- */
-  .foot {
-    margin-top: auto;
-    padding-top: 64px;
-    border-top: 1px solid var(--line);
-    padding-bottom: 130px;
-    align-items: end;
-  }
-  .privacy { grid-column: 1 / span 5; }
-  .privacy .big {
-    font-size: 50px; line-height: 1.1; font-weight: 600; letter-spacing: -0.03em;
-  }
-  .privacy p {
-    margin-top: 18px; font-size: 28px; line-height: 1.45; color: var(--muted);
-  }
-  .meta { grid-column: 6 / span 5; font-size: 26px; line-height: 1.5; color: var(--muted); }
-  .meta dl { display: grid; grid-template-columns: 160px 1fr; row-gap: 14px; }
-  .meta dt { color: var(--faint); }
-  .meta dd { color: var(--ink-2); }
-  .qr { grid-column: 11 / span 2; justify-self: end; text-align: center; }
-  .qr .box {
-    width: 210px; height: 210px;
-    border: 2px dashed var(--faint);
-    border-radius: 16px;
-    display: grid; place-items: center;
-    font-size: 22px; color: var(--faint); line-height: 1.3;
-  }
-  .qr .cap { margin-top: 16px; font-size: 22px; color: var(--muted); }
-
-  .fill {
-    display: inline-block;
-    border: 1.5px dashed var(--faint);
-    border-radius: 8px;
-    padding: 2px 12px;
-    color: var(--muted);
-  }
+  .foot { margin-top: auto; position: relative; display: grid; grid-template-columns: 860px 1fr 290px; column-gap: 64px; border-top: 5px solid var(--ink); padding-top: 44px; }
+  .privacy p.big { color: var(--ink); font: 600 62px/1.02 var(--cond); text-transform: uppercase; letter-spacing: 0.02em; }
+  .privacy p { margin-top: 16px; font-size: 37px; line-height: 1.32; color: var(--ink2); }
+  .meta dl { display: grid; grid-template-columns: 190px 1fr; row-gap: 22px; column-gap: 18px; }
+  .meta dt { font: 600 34px/1.3 var(--cond); letter-spacing: 0.12em; text-transform: uppercase; color: var(--cobalt); padding-top: 3px; }
+  .meta dd { font-size: 37px; line-height: 1.3; }
+  .meta dd.url { font-size: 34px; color: var(--ink2); }
+  .qr .code { width: 290px; height: 290px; background: var(--card); border: 3px solid var(--ink); padding: 22px; }
+  .qr .code svg { display: block; width: 100%; height: 100%; }
+  .qr .cap { margin-top: 12px; font: 600 34px/1.1 var(--cond); letter-spacing: 0.1em; text-transform: uppercase; text-align: center; }
 </style>
 </head>
 <body>
 <main class="page">
 
-  <header class="grid top">
-    <div class="brand"><span class="dot"></span>HandOver</div>
-    <div class="event"><b>MadHacks 2026</b>&nbsp;&nbsp;·&nbsp;&nbsp;Soham, Pranav, Sikandar, Prayush</div>
+  <div class="progress"><i class="d"></i><i class="d"></i><i class="c"></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+
+  <header class="top">
+    <span class="ev">MadHacks 2026</span>
+    <span class="who">Pranav &middot; Soham &middot; Sikandar &middot; Prayush</span>
   </header>
 
-  <h1 class="hook">Experts teach the same task over and over.<br><span>With HandOver they do it once, and the lesson watches the next person.</span></h1>
+  <section class="mast">
+    <h1 class="word">HandOver</h1>
+    <p class="hook">Experts teach the same task over and over. <b>With HandOver they do it once, and the lesson watches the next person.</b></p>
+  </section>
 
-  <section class="grid hero">
-    <figure class="shot">
-      <img src="img/learn.png" alt="HandOver learn screen: live camera on the left, the expert's captioned clip on the right">
-      <span class="pin" style="left: 3.2%; top: 9%;">1</span>
-      <span class="pin" style="left: 48.4%; top: 9%;">2</span>
-      <span class="pin" style="left: 48.4%; top: 81%;">3</span>
+  <!-- Row A: the problem and the three steps, next to the real Learn screen -->
+  <section class="rowA">
+    <div>
+      <div class="problem">
+        <div class="sec"><span class="n">01</span><h2>The problem</h2></div>
+        <p>A senior worker shows every new hire the same task, again and again. A video plays the steps, but it cannot see whether you did them.</p>
+      </div>
+      <div class="how">
+        <div class="sec"><span class="n">02</span><h2>How it works</h2></div>
+        <ol>
+          <li><span class="k">1</span><div><h3>The expert records once</h3><p>On Meta glasses or any camera.</p></div></li>
+          <li><span class="k">2</span><div><h3>HandOver cuts a lesson</h3><p>A clip of the expert's hands per step, with captions, narration and a reference frame of done.</p></div></li>
+          <li class="on"><span class="k">3</span><div><h3>The camera follows along</h3><p>The next clip plays when your camera sees the step done. Behind? It says the common mistake. Next always works.</p></div></li>
+        </ol>
+      </div>
+    </div>
+
+    <figure class="hero">
+      <div class="frame"><img src="img/learn-mistake.png" alt="HandOver Learn screen, fortune teller step 3: the learner's camera, the expert's clip, and a mistake card"></div>
+      <figcaption>
+        <div><strong>You</strong>Your camera. The paper here is still a rectangle.</div>
+        <div class="b"><strong>Expert</strong>Their clip for step 3, looping, with captions.</div>
+        <div class="a"><strong>Mistake</strong>The step's common mistake, on screen and spoken.</div>
+      </figcaption>
     </figure>
-    <div class="notes">
-      <div class="note">
-        <span class="n">1</span>
-        <h3>Your camera</h3>
-        <p>A phone on a stand or on your chest, pointed at your hands.</p>
-      </div>
-      <div class="note">
-        <span class="n">2</span>
-        <h3>The expert's clip</h3>
-        <p>Their own hands and voice for this step, captioned, on loop.</p>
-      </div>
-      <div class="note">
-        <span class="n">3</span>
-        <h3>It waits for you</h3>
-        <p>The next clip plays when the camera sees the step is done, or when you press Next.</p>
-      </div>
-    </div>
   </section>
 
-  <section class="flow-wrap">
-    <div class="label">How it works</div>
-    <div class="grid flow">
-      <div class="step">
-        <div class="num">01 <span class="rule"></span></div>
-        <h2>Record once</h2>
-        <p>The expert does the task on Meta glasses and talks it through. One video, nothing to label.</p>
-        <figure class="shot contain"><img src="img/record.png" alt="New lesson: upload one video of the whole task"></figure>
-      </div>
-      <div class="step">
-        <div class="num">02 <span class="rule"></span></div>
-        <h2>Cut into steps</h2>
-        <p>One Gemini call splits the take into captioned clips, each with a reference frame and a yes or no question.</p>
-        <figure class="shot"><img src="img/steps.png" alt="Lesson cut into five step clips with a timeline"></figure>
-      </div>
-      <div class="step">
-        <div class="num">03 <span class="rule"></span></div>
-        <h2>Camera checks each step</h2>
-        <p>Gemini sees the live frame next to the reference and answers the question. Yes plays the next clip. Unsure never counts.</p>
-        <figure class="shot"><img src="img/verified.png" alt="Step verified by the camera"></figure>
-      </div>
-    </div>
-  </section>
-
-  <section class="more-wrap">
-    <div class="label">Around the loop</div>
-    <div class="grid more">
-      <div class="cell">
-        <div class="vis catch">
-          <div class="bar">This still looks like step 4.
-            <span class="acts"><span class="btn">Show step 4</span><span class="btn">I'm fine</span></span>
-          </div>
-          <div class="frames">
-            <div class="f"><b>Step 3</b>before</div>
-            <div class="f hit"><b>Step 4</b>matches</div>
-            <div class="f"><b>Step 5</b>expected</div>
-          </div>
+  <!-- Row B: the two demo lessons -->
+  <section class="rowB">
+    <div class="sec"><span class="n">03</span><h2>Two demo lessons</h2></div>
+    <div class="lessons">
+      <div>
+        <div class="lesson-h"><h3>Fold a fortune teller</h3><span>9 steps from a 2:37 take. Blue: checked by camera.</span></div>
+        <div class="strip">
+          <div class="tile"><div class="img"><img src="img/ft-frame-01.jpg" alt=""></div><div class="cap">01</div></div>
+          <div class="tile"><div class="img"><img src="img/ft-frame-02.jpg" alt=""></div><div class="cap">02</div></div>
+          <div class="tile cam"><div class="img"><img src="img/ft-frame-03.jpg" alt=""></div><div class="cap">03</div></div>
+          <div class="tile"><div class="img"><img src="img/ft-frame-04.jpg" alt=""></div><div class="cap">04</div></div>
+          <div class="tile"><div class="img"><img src="img/ft-frame-05.jpg" alt=""></div><div class="cap">05</div></div>
+          <div class="tile cam"><div class="img"><img src="img/ft-frame-06.jpg" alt=""></div><div class="cap">06</div></div>
+          <div class="tile"><div class="img"><img src="img/ft-frame-07.jpg" alt=""></div><div class="cap">07</div></div>
+          <div class="tile"><div class="img"><img src="img/ft-frame-08.jpg" alt=""></div><div class="cap">08</div></div>
+          <div class="tile cam"><div class="img"><img src="img/ft-frame-09.jpg" alt=""></div><div class="cap">09</div></div>
         </div>
-        <h3>Skip a step and it says so</h3>
-        <p>When the check keeps saying not yet, the hub compares your frame with the neighboring steps and names the one you are still on.</p>
       </div>
-      <div class="cell">
-        <figure class="vis shot"><img src="img/done.png" alt="Lesson complete: time, steps checked by camera, steps marked done"></figure>
-        <h3>A record of the run</h3>
-        <p>At the end: your time, how many steps the camera checked, and how many you marked done yourself.</p>
-      </div>
-      <div class="cell">
-        <div class="vis db">
-          <div class="q"><span class="who">Ask Genie</span>Which step do people get stuck on?</div>
-          <table>
-            <tr><th>handover.events</th><th>what it records</th></tr>
-            <tr><td class="k">check</td><td>yes, no or unsure, latency</td></tr>
-            <tr><td class="k">advance</td><td>camera, button or voice</td></tr>
-            <tr><td class="k">mistake</td><td>behind or ahead, which step</td></tr>
-          </table>
-        </div>
-        <h3>Where people get stuck</h3>
-        <p>Every check and advance lands in a Databricks table. A dashboard and Genie answer which steps need a better clip.</p>
+      <div class="bike">
+        <h3>Front wheel check</h3>
+        <p>Front wheel off, rim checked, wheel back on, a spin, then the front brake.</p>
       </div>
     </div>
   </section>
 
-  <footer class="grid foot">
+  <!-- Row C: architecture. Boxes are HTML, arrows are one SVG on the same 2080 x 724 grid. -->
+  <section class="rowC">
+    <div class="sec"><span class="n">04</span><h2>Under the hood</h2><span class="aside">One laptop is the hub</span></div>
+    <div class="arch">
+      <svg viewBox="0 0 2080 724" width="2080" height="724" aria-hidden="true">
+        <defs>
+          <marker id="ah" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="4.2" markerHeight="4.2" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#15213b"/></marker>
+        </defs>
+        <line x1="0" y1="196" x2="2080" y2="196" stroke="rgba(21,33,59,0.2)" stroke-width="2" stroke-dasharray="10 10"/>
+        <line x1="0" y1="540" x2="2080" y2="540" stroke="rgba(21,33,59,0.2)" stroke-width="2" stroke-dasharray="10 10"/>
+        <g stroke="#15213b" stroke-width="5" fill="none" marker-end="url(#ah)">
+          <!-- teach row: boxes at x 84, 486, 888, 1290, 1692; width 350 (last 388) -->
+          <line x1="437" y1="84" x2="482" y2="84"/>
+          <line x1="839" y1="84" x2="884" y2="84"/>
+          <line x1="1241" y1="84" x2="1286" y2="84"/>
+          <line x1="1643" y1="84" x2="1688" y2="84"/>
+          <!-- lesson folder down into the hub -->
+          <path d="M1886 170 V 206 H 1100 V 226"/>
+          <!-- camera to hub -->
+          <line x1="437" y1="380" x2="482" y2="380"/>
+          <!-- inside the hub -->
+          <line x1="822" y1="387" x2="852" y2="387"/>
+          <line x1="1206" y1="387" x2="1236" y2="387"/>
+          <!-- hub to learn screen -->
+          <line x1="1640" y1="380" x2="1688" y2="380"/>
+          <!-- hub down to the event log -->
+          <path d="M700 512 V 552"/>
+          <!-- data row -->
+          <line x1="876" y1="642" x2="918" y2="642"/>
+          <line x1="1324" y1="642" x2="1366" y2="642"/>
+          <line x1="1672" y1="642" x2="1714" y2="642"/>
+        </g>
+      </svg>
+
+      <div class="lane" style="top:0;height:170px"><span>Teach</span></div>
+      <div class="lane" style="top:226px;height:286px"><span>Learn</span></div>
+      <div class="lane" style="top:560px;height:164px"><span>Data</span></div>
+
+      <!-- Teach -->
+      <div class="box" style="left:84px;top:0;width:350px;height:170px"><b>Expert take</b><span>Meta glasses or any camera</span></div>
+      <div class="box" style="left:486px;top:0;width:350px;height:170px"><b>Find the steps</b><span>One Gemini call reads the take</span></div>
+      <div class="box" style="left:888px;top:0;width:350px;height:170px"><b>Cut</b><span>Clips, captions, reference frames</span></div>
+      <div class="box" style="left:1290px;top:0;width:350px;height:170px"><b>Narrate</b><span>Claude writes it, Kokoro speaks it</span></div>
+      <div class="box out" style="left:1692px;top:0;width:388px;height:170px"><b>Lesson folder</b><span>Clips, frames and check questions</span></div>
+
+      <!-- Learn -->
+      <div class="box" style="left:84px;top:226px;width:350px;height:286px"><b>Learner camera</b><span>A phone, in the HandOver app or a browser page. Frames go to the hub on the local network.</span></div>
+      <div class="hub" style="left:486px;top:226px;width:1152px;height:286px"><div class="lbl">Hub</div></div>
+      <div class="box in" style="left:510px;top:284px;width:310px;height:206px"><b>Motion gate</b><span>Checks when the picture is still and has changed</span></div>
+      <div class="box in" style="left:856px;top:284px;width:348px;height:206px"><b>Vision check</b><span>Claude Haiku or Gemini compares before, done and live</span></div>
+      <div class="box in" style="left:1240px;top:284px;width:374px;height:206px"><b>Debounce</b><span>Two confident yeses, or one at 0.92 that names no difference</span></div>
+      <div class="box out" style="left:1692px;top:226px;width:388px;height:286px"><b>Learn screen</b><span>The next clip and a chime, or the step's common mistake. Next always works.</span></div>
+
+      <!-- Data -->
+      <div class="box" style="left:84px;top:560px;width:790px;height:164px"><b>Event log</b><span>Run, step, check answer, confidence, latency. No images, no names.</span></div>
+      <div class="box" style="left:922px;top:560px;width:400px;height:164px"><b>Databricks</b><span>4 tables, a Volume, filtered views</span></div>
+      <div class="box" style="left:1370px;top:560px;width:300px;height:164px"><b>AI/BI</b><span>Dashboard of learner runs</span></div>
+      <div class="box genie" style="left:1718px;top:560px;width:362px;height:164px"><b>Genie</b><span>"Which step do people get stuck on?"</span></div>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer class="foot">
     <div class="privacy">
-      <div class="big">The hub never saves<br>camera frames.</div>
-      <p>Each frame is checked in memory and dropped. Nothing the learner's camera sees is written to disk.</p>
+      <p class="big">The hub never saves your camera frames.</p>
+      <p>It keeps the newest frame in memory, asks the model whether the step is done, and lets it go. A test checks it on every run. The log and Databricks hold numbers only.</p>
     </div>
     <div class="meta">
       <dl>
-        <dt>Compared</dt><dd>Dozuki turns video into written guides. Retrocausal needs a fixed camera and labeled cycles.</dd>
-        <dt>Built with</dt><dd>Meta glasses, Gemini, FastAPI, React, Databricks</dd>
-        <dt>Measured</dt><dd>Median check latency <span class="fill">__ s</span></dd>
+        <dt>Built with</dt><dd>Python, FastAPI, React, ffmpeg, Claude Haiku, Gemini, Kokoro TTS, SwiftUI, Meta Wearables toolkit, Databricks Unity Catalog, AI/BI and Genie</dd>
+        <dt>Code</dt><dd class="url">github.com/pr4nav3/MetaGlasses-ExpertKnowlegeTransfer</dd>
       </dl>
     </div>
     <div class="qr">
-      <div class="box">Devpost<br>QR code</div>
-      <div class="cap">Try it on Devpost</div>
+      <div class="code"><svg shape-rendering="crispEdges" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 33 33" class="segno"><path class="qrline" stroke="#15213b" d="M0 0.5h7m2 0h3m2 0h1m1 0h1m2 0h1m1 0h1m1 0h1m2 0h7m-33 1h1m5 0h1m2 0h1m2 0h2m1 0h2m4 0h2m3 0h1m5 0h1m-33 1h1m1 0h3m1 0h1m1 0h1m1 0h1m1 0h1m2 0h2m2 0h1m1 0h1m4 0h1m1 0h3m1 0h1m-33 1h1m1 0h3m1 0h1m1 0h1m2 0h2m2 0h2m4 0h2m3 0h1m1 0h3m1 0h1m-33 1h1m1 0h3m1 0h1m1 0h2m1 0h2m3 0h1m2 0h3m1 0h1m2 0h1m1 0h3m1 0h1m-33 1h1m5 0h1m1 0h1m5 0h3m3 0h1m3 0h1m1 0h1m5 0h1m-33 1h7m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h7m-25 1h4m3 0h2m1 0h4m1 0h2m-25 1h1m1 0h5m2 0h1m1 0h1m1 0h3m1 0h1m2 0h1m5 0h5m-26 1h1m1 0h3m1 0h2m3 0h1m1 0h3m2 0h1m2 0h2m1 0h2m1 0h1m-33 1h2m1 0h1m1 0h3m3 0h2m2 0h2m7 0h3m1 0h1m1 0h2m-32 1h2m5 0h2m3 0h1m2 0h2m1 0h1m2 0h2m1 0h2m2 0h3m-31 1h1m1 0h1m1 0h5m8 0h1m4 0h2m1 0h1m1 0h3m1 0h2m-33 1h2m1 0h2m2 0h2m2 0h1m4 0h2m1 0h2m2 0h1m3 0h1m2 0h3m-33 1h1m2 0h4m4 0h1m3 0h1m1 0h1m2 0h1m1 0h1m2 0h2m1 0h4m-31 1h2m1 0h2m2 0h1m2 0h3m2 0h1m1 0h1m1 0h2m3 0h3m1 0h2m-31 1h1m1 0h5m2 0h3m1 0h3m1 0h1m2 0h1m1 0h1m1 0h2m1 0h3m2 0h1m-33 1h2m3 0h1m2 0h3m3 0h3m1 0h3m2 0h1m2 0h2m1 0h2m1 0h1m-32 1h1m1 0h2m1 0h3m2 0h2m2 0h4m1 0h1m1 0h1m1 0h2m1 0h2m1 0h2m-31 1h3m3 0h3m2 0h3m1 0h1m1 0h4m3 0h1m1 0h6m-32 1h6m1 0h1m1 0h2m2 0h1m2 0h1m1 0h1m2 0h1m1 0h2m2 0h2m1 0h1m-32 1h2m2 0h2m1 0h1m2 0h1m2 0h1m2 0h1m1 0h4m1 0h1m1 0h2m3 0h1m1 0h1m-33 1h1m1 0h1m3 0h1m4 0h6m1 0h1m5 0h2m3 0h1m1 0h1m-32 1h1m1 0h1m1 0h2m1 0h1m1 0h2m1 0h3m5 0h3m1 0h3m2 0h3m-32 1h1m3 0h3m1 0h3m1 0h1m2 0h1m1 0h1m1 0h1m2 0h1m1 0h6m1 0h2m-25 1h1m1 0h1m1 0h3m4 0h1m3 0h2m3 0h1m1 0h1m-31 1h7m3 0h1m1 0h5m1 0h1m1 0h1m1 0h3m1 0h1m1 0h1m1 0h2m-32 1h1m5 0h1m1 0h2m3 0h2m5 0h5m3 0h4m-32 1h1m1 0h3m1 0h1m1 0h3m1 0h1m2 0h3m1 0h1m2 0h1m1 0h6m-30 1h1m1 0h3m1 0h1m1 0h1m4 0h2m1 0h1m1 0h3m1 0h4m2 0h1m1 0h3m-33 1h1m1 0h3m1 0h1m1 0h3m2 0h3m1 0h1m2 0h1m1 0h1m3 0h2m1 0h1m-30 1h1m5 0h1m3 0h1m2 0h1m2 0h1m1 0h6m2 0h1m1 0h3m-31 1h7m1 0h1m3 0h1m3 0h3m3 0h3m2 0h1m3 0h1"/></svg></div>
+      <div class="cap">Scan for code</div>
     </div>
   </footer>
-
 </main>
 </body>
 </html>

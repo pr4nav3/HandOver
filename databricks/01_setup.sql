@@ -1,23 +1,23 @@
 -- HandOver / Databricks Free Edition: schema, tables and Volume.
 --
--- Source of truth: server/static/databricks_init.sql on branch pranav/web-capture-dbx.
--- The CREATE statements below are copied from it verbatim (same names, types, comments).
--- If Pranav changes his file, re-copy; do not edit columns here.
+-- Same CREATE statements as server/static/databricks_init.sql (same names, types, comments).
+-- If that file changes, re-copy; do not edit columns here.
 --
--- Run: SQL editor, warehouse "Serverless Starter Warehouse", catalog `workspace`.
---      Select all, Run all. Every statement is IF NOT EXISTS, so running it twice is safe.
--- Equivalent from the Mac once the module is merged: python -m server.databricks --init
+-- Normal path: scripts/databricks_setup.py runs the CREATE statements of this file (step 2 of its run).
+-- By hand: SQL editor, the one Free Edition warehouse, Run all. Every statement is IF NOT EXISTS, so
+-- running it twice is safe. python -m server.databricks --init does the same from Pranav's copy.
 --
 -- Conventions (from CONTRACT.md and Pranav's header)
 --   events.step   0-based step index (the hub's state.step)
 --   steps.n       1-based step number (lesson.json n). Join: steps.n = events.step + 1
 --   ts, *_at      UTC
---   events.kind   run_start, run_end, step_enter, check, advance, mistake, check_offline
---   advance       from_step -> to_step (0-based); reason camera | button | voice;
+--   events.kind   run_start, run_end, run_done, run_stop, step_enter, check, advance, mistake, check_offline
+--   advance       from_step -> to_step (0-based); reason camera | button | voice (raw events also carry
+--                 ahead_confirm and understand_override; events_real maps both to camera);
 --                 to_step = step count means the learner finished
 --   check         done yes | no | unsure, confidence 0..1, latency_ms, reason (what differs, may be null)
---   mistake       mistake_kind behind | ahead, looks_like = 0-based step the frame resembles
---   check_offline reason no_key | rate_limited | errors
+--   mistake       mistake_kind behind | ahead | live, looks_like = 0-based step the frame resembles
+--   check_offline reason no_key | rate_limited | errors; null when checks come back on
 --   extra         JSON string with any other fields the server sent
 
 
