@@ -119,6 +119,8 @@ final class GlassesController {
     private(set) var isRecording = false
 
     @ObservationIgnored var toolkit: GlassesToolkitBridge?
+    /// Gets every new frame without observing `frame`, so a sender does not redraw its screen once per frame.
+    @ObservationIgnored var onFrame: (@MainActor (CGImage) -> Void)?
 
     init(state: GlassesState? = nil) {
         self.state = state ?? (GlassesFeature.toolkitLinked ? .notRegistered : .unavailable)
@@ -129,7 +131,10 @@ final class GlassesController {
         deviceName = device
         self.battery = battery
     }
-    func set(frame: CGImage?) { self.frame = frame }
+    func set(frame: CGImage?) {
+        self.frame = frame
+        if let frame { onFrame?(frame) }
+    }
     func set(recording: Bool) { isRecording = recording }
 
     /// Primary action for the current state (Connect Glasses, Try Again, Allow, Resume, Reconnect).

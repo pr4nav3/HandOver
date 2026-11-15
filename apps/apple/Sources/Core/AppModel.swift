@@ -1,15 +1,7 @@
 import CoreGraphics
 import Foundation
-import ImageIO
 import Observation
 import SwiftUI
-
-/// The newest live frame from the hub's active camera, decoded.
-struct LiveFrame {
-    let image: CGImage
-    let receivedAt: Date
-    var size: CGSize { CGSize(width: image.width, height: image.height) }
-}
 
 /// Everything the screens read: the hub, the connection, the lesson library, the current lesson, the
 /// learn state, the live frame, the mistake and errors. Owns the /ws/ui socket and the REST client.
@@ -28,8 +20,9 @@ final class AppModel {
     /// The lesson the hub has selected (`state.lesson_id`), refetched whenever `rev` changes.
     private(set) var lesson: Lesson?
     private(set) var session = LearnSession()
-    /// The newest live JPEG from the active camera.
-    private(set) var frame: LiveFrame?
+    /// The live frames from the active camera. Not observed through this model: a frame redraws only the view
+    /// that reads `live.frame`, not every screen that reads the model.
+    @ObservationIgnored let live = LiveFeed()
     /// The newest problem to show: a REST failure, a bad address, or a hub `error` message.
     private(set) var errorMessage: String?
     /// The REST API for the hub in use (upload, job polling, recut, delete).
@@ -114,7 +107,7 @@ final class AppModel {
         connection = .idle
         lessons = []
         lesson = nil
-        frame = nil
+        live.reset()
         session.reset()
     }
 
@@ -202,25 +195,37 @@ final class AppModel {
         case .state(let new):
             connection = new
             if case .stopped(let reason) = new { errorMessage = reason }
+        case .message(.frame(let jpeg)):
+            // Decoded off the main thread; only the newest waits when frames arrive faster than that.
+            live.receive(jpeg: jpeg)
         case .message(let message):
             ingest(message)
         }
     }
 
-    /// Applies one hub message. The socket calls it; so do `PreviewHub` and tests.
+    /// Applies one hub message. The socket calls it (frames go straight to `live`); so do `PreviewHub` and tests,
+    /// which get frames decoded at once.
     func ingest(_ message: HubMessage) {
+        switch message {
+        case .frame(let jpeg):
+            // Not through `session`: even an unchanged session written back would redraw every screen reading it.
+            if let image = LiveFeed.decode(jpeg: jpeg) { live.show(image) }
+            return
+        case .cameraStatus, .unknown:
+            return
+        default:
+            break
+        }
         let before = session.state
         session.apply(message)
         switch message {
-        case .frame(let jpeg):
-            if let image = Self.decode(jpeg: jpeg) { frame = LiveFrame(image: image, receivedAt: Date()) }
         case .error(let error):
             errorMessage = error.message
         case .state(let state):
             if state.lessonId != before.lessonId || state.rev != before.rev || (lesson == nil && state.lessonId != nil) {
                 loadLesson(id: state.lessonId)
             }
-            if !state.cameraConnected { frame = nil }
+            if !state.cameraConnected { live.clear() }
         default:
             break
         }
@@ -249,11 +254,6 @@ final class AppModel {
     private func report(_ error: any Error) {
         if error is CancellationError { return }
         errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-    }
-
-    nonisolated static func decode(jpeg: Data) -> CGImage? {
-        guard let source = CGImageSourceCreateWithData(jpeg as CFData, nil) else { return nil }
-        return CGImageSourceCreateImageAtIndex(source, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary)
     }
 
     // MARK: - Previews

@@ -57,6 +57,17 @@ enum HOLayout {
     static let shortHeight: CGFloat = 480
 
     static func isShort(_ height: CGFloat) -> Bool { height < shortHeight }
+
+    /// True on iPhone. The larger iPhones report a regular width on their side; screens that pick a layout from
+    /// the size class use this to keep the iPhone layout, so turning the phone never rebuilds the screen.
+    @MainActor
+    static var isPhone: Bool {
+        #if os(iOS)
+        UIDevice.current.userInterfaceIdiom == .phone
+        #else
+        false
+        #endif
+    }
 }
 
 /// Hairlines: half a point in `line`.
