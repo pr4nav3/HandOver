@@ -97,7 +97,8 @@ export function Learn() {
   const [aspect, setAspect] = useState(16 / 9)
   const stageRef = useRef<HTMLElement>(null)
   const underRef = useRef<HTMLDivElement>(null)
-  const pane = usePaneBox(stageRef, underRef, aspect)
+  const sideLayout = aspect < 1 // portrait take: title and controls beside the panes, panes full height
+  const pane = usePaneBox(stageRef, underRef, aspect, sideLayout)
   const flashTimer = useRef<number | undefined>(undefined)
   const [serverError, setServerError] = useState('')
   const errorTimer = useRef<number | undefined>(undefined)
@@ -723,7 +724,7 @@ export function Learn() {
           </div>
         </aside>
 
-        <section className="learn-stage" ref={stageRef}>
+        <section className={`learn-stage ${sideLayout ? 'side' : ''}`} ref={stageRef}>
           <div className="panes">
             <div className={`frame pane live ${showLive ? 'on' : ''}`} style={paneStyle} aria-label="You, live camera">
               <canvas ref={liveRef} role="img" aria-label="Live camera" className={showLive ? (cameraLost ? 'lost' : '') : 'hidden'} />
@@ -864,6 +865,7 @@ export function Learn() {
 }
 // Gap between the panes and the step block under them, and between the two panes; match learn.css.
 const UNDER_GAP = 22
+const SIDE_MIN = 280 // .learn-stage.side .under min-width in learn.css
 const PANE_GAP = 18
 
 /** "0:31.5" or "31.5" to "00:31": the expert clip's span on the Expert tab. */
@@ -877,7 +879,7 @@ function clock(ts: string) {
  * as wide as half the stage, but never so tall that the step block and the
  * controls under them stop fitting. Portrait clips end up height-bound.
  */
-function usePaneBox(stageRef: RefObject<HTMLElement | null>, underRef: RefObject<HTMLElement | null>, aspect: number) {
+function usePaneBox(stageRef: RefObject<HTMLElement | null>, underRef: RefObject<HTMLElement | null>, aspect: number, side: boolean) {
   const [box, setBox] = useState<{ w: number; h: number } | null>(null)
   useEffect(() => {
     const stage = stageRef.current
@@ -887,9 +889,12 @@ function usePaneBox(stageRef: RefObject<HTMLElement | null>, underRef: RefObject
       const width = stage.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight)
       const height = stage.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom)
       if (width <= 0 || height <= 0) return // hidden
-      const room = height - (underRef.current?.offsetHeight ?? 0) - UNDER_GAP
+      // Portrait clips: the step block and controls sit beside the panes (a side column of at least
+      // SIDE_MIN px), so the panes take the whole stage height. Landscape: they sit under the panes.
+      const room = side ? height : height - (underRef.current?.offsetHeight ?? 0) - UNDER_GAP
       if (room <= 0) return
-      const w = Math.min((width - PANE_GAP) / 2, room * aspect)
+      const paneWidth = side ? width - SIDE_MIN - UNDER_GAP : width
+      const w = Math.min((paneWidth - PANE_GAP) / 2, room * aspect)
       setBox((prev) => {
         const next = { w: Math.floor(w), h: Math.floor(w / aspect) }
         return prev && prev.w === next.w && prev.h === next.h ? prev : next
@@ -900,7 +905,7 @@ function usePaneBox(stageRef: RefObject<HTMLElement | null>, underRef: RefObject
     ro.observe(stage)
     if (underRef.current) ro.observe(underRef.current)
     return () => ro.disconnect()
-  }, [stageRef, underRef, aspect])
+  }, [stageRef, underRef, aspect, side])
   return box
 }
 

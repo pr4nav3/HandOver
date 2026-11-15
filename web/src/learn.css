@@ -363,6 +363,32 @@
   gap: 18px; /* PANE_GAP in Learn.tsx */
 }
 
+/* Portrait takes: panes left at full height, the step block and controls in a column beside them. */
+.learn-stage.side {
+  flex-direction: row;
+  align-items: stretch;
+}
+
+.learn-stage.side .under {
+  flex: 1 1 280px; /* SIDE_MIN in Learn.tsx */
+  min-width: 280px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: stretch;
+  gap: 24px;
+}
+
+.learn-stage.side .step-title {
+  font-size: 40px;
+}
+
+.learn-stage.side .controls {
+  width: 100%;
+  max-width: 420px;
+  align-self: flex-end;
+}
+
 /* Both panes get the same size from Learn.tsx (usePaneBox); before that, half each. */
 .pane {
   flex: none;
