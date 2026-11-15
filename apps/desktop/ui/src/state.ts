@@ -1,6 +1,7 @@
 // The window's state and navigation. Screens read `app` and call `go`, `rerender` and `toast`.
 
 import type {
+  CameraLink,
   CourseSummary,
   HubState,
   Invite,
@@ -9,6 +10,8 @@ import type {
   OrgSummary,
   Snapshot,
 } from "./api";
+
+export type CameraChoice = "computer" | "phone" | "glasses";
 
 export type Route =
   | { name: "onboarding" }
@@ -38,6 +41,8 @@ export const app = {
   route: { name: "home" } as Route,
   history: [] as Route[],
   settingsOpen: false,
+  /** This computer's webcam link to the hub, while Learn sends it. */
+  cameraLink: "off" as CameraLink,
 };
 
 let renderer: () => void = () => {};
@@ -144,6 +149,22 @@ export const prefs = {
   },
   set homeFirst(v) {
     localStorage.setItem("handover.homeFirst", v);
+  },
+  /** How HandOver sees the learner's hands, remembered on this device. */
+  get camera(): CameraChoice | null {
+    const v = localStorage.getItem("handover.camera");
+    return v === "computer" || v === "phone" || v === "glasses" ? v : null;
+  },
+  set camera(v: CameraChoice | null) {
+    if (v) localStorage.setItem("handover.camera", v);
+    else localStorage.removeItem("handover.camera");
+  },
+  /** The "How it works" card on Home was closed. */
+  get howDismissed(): boolean {
+    return localStorage.getItem("handover.howDismissed") === "1";
+  },
+  set howDismissed(v: boolean) {
+    localStorage.setItem("handover.howDismissed", v ? "1" : "0");
   },
   get avatarHue(): number {
     return Number(localStorage.getItem("handover.avatarHue") ?? "0");

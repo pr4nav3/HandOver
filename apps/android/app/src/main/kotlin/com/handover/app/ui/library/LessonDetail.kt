@@ -54,6 +54,8 @@ import com.handover.app.core.CheckType
 import com.handover.app.core.HubException
 import com.handover.app.core.HubState
 import com.handover.app.core.HubUrl
+import com.handover.app.ui.start.CameraChoice
+import com.handover.app.ui.start.CameraRow
 import com.handover.app.core.Lesson
 import com.handover.app.ui.theme.HORadius
 import com.handover.app.ui.theme.HOSpace
@@ -125,11 +127,13 @@ fun LessonDetailScreen(
     onBack: () -> Unit,
     onStart: (step: Int) -> Unit,
     onEdit: () -> Unit,
+    camera: CameraChoice? = null,
+    onChangeCamera: () -> Unit = {},
 ) {
     val detail: LessonDetailViewModel = viewModel(key = "detail-${hub.display}-$lessonId") { LessonDetailViewModel(CourseApi.forHub(hub), lessonId) }
     val ui by detail.state.collectAsStateWithLifecycle()
     val current = session?.takeIf { it.lessonId == lessonId && !it.done }?.step
-    LessonDetailContent(ui, current, modifier, onBack, onStart, onEdit, detail::load)
+    LessonDetailContent(ui, current, modifier, onBack, onStart, onEdit, detail::load, camera, onChangeCamera)
 }
 
 /** Stateless Lesson detail (SCREENS.md section 6). [currentStep] is the hub's step when this lesson is mid-run. */
@@ -142,6 +146,8 @@ fun LessonDetailContent(
     onStart: (step: Int) -> Unit = {},
     onEdit: () -> Unit = {},
     onRetry: () -> Unit = {},
+    camera: CameraChoice? = null,
+    onChangeCamera: () -> Unit = {},
 ) {
     val c = HandOver.colors
     var confirmSkip by remember { mutableStateOf<Int?>(null) }
@@ -154,12 +160,12 @@ fun LessonDetailContent(
         val lesson = ui.lesson
         when {
             lesson == null && ui.loading -> EmptyState(null, "Loading lesson", loading = true)
-            lesson == null && ui.notFound -> EmptyState(Icons.Outlined.FolderOff, "Lesson not found", "It may have been deleted on the hub.") { SecondaryButton("Back to Library", onBack) }
+            lesson == null && ui.notFound -> EmptyState(Icons.Outlined.FolderOff, "Lesson not found", "It may have been deleted on the hub.") { SecondaryButton("Back to Home", onBack) }
             lesson == null -> EmptyState(Icons.Outlined.FolderOff, "This lesson cannot be opened", ui.error, tone = Tone.Bad) { SecondaryButton("Try Again", onRetry) }
             else -> BoxWithConstraints(Modifier.fillMaxSize()) {
                 val wide = maxWidth >= 700.dp
                 val margin = if (wide) HOSpace.xl else HOSpace.l
-                val summary = @Composable { m: Modifier -> Summary(ui, lesson, currentStep, m, onStart) }
+                val summary = @Composable { m: Modifier -> Summary(ui, lesson, currentStep, m, onStart, camera, onChangeCamera) }
                 val steps = @Composable { m: Modifier ->
                     StepsList(ui, lesson, currentStep, m) { step ->
                         if (currentStep != null && step > currentStep) confirmSkip = step else onStart(step)
@@ -191,7 +197,7 @@ fun LessonDetailContent(
 }
 
 @Composable
-private fun Summary(ui: LessonDetailUi, lesson: Lesson, currentStep: Int?, modifier: Modifier, onStart: (Int) -> Unit) {
+private fun Summary(ui: LessonDetailUi, lesson: Lesson, currentStep: Int?, modifier: Modifier, onStart: (Int) -> Unit, camera: CameraChoice?, onChangeCamera: () -> Unit) {
     val c = HandOver.colors
     Column(modifier) {
         HubImage(ui.covers, Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(HORadius.card)), contentDescription = "Cover")
@@ -202,11 +208,11 @@ private fun Summary(ui: LessonDetailUi, lesson: Lesson, currentStep: Int?, modif
             Text(it, style = HandOver.type.body, color = c.ink2, maxLines = 4, overflow = TextOverflow.Ellipsis)
         }
         Spacer(Modifier.height(HOSpace.s))
-        val camera = lesson.steps.count { it.checkType == CheckType.Camera }
+        val cameraSteps = lesson.steps.count { it.checkType == CheckType.Camera }
         val parts = listOfNotNull(
             if (lesson.steps.size == 1) "1 step" else "${lesson.steps.size} steps",
             lesson.durationSeconds()?.let { "${clock(it)} expert time" },
-            if (camera > 0) "$camera checked by camera" else null,
+            if (cameraSteps > 0) "$cameraSteps checked by camera" else null,
         )
         MetaRow(parts)
         ui.ratings?.let { r ->
@@ -244,6 +250,13 @@ private fun Summary(ui: LessonDetailUi, lesson: Lesson, currentStep: Int?, modif
             }
         } else {
             PrimaryButton("Start Lesson", { onStart(0) }, Modifier.fillMaxWidth(), enabled = lesson.steps.isNotEmpty())
+        }
+        if (camera != null) {
+            Spacer(Modifier.height(HOSpace.s))
+            CameraRow(camera, onChangeCamera)
+        } else {
+            Spacer(Modifier.height(HOSpace.s))
+            Text("Next, choose how HandOver sees your hands.", style = HandOver.type.footnote, color = c.ink2)
         }
     }
 }

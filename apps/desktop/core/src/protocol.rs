@@ -267,6 +267,8 @@ pub enum ClientMessage {
         step: i64,
     },
     DismissMistake,
+    /// Stops the run and unloads the lesson; every client gets a state with no lesson.
+    EndLesson,
 }
 
 impl ClientMessage {

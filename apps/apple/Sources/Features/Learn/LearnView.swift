@@ -9,14 +9,20 @@ import UIKit
 /// mistake card and Back and Next. iPhone portrait (and iPad under 700 points wide) shows the clip large with
 /// the camera as a FaceTime style tile; landscape, iPad and Mac show them side by side.
 ///
-/// Camera mode belongs to the Camera feature. It passes `usesOwnCamera` and the preview it draws; with it on,
-/// the live pane shows that preview instead of the hub's forwarded frames.
+/// `LearnRunScreen` passes `usesOwnCamera` and the preview it draws when this device (or its glasses) is the
+/// camera; with it on, the live pane shows that preview instead of the hub's forwarded frames.
 struct LearnView: View {
     @Binding var usesOwnCamera: Bool
     var ownCameraPreview: AnyView?
-    /// Shows Close when Learn is presented as a full screen cover.
+    /// Shows the X. It asks "End this lesson?" first while a lesson is under way.
     var onClose: (() -> Void)?
     var onLibrary: (() -> Void)?
+    /// Adds "Change Camera" to the More menu.
+    var onChangeCamera: (() -> Void)?
+    /// A banner about the camera (glasses fell back, another device took over, waiting for the other camera).
+    var notice: LearnNotice?
+    /// The live pane's chip when this device sends its own frames (for example "Glasses").
+    var ownChip: SourceChip?
 
     @Environment(AppModel.self) private var model
     @Environment(\.theme) private var theme
@@ -52,12 +58,16 @@ struct LearnView: View {
     @AppStorage(LearnSettings.clipFirstKey) private var clipFirst = false
 
     init(usesOwnCamera: Binding<Bool> = .constant(false), ownCameraPreview: AnyView? = nil,
-         onClose: (() -> Void)? = nil, onLibrary: (() -> Void)? = nil, clips: ClipController? = nil,
+         onClose: (() -> Void)? = nil, onLibrary: (() -> Void)? = nil, onChangeCamera: (() -> Void)? = nil,
+         notice: LearnNotice? = nil, ownChip: SourceChip? = nil, clips: ClipController? = nil,
          recorder: RunRecorder? = nil) {
         _usesOwnCamera = usesOwnCamera
         self.ownCameraPreview = ownCameraPreview
         self.onClose = onClose
         self.onLibrary = onLibrary
+        self.onChangeCamera = onChangeCamera
+        self.notice = notice
+        self.ownChip = ownChip
         _clips = State(initialValue: clips ?? ClipController())
         _recorder = State(initialValue: recorder ?? RunRecorder())
     }
@@ -90,7 +100,10 @@ struct LearnView: View {
         return state.cameraConnected ? .lost(nil) : .waiting
     }
 
-    private var sourceChip: SourceChip? { SourceChip.from(camera: state.camera, ownCamera: usesOwnCamera) }
+    private var sourceChip: SourceChip? {
+        if usesOwnCamera, let ownChip { return ownChip }
+        return SourceChip.from(camera: state.camera, ownCamera: usesOwnCamera)
+    }
 
     private func url(_ path: String?) -> URL? { path.flatMap { model.mediaURL($0) } }
 
@@ -125,11 +138,11 @@ struct LearnView: View {
         #endif
         .navigationTitle(lesson?.title ?? "Learn")
         .sheet(isPresented: $showSteps) { stepsSheet }
-        .confirmationDialog("Leave this lesson?", isPresented: $confirmClose, titleVisibility: .visible) {
-            Button("Leave") { onClose?() }
+        .confirmationDialog("End this lesson?", isPresented: $confirmClose, titleVisibility: .visible) {
+            Button("End Lesson", role: .destructive) { onClose?() }
             Button("Keep Going", role: .cancel) {}
         } message: {
-            Text("Your place is saved on this device.")
+            Text("You go back to Home. You can start it again any time.")
         }
         .onChange(of: state, initial: true) { old, new in stateChanged(from: old, to: new) }
         .onChange(of: model.session.cameraAdvances) { _, _ in cameraAdvanced() }
@@ -367,10 +380,11 @@ struct LearnView: View {
     private func closeButton(_ close: @escaping () -> Void, onVideo: Bool) -> some View {
         Button {
             Haptics.tap()
-            if hasLesson && state.position > 0 && !state.isDone { confirmClose = true } else { close() }
+            if hasLesson && !state.isDone { confirmClose = true } else { close() }
         } label: { Image(systemName: "xmark") }
             .buttonStyle(HOIconButtonStyle(onVideo: onVideo))
-            .accessibilityLabel("Close lesson")
+            .keyboardShortcut(.cancelAction)
+            .accessibilityLabel("End lesson")
     }
 
     private var moreMenu: some View {
@@ -379,6 +393,9 @@ struct LearnView: View {
             Toggle("Mute Clip", isOn: Binding(get: { clips.isMuted }, set: { clips.isMuted = $0 }))
             Toggle("Spoken Guidance", isOn: Binding(get: { guide.isEnabled }, set: { guide.isEnabled = $0 }))
             Button("Swap Videos", systemImage: "arrow.left.arrow.right") { swapVideos() }
+            if let onChangeCamera {
+                Button("Change Camera", systemImage: "camera") { onChangeCamera() }
+            }
             Divider()
             Button("Restart Lesson", systemImage: "arrow.counterclockwise") { model.goto(step: 0) }
                 .disabled(!hasLesson || !model.connection.isConnected)
@@ -408,6 +425,10 @@ struct LearnView: View {
     private var banner: some View {
         if model.hub != nil, !model.connection.isConnected, !model.isPreview {
             HOBanner(symbol: "arrow.clockwise", text: "Reconnecting to the hub.")
+                .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
+        } else if let notice, !state.isDone {
+            HOBanner(symbol: notice.symbol, tone: notice.tone, text: notice.text, actionTitle: notice.actionTitle,
+                     action: notice.action)
                 .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
         }
     }
@@ -496,12 +517,19 @@ struct LearnView: View {
                     Text(stepCountText)
                         .font(theme.fonts.footnote)
                         .foregroundStyle(theme.colors.ink2)
-                    Text(title ?? (hasLesson ? " " : "Pick a lesson in the Library."))
+                    Text(title ?? (hasLesson ? " " : "Pick a lesson on Home."))
                         .hoFont(.stepTitle, theme)
                         .foregroundStyle(theme.colors.ink)
                         .lineLimit(3)
                         .fixedSize(horizontal: false, vertical: true)
                         .contentTransition(.opacity)
+                    if let hint = Self.nextHint(shownStatus), hasLesson, step != nil {
+                        Text(hint)
+                            .font(theme.fonts.footnote)
+                            .foregroundStyle(theme.colors.ink2)
+                            .lineLimit(2)
+                            .contentTransition(.opacity)
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -515,6 +543,16 @@ struct LearnView: View {
         .accessibilityElement(children: .combine)
         .accessibilityHint(model.canGoBack ? "Swipe right for the previous step" : "")
         .hoAnimation(HOMotion.clip, value: state.step)
+    }
+
+    /// One line under the step title saying what to do now.
+    static func nextHint(_ status: LearnStatus) -> String? {
+        switch status {
+        case .watching, .checking: "Do this step. HandOver moves on when it sees it done."
+        case .verified: "Step done. The next one is coming up."
+        case .manual, .checksOff, .noCamera: "Do this step, then tap Next."
+        case .simulated, .done: nil
+        }
     }
 
     private var stepCountText: String {
@@ -850,4 +888,13 @@ struct UnderstandingIndicator: View {
 
 #Preview("Learn, checks off") {
     LearnView(clips: .still(caption: nil)).environment(AppModel.preview(startAt: 10)).handOverTheme(.ivory)
+}
+
+/// A banner on Learn about the camera.
+struct LearnNotice {
+    var symbol: String
+    var tone: HOTone = .caution
+    var text: String
+    var actionTitle: String?
+    var action: () -> Void = {}
 }

@@ -54,6 +54,9 @@ class UiSocket(
 
     fun dismissMistake(): Boolean = send(DismissMistakeCommand(), DismissMistakeCommand.serializer())
 
+    /** Stops the run and unloads the lesson on the hub, for every screen. */
+    fun endLesson(): Boolean = send(EndLessonCommand(), EndLessonCommand.serializer())
+
     private fun <T> send(command: T, serializer: kotlinx.serialization.KSerializer<T>): Boolean =
         sendText(HubJson.encodeToString(serializer, command))
 }

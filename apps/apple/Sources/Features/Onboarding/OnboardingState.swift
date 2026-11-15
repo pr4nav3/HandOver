@@ -51,6 +51,10 @@ struct OnboardingProgress: Codable, Equatable, Sendable {
     var finished = false
     /// Optional steps passed with Not Now, for the Home "Finish setting up" card.
     var skipped: Set<OnboardingStep> = []
+    /// The Home "You are set up" card: true once onboarding finishes, false after the person hides it. Nil for
+    /// installs that finished before the card existed, so they never see it. Optional so older saved progress
+    /// still decodes.
+    var homeCard: Bool?
 
     /// The step to show now.
     var next: OnboardingStep {
@@ -152,7 +156,18 @@ struct OnboardingProgress: Codable, Equatable, Sendable {
         case .connect, .ownerSetup: return
         }
         if wasSkipped { skipped.insert(step) } else { skipped.remove(step) }
-        if next == .done { finished = true }
+        if next == .done {
+            finished = true
+            if homeCard == nil { homeCard = true }
+        }
+    }
+
+    /// The person hid the Home card.
+    mutating func hideHomeCard() { homeCard = false }
+
+    /// What the Home card offers to finish: skipped optional steps that still apply (SCREENS.md 25.11).
+    var unfinished: [OnboardingStep] {
+        [OnboardingStep.joinOrg, .profile, .theme].filter { skipped.contains($0) }
     }
 
     mutating func choose(role: LearnerRole) { self.role = role }

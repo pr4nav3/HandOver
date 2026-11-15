@@ -64,5 +64,10 @@ export const icons = {
   grad: svg(24, '<path d="M2.5 9 12 4.5 21.5 9 12 13.5z"/><path d="M6.5 11v4.5c1.6 1.6 3.4 2.3 5.5 2.3s3.9-.7 5.5-2.3V11M21.5 9v5"/>', 1.6),
   eye: svg(16, '<path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.8"/>', 1.7),
   wave: svg(22, '<path d="M4 10v4M8 7v10M12 4v16M16 8v8M20 10.5v3"/>', 1.8),
+  laptop: svg(22, '<rect x="4.5" y="5" width="15" height="10.5" rx="1.8"/><path d="M2.5 19h19"/><circle cx="12" cy="10.2" r="1.6"/>', 1.6),
+  phone: svg(22, '<rect x="7" y="2.8" width="10" height="18.4" rx="2.4"/><path d="M10.8 18h2.4"/>', 1.6),
+  glasses: svg(22, '<circle cx="6.8" cy="14" r="3.6"/><circle cx="17.2" cy="14" r="3.6"/><path d="M10.4 13.4a2.2 2.2 0 0 1 3.2 0M3.2 13.2 4.6 7.5M20.8 13.2l-1.4-5.7"/>', 1.6),
+  qr: svg(17, '<rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><path d="M14 14h2.5v2.5H14zM17.5 17.5H20V20h-2.5zM14 19.5V20M20 14v.5"/>', 1.7),
+  copy: svg(14, '<rect x="8.5" y="8.5" width="11" height="11" rx="2"/><path d="M15.5 8.5V6a1.5 1.5 0 0 0-1.5-1.5H6A1.5 1.5 0 0 0 4.5 6v8A1.5 1.5 0 0 0 6 15.5h2.5"/>', 1.8),
   viewfinder: svg(40, '<path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16"/><circle cx="12" cy="12" r="3"/>', 1.4),
 };

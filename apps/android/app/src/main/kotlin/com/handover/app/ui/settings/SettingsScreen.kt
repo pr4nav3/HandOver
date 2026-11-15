@@ -196,7 +196,7 @@ fun SettingsMain(
     onAccount: () -> Unit,
     onAbout: () -> Unit,
     now: Long = System.currentTimeMillis(),
-    /** Opens Camera Mode (this phone, or the glasses through it, as the hub's camera). Null hides the row. */
+    /** Opens Be the Camera (this phone, or the glasses through it, as the hub's camera). Null hides the row. */
     onCameraMode: (() -> Unit)? = null,
 ) {
     val s = ui.settings
@@ -251,7 +251,7 @@ fun SettingsMain(
                             onChange { if (i == 2) it.copy(useGlasses = true) else it.copy(useGlasses = false, cameraFacing = CameraFacing.entries[i]) }
                         }
                     }
-                    if (onCameraMode != null) row { SettingsRow("Camera Mode", Icons.Outlined.Videocam, subtitle = "Use this phone as the hub's camera", chevron = true, onClick = onCameraMode) }
+                    if (onCameraMode != null) row { SettingsRow("Be the Camera", Icons.Outlined.Videocam, subtitle = "Point this phone at someone's hands so the hub can check their steps", chevron = true, onClick = onCameraMode) }
                 }
             }
             if (ui.accounts) {

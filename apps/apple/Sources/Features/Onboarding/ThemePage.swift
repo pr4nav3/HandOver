@@ -43,14 +43,22 @@ struct ThemePage: View {
                 .padding(.bottom, HOSpace.l)
             }
             .scrollBounceBehavior(.basedOnSize)
-            Button("Start Using HandOver") {
-                Haptics.success()
-                flow.complete(.theme)
+            VStack(spacing: HOSpace.s) {
+                Text(nextLine)
+                    .font(theme.fonts.footnote)
+                    .foregroundStyle(theme.colors.ink2)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("Start Using HandOver") {
+                    Haptics.success()
+                    flow.complete(.theme)
+                }
+                .buttonStyle(HOButtonStyle(.primary, size: .large, fullWidth: true))
+                .keyboardShortcut(.defaultAction)
             }
-            .buttonStyle(HOButtonStyle(.primary, size: .large, fullWidth: true))
-            .keyboardShortcut(.defaultAction)
             .padding(.horizontal, HOSpace.l)
-            .padding(.vertical, HOSpace.l)
+            .padding(.top, HOSpace.s)
+            .padding(.bottom, HOSpace.l)
             .frame(maxWidth: 520)
         }
         .onAppear { centered = selected }
@@ -86,6 +94,13 @@ struct ThemePage: View {
             if let id, id != selected { pick(id, scroll: false) }
         }
         #endif
+    }
+
+    /// Where the button goes, so the last tap is not a leap into the unknown (SCREENS.md 25.10).
+    private var nextLine: String {
+        flow.progress.role == .teach
+            ? "Next is Home. Make your first lesson in Teach."
+            : "Next is Home, with the lessons on your hub. Open one to start."
     }
 
     private func pick(_ id: ThemeID, scroll: Bool = true) {

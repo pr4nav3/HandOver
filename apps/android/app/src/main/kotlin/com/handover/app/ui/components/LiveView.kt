@@ -1,7 +1,5 @@
 package com.handover.app.ui.components
 
-import android.graphics.Bitmap
-import android.graphics.Matrix
 import android.util.Size
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
@@ -52,13 +50,11 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.handover.app.core.CameraIdentity
 import com.handover.app.core.CameraSource
+import com.handover.app.ui.camera.FramePipeline
 import com.handover.app.ui.theme.HORadius
 import com.handover.app.ui.theme.HOSpace
 import com.handover.app.ui.theme.HandOver
-import java.io.ByteArrayOutputStream
 import java.util.concurrent.Executors
-import kotlin.math.max
-import kotlin.math.roundToInt
 
 /** What the live pane shows (DESIGN.md 3.5). */
 enum class LiveState { Live, Waiting, Lost, Reconnecting }
@@ -144,39 +140,17 @@ private fun SourceChip(source: LiveSource, compact: Boolean, modifier: Modifier)
     }
 }
 
-/** Frame rules from SCREENS.md 10: long side at most 1280, JPEG quality 70, never mirrored. */
-object FrameEncoder {
-    const val LONG_SIDE = 1280
-    const val QUALITY = 70
-
-    /** The size a frame of [w] x [h] is scaled to so its long side is at most [LONG_SIDE]. */
-    fun scaled(w: Int, h: Int): Pair<Int, Int> {
-        val long = max(w, h)
-        if (long <= LONG_SIDE) return w to h
-        val f = LONG_SIDE.toDouble() / long
-        return (w * f).roundToInt() to (h * f).roundToInt()
-    }
-
-    fun encode(bitmap: Bitmap, rotation: Int): ByteArray {
-        val (w, h) = scaled(bitmap.width, bitmap.height)
-        val m = Matrix().apply {
-            postScale(w / bitmap.width.toFloat(), h / bitmap.height.toFloat())
-            if (rotation != 0) postRotate(rotation.toFloat())
-        }
-        val out = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, m, true)
-        return ByteArrayOutputStream().use { s -> out.compress(Bitmap.CompressFormat.JPEG, QUALITY, s); s.toByteArray() }
-    }
-}
-
 /**
- * This phone's back camera, previewed at full frame rate (letterboxed) while one JPEG about every
- * [intervalMs] goes to [onFrame] for the hub's camera socket. Needs the CAMERA permission.
+ * This phone's back camera, previewed by the native PreviewView at full frame rate (letterboxed). Each
+ * analysis picture goes to [offer] on a background thread with a lazy JPEG (FramePipeline: upright,
+ * long side 640, quality 50); [offer] encodes and sends it only when it will go out (see FrameSender).
+ * Analysis keeps only the newest picture, so nothing queues. Needs the CAMERA permission.
  */
 @Composable
-fun PhoneCameraPreview(onFrame: (ByteArray) -> Unit, modifier: Modifier = Modifier, intervalMs: Long = 1_000) {
+fun PhoneCameraPreview(offer: (encode: () -> ByteArray) -> Boolean, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val owner = LocalLifecycleOwner.current
-    val send = rememberUpdatedState(onFrame)
+    val send = rememberUpdatedState(offer)
     val view = remember {
         PreviewView(context).apply {
             scaleType = PreviewView.ScaleType.FIT_CENTER
@@ -188,7 +162,6 @@ fun PhoneCameraPreview(onFrame: (ByteArray) -> Unit, modifier: Modifier = Modifi
         val executor = Executors.newSingleThreadExecutor()
         val future = ProcessCameraProvider.getInstance(context)
         var provider: ProcessCameraProvider? = null
-        var last = 0L
         future.addListener({
             val p = runCatching { future.get() }.getOrNull() ?: return@addListener
             provider = p
@@ -198,16 +171,15 @@ fun PhoneCameraPreview(onFrame: (ByteArray) -> Unit, modifier: Modifier = Modifi
                 .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                 .setResolutionSelector(
                     ResolutionSelector.Builder()
-                        .setResolutionStrategy(ResolutionStrategy(Size(1280, 720), ResolutionStrategy.FALLBACK_RULE_CLOSEST_LOWER_THEN_HIGHER))
+                        .setResolutionStrategy(ResolutionStrategy(Size(640, 480), ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER))
                         .build(),
                 )
                 .build()
             analysis.setAnalyzer(executor) { image ->
                 image.use {
-                    val now = System.currentTimeMillis()
-                    if (now - last >= intervalMs) {
-                        last = now
-                        runCatching { FrameEncoder.encode(it.toBitmap(), it.imageInfo.rotationDegrees) }.getOrNull()?.let { jpeg -> send.value(jpeg) }
+                    send.value {
+                        val bitmap = it.toBitmap()
+                        try { FramePipeline.encode(bitmap, it.imageInfo.rotationDegrees) } finally { bitmap.recycle() }
                     }
                 }
             }
