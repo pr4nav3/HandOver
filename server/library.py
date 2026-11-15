@@ -20,6 +20,7 @@ Learn events are read from the local mirror server/databricks.py writes (HANDOVE
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -894,6 +895,23 @@ def learner_analytics(user_id: str) -> dict:
     sources = sorted({str(e.get("source") or e.get("camera_source")) for evs in mine for e in evs
                       if (e.get("source") or e.get("camera_source")) not in (None, "", "unknown")})
     pass_n = sum(1 for e in useful_checks if e.get("done") == "yes")
+    learner_s = expert_s = 0.0
+    timed_steps = 0
+    for evs in mine:
+        expert_at: dict[int, float] = {}
+        for event in evs:
+            if event.get("kind") == "step_enter":
+                step = as_int(event.get("step"))
+                seconds = as_float(event.get("expert_seconds"))
+                if step is not None and seconds is not None and seconds > 0:
+                    expert_at[step] = seconds
+            if event.get("kind") == "advance":
+                frm, to = as_int(event.get("from_step")), as_int(event.get("to_step"))
+                seconds = as_float(event.get("step_seconds"))
+                if frm is not None and to is not None and to > frm and seconds is not None and seconds >= 0 and frm in expert_at:
+                    learner_s += seconds
+                    expert_s += expert_at[frm]
+                    timed_steps += 1
     return {
         "known": True, "reason": None, "runs": len(mine), "completed_runs": len(completed),
         "completion_rate": _rate(len(completed), len(mine)), "courses_completed": len(completed_lessons),
@@ -907,6 +925,8 @@ def learner_analytics(user_id: str) -> dict:
                        if e.get("kind") == "run_start" and e.get("attempt_kind") == "replay"),
         "interruptions": len(stopped), "camera_sources": sources,
         "median_camera_ready_ms": round(statistics.median(readiness)) if readiness else None,
+        "time_against_expert": round(learner_s / expert_s, 2) if expert_s else None,
+        "timed_steps": timed_steps,
     }
 
 
@@ -918,12 +938,19 @@ def _rate(hits: int, n: int) -> Optional[float]:
     return round(hits / n, 3) if n else None
 
 
-def insights(lesson_id: str, lesson: dict, since: Optional[str] = None, learners: Optional[set] = None) -> dict:
+def lesson_revision(lesson: dict) -> str:
+    fields = ("start", "end", "check_type", "check_question", "ref_time")
+    layout = [{key: step.get(key) for key in fields} for step in lesson.get("steps", [])]
+    return hashlib.sha256(json.dumps(layout, sort_keys=True).encode()).hexdigest()[:24]
+
+
+def insights(lesson_id: str, lesson: dict, since: Optional[str] = None, learners: Optional[set] = None,
+             *, events: Optional[list[dict]] = None) -> dict:
     """Per-step stats from real events, each with its sample count n. A metric with n = 0 is null.
     Events before `since` (the last change to the step layout) are left out, because their step numbers
     point at steps that no longer exist."""
     steps = [s for s in lesson.get("steps") or [] if isinstance(s, dict)]
-    events = lesson_events(lesson_id, since, learners)
+    events = lesson_events(lesson_id, since, learners) if events is None else events
     by_run = runs(events)
     out_steps = []
     for i, st in enumerate(steps):

@@ -721,6 +721,7 @@ def test_private_profile_analytics_are_real_aggregate_only():
     assert (a["camera_verified_steps"], a["manual_steps"], a["mistakes_caught"]) == (1, 3, 1)
     assert a["current_streak_days"] == 1 and a["camera_sources"] == ["glasses"]
     assert a["median_camera_ready_ms"] == 420
+    assert a["time_against_expert"] == 0.62 and a["timed_steps"] == 2
     assert "learner" not in a and "lesson_id" not in a and ids["Lee"] not in json.dumps(a)
 
 

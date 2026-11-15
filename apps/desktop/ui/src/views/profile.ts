@@ -4,7 +4,7 @@
 import { hub, type CourseSummary, type Me, type ProfileAnalytics, type User } from "../api";
 import { closeSheet, drawSheet, empty, loading, mmss, openSheet, pageHead, personAvatar } from "../components";
 import { icons } from "../icons";
-import { activityDetails, percent, practiceTime } from "../profile_metrics";
+import { practiceTime } from "../profile_metrics";
 import { app, errorText, localProgress, prefs, rerender, toast } from "../state";
 import { html, paint, type Raw } from "../util";
 import { resetHome } from "./home";
@@ -160,24 +160,13 @@ function activityPanel(value: ProfileAnalytics | null | undefined): Raw {
   if (!value.known)
     return empty(icons.grid, "No activity yet", "Finish your first lesson and truthful practice insights will appear here.");
 
-  const metrics: Raw[] = [metric(value.runs, value.runs === 1 ? "Run" : "Runs")];
-  if (value.completed_runs !== undefined)
-    metrics.push(metric(value.completed_runs, value.completed_runs === 1 ? "Completed run" : "Completed runs"));
-  if (value.minutes_practiced !== undefined) metrics.push(metric(practiceTime(value.minutes_practiced), "Practiced"));
-  if (value.current_streak_days !== undefined) metrics.push(metric(value.current_streak_days, "Day streak"));
-  if (value.courses_completed !== undefined) metrics.push(metric(value.courses_completed, "Courses completed"));
-  if (value.completion_rate !== null && value.completion_rate !== undefined)
-    metrics.push(metric(percent(value.completion_rate), "Run completion"));
-
-  const details = activityDetails(value);
+  const metrics = [metric(value.completed_runs ?? "—", "Lessons finished"),
+    metric(value.camera_verified_steps ?? "—", "Steps checked by camera"),
+    metric(value.time_against_expert == null ? "—" : `${value.time_against_expert.toFixed(1)}×`, "Your time / expert")];
   return html`<div class="profile-activity">
     <div class="profile-metrics">${metrics}</div>
-    ${details.length
-      ? html`<div class="profile-details" aria-label="Practice details">${details.map(
-          (detail) => html`<div class="profile-detail"><span class="profile-detail-mark ${detail.kind}"></span><span>${detail.text}</span></div>`,
-        )}</div>`
-      : ""}
-    <p class="profile-privacy">Private to you · aggregate activity only</p>
+    <p class="muted">${practiceTime(value.minutes_practiced)} practiced${value.active_days !== undefined ? ` across ${value.active_days} active ${value.active_days === 1 ? "day" : "days"}` : ""}.${value.timed_steps ? ` Pace compares ${value.timed_steps} timed steps. A lower ratio means less time per step.` : " Pace appears after a timed step."}</p>
+    <p class="profile-privacy">Private to you · recent activity from this hub</p>
   </div>`;
 }
 
@@ -218,8 +207,8 @@ function localActivity(): Raw {
   if (!s.lessons) return empty(icons.grid, "No progress yet", "Finish a lesson and your results show up here.");
   return html`<div class="profile-activity"><div class="profile-metrics">
       ${metric(s.lessons, s.lessons === 1 ? "Lesson done" : "Lessons done")}
-      ${metric(s.camera, s.camera === 1 ? "Camera-verified step" : "Camera-verified steps")}
-      ${metric(s.mistakes, s.mistakes === 1 ? "Mistake caught" : "Mistakes caught")}
+      ${metric(s.camera, "Steps checked by camera")}
+      ${metric(Object.values(s.times).reduce((a, t) => a + t.expert, 0) ? `${(Object.values(s.times).reduce((a, t) => a + t.you, 0) / Object.values(s.times).reduce((a, t) => a + t.expert, 0)).toFixed(1)}×` : "—", "Your time / expert")}
     </div><p class="profile-privacy">Saved on this computer</p></div>`;
 }
 
@@ -251,7 +240,7 @@ export function renderProfile(el: HTMLElement) {
     ? html`<div class="card profile-card">${personAvatar(u.name, 64, prefs.avatarHue)}
         <div><p class="profile-name">${u.name} <span class="badge-soft">${ROLE_WORD[u.role] ?? u.role}</span></p>
           <p class="muted">Signed in on ${app.link.label || "this hub"}</p></div>
-        <button class="secondary" data-act="sign-out">Sign Out</button></div>`
+        </div>`
     : app.library
       ? html`<div class="card profile-card"><span class="avatar person placeholder">${icons.person}</span>
           <div><p class="profile-name">Not signed in</p><p class="muted">${app.me?.setup_needed ? "This hub has no owner yet." : "Sign in to keep your lessons and organizations."}</p></div>
@@ -261,7 +250,7 @@ export function renderProfile(el: HTMLElement) {
   const activity = u
     ? activityPanel(app.analytics)
     : app.library
-      ? empty(icons.grid, "Sign in to see your activity", "Your private learning insights stay attached to your hub account.")
+      ? empty(icons.grid, "Sign in to see your progress", "Your runs and times show up here once you sign in.")
       : localActivity();
   const lessons = u ? remoteLessonSections(profileCourses) : app.library ? html`` : localLessonSections();
   paint(
@@ -269,8 +258,9 @@ export function renderProfile(el: HTMLElement) {
     html`<div class="page narrow">
       ${pageHead("Profile")}
       ${header}
-      <section class="block"><div class="block-head"><h2>Activity</h2></div>${activity}</section>
+      <section class="block"><div class="block-head"><h2>Progress</h2></div>${activity}</section>
       ${lessons}
+      ${u ? html`<button class="quiet" data-act="sign-out">Sign Out</button>` : ""}
     </div>`,
   );
 }

@@ -340,6 +340,8 @@ export interface ProfileAnalytics {
   interruptions?: number;
   camera_sources?: string[];
   median_camera_ready_ms?: number | null;
+  time_against_expert?: number | null;
+  timed_steps?: number;
 }
 
 export interface OrgRef {
