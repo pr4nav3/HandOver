@@ -94,6 +94,11 @@ final class LearnFlow {
     private(set) var pending: PendingStart?
     /// The glasses, made the first time they are picked and kept so setup survives closing the sheet.
     private(set) var glasses: GlassesController?
+    /// A select_lesson sent and not yet answered: its lesson and when it went out. A late `lesson_id: null` (from
+    /// an earlier End) can still arrive in that window and must not end the new lesson.
+    private(set) var pendingSelect: (lessonId: String, sentAt: Date)?
+    /// How long a select waits for its answer before a null lesson counts again.
+    static let selectAnswerWindow: TimeInterval = 5
 
     @ObservationIgnored private let defaults: UserDefaults
     /// Called after the camera changes between "needs live frames from the hub" and "does not", so the
@@ -160,7 +165,8 @@ final class LearnFlow {
     }
 
     /// Tells the hub to switch lessons (then `goto` once it has), and opens Learn.
-    func start(_ lessonId: String, at step: Int? = nil, model: AppModel) {
+    func start(_ lessonId: String, at step: Int? = nil, model: AppModel, now: Date = Date()) {
+        pendingSelect = (lessonId, now)
         model.select(lesson: lessonId)
         if let step, step > 0 {
             Task {
@@ -179,11 +185,25 @@ final class LearnFlow {
     /// Ends the lesson and goes back to Home: tells the hub (end_lesson stops the run and unloads the lesson),
     /// and this app stops following it and stops sending camera frames.
     func end(model: AppModel? = nil) {
-        model?.endLesson()
+        model?.endLesson(lessonId: runningLessonId)
         isRunning = false
         runningLessonId = nil
+        pendingSelect = nil
         glasses?.stop()
         section = .library
+    }
+
+    /// The hub's lesson changed. Returns true when the lesson this app follows is gone and Learn should end: the
+    /// hub has no lesson, and no select_lesson of ours is still waiting for its answer.
+    func hubLessonChanged(to lessonId: String?, now: Date = Date()) -> Bool {
+        if let pendingSelect {
+            if lessonId == pendingSelect.lessonId || now.timeIntervalSince(pendingSelect.sentAt) > Self.selectAnswerWindow {
+                self.pendingSelect = nil
+            } else if lessonId == nil {
+                return false
+            }
+        }
+        return lessonId == nil && isRunning
     }
 
     /// Shows a running lesson without telling the hub (previews and snapshots).

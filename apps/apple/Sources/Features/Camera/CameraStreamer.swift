@@ -186,9 +186,13 @@ final class CameraStreamer {
 
     /// Switches camera without dropping the socket.
     func switchCamera(to id: String) async {
-        deviceID = id
-        guard let capture else { return }
+        guard let capture else {
+            deviceID = id
+            return
+        }
         _ = await capture.start(deviceID: id)
+        // Set after the switch, so the preview (which watches this) turns with the new camera.
+        deviceID = capture.device?.uniqueID ?? id
     }
 
     @discardableResult
@@ -272,6 +276,7 @@ final class CameraStreamer {
                                                       encoder: FrameEncoder = .shared,
                                                       didSend: @Sendable (CGSize) async -> Void,
                                                       didDrop: @Sendable () async -> Void = {},
+                                                      retryDelay: Duration = .milliseconds(66),
                                                       minGap: @Sendable () async -> Duration) async {
         let clock = ContinuousClock()
         var lastSent: ContinuousClock.Instant?
@@ -284,12 +289,20 @@ final class CameraStreamer {
                 }
             }
             guard !Task.isCancelled else { return }
+            // Not connected or still busy: drop this frame before spending time encoding it, and wait a frame
+            // interval so a reconnect does not spin through every camera frame.
+            guard await sink.isReady() else {
+                await didDrop()
+                try? await Task.sleep(for: retryDelay)
+                continue
+            }
             guard let image = encoder.fitted(frame.image), let jpeg = encoder.jpeg(image) else { continue }
             if await sink.trySend(jpeg) {
                 lastSent = clock.now
                 await didSend(CGSize(width: image.width, height: image.height))
             } else {
                 await didDrop()
+                try? await Task.sleep(for: retryDelay)
             }
         }
     }

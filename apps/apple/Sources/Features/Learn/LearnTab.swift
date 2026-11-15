@@ -150,7 +150,7 @@ struct LearnRunScreen: View {
         }
         switch phone.phase {
         case .streaming:
-            if let capture = phone.captureSession { return AnyView(CameraPreview(capture: capture)) }
+            if let capture = phone.captureSession { return AnyView(CameraPreview(capture: capture, deviceID: phone.deviceID)) }
             return AnyView(TilePlaceholder(symbol: "video", text: nil))
         case .denied: return AnyView(TilePlaceholder(symbol: "video.slash", text: "Camera off"))
         case .noCamera: return AnyView(TilePlaceholder(symbol: "video.slash", text: "No camera"))

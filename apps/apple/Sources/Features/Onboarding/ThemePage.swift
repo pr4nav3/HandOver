@@ -20,48 +20,58 @@ struct ThemePage: View {
     #endif
 
     var body: some View {
-        VStack(spacing: 0) {
-            ScrollView {
-                VStack(spacing: HOSpace.l) {
-                    VStack(spacing: HOSpace.xs) {
-                        if let label = flow.progress.stepLabel {
-                            Text(label).font(theme.fonts.footnote).foregroundStyle(theme.colors.ink2)
+        GeometryReader { geo in
+            let short = HOLayout.isShort(geo.size.height)
+            VStack(spacing: 0) {
+                ScrollView {
+                    VStack(spacing: HOSpace.l) {
+                        VStack(spacing: HOSpace.xs) {
+                            if let label = flow.progress.stepLabel {
+                                Text(label).font(theme.fonts.footnote).foregroundStyle(theme.colors.ink2)
+                            }
+                            Text("Pick a look").hoFont(.display, theme).foregroundStyle(theme.colors.ink)
+                            Text("You can change it anytime in Settings.")
+                                .font(theme.fonts.body).foregroundStyle(theme.colors.ink2)
                         }
-                        Text("Pick a look").hoFont(.display, theme).foregroundStyle(theme.colors.ink)
-                        Text("You can change it anytime in Settings.")
-                            .font(theme.fonts.body).foregroundStyle(theme.colors.ink2)
+                        .padding(.top, short ? HOSpace.s : HOSpace.l)
+                        LearnMiniature()
+                            .frame(maxWidth: Self.previewWidth)
+                            .padding(.horizontal, HOSpace.l)
+                            .animation(HOMotion.clip, value: stored)
+                        AppearancePicker(selection: $appearance)
+                            .frame(maxWidth: 320)
+                        themes
+                        if short { footer }
                     }
-                    .padding(.top, HOSpace.l)
-                    LearnMiniature()
-                        .frame(maxWidth: Self.previewWidth)
-                        .padding(.horizontal, HOSpace.l)
-                        .animation(HOMotion.clip, value: stored)
-                    AppearancePicker(selection: $appearance)
-                        .frame(maxWidth: 320)
-                    themes
+                    .padding(.bottom, HOSpace.l)
                 }
-                .padding(.bottom, HOSpace.l)
+                .scrollBounceBehavior(.basedOnSize)
+                if !short { footer }
             }
-            .scrollBounceBehavior(.basedOnSize)
-            VStack(spacing: HOSpace.s) {
-                Text(nextLine)
-                    .font(theme.fonts.footnote)
-                    .foregroundStyle(theme.colors.ink2)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-                Button("Start Using HandOver") {
-                    Haptics.success()
-                    flow.complete(.theme)
-                }
-                .buttonStyle(HOButtonStyle(.primary, size: .large, fullWidth: true))
-                .keyboardShortcut(.defaultAction)
-            }
-            .padding(.horizontal, HOSpace.l)
-            .padding(.top, HOSpace.s)
-            .padding(.bottom, HOSpace.l)
-            .frame(maxWidth: 520)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .onAppear { centered = selected }
+    }
+
+    /// What happens next and the button. Pinned at the bottom; scrolls with the page on a short screen.
+    private var footer: some View {
+        VStack(spacing: HOSpace.s) {
+            Text(nextLine)
+                .font(theme.fonts.footnote)
+                .foregroundStyle(theme.colors.ink2)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+            Button("Start Using HandOver") {
+                Haptics.success()
+                flow.complete(.theme)
+            }
+            .buttonStyle(HOButtonStyle(.primary, size: .large, fullWidth: true))
+            .keyboardShortcut(.defaultAction)
+        }
+        .padding(.horizontal, HOSpace.l)
+        .padding(.top, HOSpace.s)
+        .padding(.bottom, HOSpace.l)
+        .frame(maxWidth: 520)
     }
 
     @ViewBuilder

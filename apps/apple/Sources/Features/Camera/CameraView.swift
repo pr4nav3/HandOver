@@ -150,7 +150,7 @@ struct CameraModeScreen: View {
             if preview == nil {
                 switch streamer.phase {
                 case .streaming:
-                    if let capture = streamer.captureSession { CameraPreview(capture: capture).ignoresSafeArea() }
+                    if let capture = streamer.captureSession { CameraPreview(capture: capture, deviceID: streamer.deviceID).ignoresSafeArea() }
                 case .denied:
                     CameraProblem(symbol: "video.slash", title: "HandOver cannot use the camera",
                                   message: "Allow it in Settings to send your work to the hub.", settings: true)
@@ -279,6 +279,12 @@ struct CameraChrome<Source: View>: View {
     @State private var showStats = true
 
     var body: some View {
+        GeometryReader { geo in
+            chrome(short: HOLayout.isShort(geo.size.height))
+        }
+    }
+
+    private func chrome(short: Bool) -> some View {
         VStack(spacing: HOSpace.s) {
             HStack(alignment: .top, spacing: HOSpace.s) {
                 Button { Haptics.tap(); onClose() } label: { Image(systemName: "xmark").font(.body.weight(.semibold)) }
@@ -302,7 +308,7 @@ struct CameraChrome<Source: View>: View {
                 VideoPill(symbol: "pause.circle", text: "Another camera is active. This one takes over if it stops.", tone: .neutral)
             }
             Spacer()
-            bottomPanel
+            bottomPanel(short: short)
         }
         .padding(HOSpace.l)
     }
@@ -330,8 +336,12 @@ struct CameraChrome<Source: View>: View {
         return parts.joined(separator: ", ")
     }
 
-    private var bottomPanel: some View {
-        VStack(alignment: .leading, spacing: HOSpace.m) {
+    /// The step, its status, Back and Next. On a short screen (iPhone landscape) they sit in one row, so the
+    /// panel covers less of the picture.
+    private func bottomPanel(short: Bool) -> some View {
+        let layout = short ? AnyLayout(HStackLayout(alignment: .center, spacing: HOSpace.l))
+                           : AnyLayout(VStackLayout(alignment: .leading, spacing: HOSpace.m))
+        return layout {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: HOSpace.xxs) {
                     Text(info.stepLine ?? "No lesson started")
@@ -360,10 +370,11 @@ struct CameraChrome<Source: View>: View {
                 .keyboardShortcut(.rightArrow, modifiers: [])
                 .disabled(!info.canStep)
             }
+            .frame(maxWidth: short ? 280 : .infinity)
         }
-        .padding(HOSpace.l)
+        .padding(short ? HOSpace.m : HOSpace.l)
         .hoGlassPanel()
-        .frame(maxWidth: 560)
+        .frame(maxWidth: short ? 720 : 560)
         .frame(maxWidth: .infinity)
     }
 }

@@ -61,8 +61,7 @@ final class CameraCapture: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
     private let minInterval: CFTimeInterval = 1.0 / 15
     private(set) var device: AVCaptureDevice?
     #if os(iOS)
-    private var rotation: AVCaptureDevice.RotationCoordinator?
-    private var rotationObservation: NSKeyValueObservation?
+    @MainActor private var rotation: CameraRotationFollower?
     #endif
 
     init(encoder: FrameEncoder = .shared) {
@@ -99,12 +98,16 @@ final class CameraCapture: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
 
     /// Starts (or switches to) a camera. Returns false when the camera could not be opened.
     func start(deviceID: String?) async -> Bool {
-        await withCheckedContinuation { c in
+        let opened = await withCheckedContinuation { c in
             sessionQueue.async { [self] in
                 c.resume(returning: configure(deviceID: deviceID))
                 if !session.isRunning { session.startRunning() }
             }
         }
+        #if os(iOS)
+        if opened { await followRotation() }
+        #endif
+        return opened
     }
 
     func stop() {
@@ -114,25 +117,16 @@ final class CameraCapture: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
     }
 
     #if os(iOS)
-    /// Keeps the sent frames upright as the phone turns, using the preview layer for the horizon.
+    /// Keeps the sent frames upright in every orientation. The capture owns its follower, so frames turn with
+    /// the phone even when no preview is on screen (the Learn tile hidden, for example).
     @MainActor
-    func followRotation(preview: AVCaptureVideoPreviewLayer) {
+    private func followRotation() {
         guard let device else { return }
-        let coordinator = AVCaptureDevice.RotationCoordinator(device: device, previewLayer: preview)
-        rotation = coordinator
+        if rotation?.deviceID == device.uniqueID { return }
         let queue = sessionQueue, output = self.output
-        let apply: @Sendable (CGFloat) -> Void = { angle in
-            queue.async {
-                guard let connection = output.connection(with: .video),
-                      connection.isVideoRotationAngleSupported(angle) else { return }
-                connection.videoRotationAngle = angle
-            }
-        }
-        apply(coordinator.videoRotationAngleForHorizonLevelCapture)
-        rotationObservation = coordinator.observe(\.videoRotationAngleForHorizonLevelCapture, options: [.new]) { _, change in
-            if let angle = change.newValue { apply(angle) }
-        }
-        preview.connection?.videoRotationAngle = coordinator.videoRotationAngleForHorizonLevelPreview
+        rotation = CameraRotationFollower(device: device, previewLayer: nil, capture: { angle in
+            queue.async { output.connection(with: .video)?.apply(rotation: angle) }
+        })
     }
     #endif
 

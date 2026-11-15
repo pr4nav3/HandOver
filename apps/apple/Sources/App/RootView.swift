@@ -30,13 +30,16 @@ struct RootView: View {
             }
             .onChange(of: model.state.lessonId) { _, new in
                 // The lesson was deleted or the hub restarted with none: nothing left to follow.
-                if new == nil, flow.isRunning, model.connection.isConnected, !model.isPreview { flow.end() }
+                // A late null from our own End, after Start on a new lesson, is ignored (see hubLessonChanged).
+                if flow.hubLessonChanged(to: new), model.connection.isConnected, !model.isPreview { flow.end() }
             }
     }
 
     @ViewBuilder private var shell: some View {
         #if os(iOS)
-        if sizeClass == .compact {
+        // iPhone always uses tabs: the larger iPhones report a regular width in landscape, and swapping the shell
+        // on rotation would rebuild every screen (ending the camera and the clip mid-lesson).
+        if UIDevice.current.userInterfaceIdiom == .phone || sizeClass == .compact {
             tabs
         } else {
             split
