@@ -425,6 +425,7 @@ export function Learn() {
     setVoiceOn(false)
     setMistake(null)
     setStarted(false)
+    send({ type: 'end_lesson' }) // the hub stops the run and unloads the lesson (older hubs ignore it)
   }
   const askEnd = () => (isDone ? endLesson() : setConfirmEnd(true))
   useEffect(() => {

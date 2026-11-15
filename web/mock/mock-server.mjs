@@ -275,6 +275,13 @@ const server = createServer((req, res) => {
   const url = new URL(req.url, 'http://x')
   const path = decodeURIComponent(url.pathname)
 
+  if (path === '/api/hub-info' && req.method === 'GET') {
+    // Like the real hub with no LAN address found: the page keeps its typed-address hint.
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ lan_ip: null, http_port: 8000, https_port: 8443, hub_url: null, pair_link: null, capture_url: null }))
+    return
+  }
+
   if (path === '/api/lessons' && req.method === 'GET') {
     const list = [...lessonDirs().keys()].map((id) => {
       const l = readLesson(id)
@@ -454,6 +461,13 @@ wss.on('connection', (ws) => {
     // stale (a camera advance won the race) and is dropped. No `from` = legacy.
     const stale = (msg.type === 'next' || msg.type === 'back') && msg.from !== undefined && msg.from !== state.step
     if (msg.type === 'select_lesson') selectLesson(msg.id, ws)
+    else if (msg.type === 'end_lesson') {
+      // Like the real hub: stop and unload; a no-op when nothing is loaded.
+      if (state.lesson_id) {
+        Object.assign(state, { lesson_id: null, step: 0, status: 'watching', mistake: null })
+        broadcast(stateMsg())
+      }
+    }
     else if (!state.lesson_id) ws.send(JSON.stringify({ type: 'error', message: 'No lesson selected' }))
     else if (stale) console.log(`ignored stale ${msg.type} from ${msg.from} (at ${state.step})`)
     else if (msg.type === 'next' && state.status !== 'done') goTo(state.step + 1, msg.reason || 'button')

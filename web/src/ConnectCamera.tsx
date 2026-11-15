@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { encode } from 'uqr'
 
 // Hosts a phone cannot reach: the QR codes would point it at itself.
@@ -17,8 +17,34 @@ export function phoneAddresses(loc: Pick<Location, 'protocol' | 'host' | 'hostna
 }
 
 /** The live pane before any camera is connected: how to connect one. */
+type HubInfo = { hub_url: string | null; pair_link: string | null; capture_url: string | null }
+
+/** On localhost, the hub's own LAN address (GET /api/hub-info) so the QR codes still work; null if unknown. */
+function useHubInfo() {
+  const [info, setInfo] = useState<HubInfo | null>(null)
+  useEffect(() => {
+    if (!LOCAL_HOST.test(location.hostname)) return
+    let live = true
+    fetch('/api/hub-info')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j: HubInfo | null) => live && j && setInfo(j))
+      .catch(() => {})
+    return () => {
+      live = false
+    }
+  }, [])
+  return info
+}
+
 export function ConnectCamera() {
-  const addr = useMemo(() => phoneAddresses(), [])
+  const info = useHubInfo()
+  const addr = useMemo(() => {
+    const own = phoneAddresses()
+    if (own) return own
+    return info?.hub_url && info.pair_link && info.capture_url
+      ? { hub: info.hub_url, app: info.pair_link, capture: info.capture_url }
+      : null
+  }, [info])
   const port = location.port || (location.protocol === 'https:' ? '443' : '80')
   return (
     <div className="connect">
