@@ -98,7 +98,7 @@ LESSONS.mkdir(parents=True, exist_ok=True)
 
 ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 UI_FRAME_MAX_SIDE = 960
-UI_FRAME_MIN_INTERVAL = 0.25  # at most 4 frames per second to the UI
+GATE_MIN_INTERVAL = 0.25  # the motion gate decodes at most 4 frames per second, however fast the camera sends
 VERIFIED_HOLD = config.env_float("HANDOVER_VERIFIED_HOLD", 0.8, 0, 10)  # seconds "verified" shows before advancing
 MAX_UPLOAD_BYTES = 2 * 1024**3  # 2 GB
 CHECKING_SHOW_AFTER = 1.5  # seconds a check must be in flight before the UI is told "checking"
@@ -429,6 +429,33 @@ def ahead_skip() -> bool:
 
 AHEAD_SKIP_CONF = 0.9  # with HANDOVER_AHEAD_SKIP=1, the k+1 confirm needs this, plus a yes for step k itself
 
+
+def ahead_confirm_n() -> int:
+    """HANDOVER_AHEAD_CONFIRM_N: confirmed ahead verdicts in a row, each pointing at step k+1, that move the step
+    to k+1 (reason ahead_confirm). 0 turns the recovery off."""
+    return int(config.get("HANDOVER_AHEAD_CONFIRM_N"))  # type: ignore[arg-type]
+
+
+def ahead_confirm_conf() -> float:
+    """HANDOVER_AHEAD_CONFIRM_CONF: compare confidence an ahead verdict needs to count toward ahead_confirm."""
+    return float(config.get("HANDOVER_AHEAD_CONFIRM_CONF"))  # type: ignore[arg-type]
+
+
+def understand_override_n() -> int:
+    """HANDOVER_UNDERSTAND_OVERRIDE_N: confident check yes answers in a row, while understanding does not say yes,
+    after which the check's verdict is accepted (reason understand_override). 0 turns the fallback off."""
+    return int(config.get("HANDOVER_UNDERSTAND_OVERRIDE_N"))  # type: ignore[arg-type]
+
+
+def understand_override_conf() -> float:
+    """HANDOVER_UNDERSTAND_OVERRIDE_CONF: confidence a check yes needs to count toward understand_override."""
+    return float(config.get("HANDOVER_UNDERSTAND_OVERRIDE_CONF"))  # type: ignore[arg-type]
+
+
+# Advances the camera made. Clients get reason "camera" for all of them (CONTRACT 7: camera|button|voice, and the
+# chime plays); events, logs and metrics keep the specific reason, so Databricks can tell a recovery from a pass.
+CAMERA_REASONS = ("camera", "ahead_confirm", "understand_override")
+
 _mode_cache: tuple = (None, 0.0, "")  # (env key, when, mode)
 
 
@@ -451,6 +478,45 @@ def combine(res: check.CheckResult, und: check.CheckResult) -> check.CheckResult
         return check.CheckResult("yes", min(res.confidence, und.confidence), ms, res.reason or und.reason, res.error)
     pick = res if res.done == "no" else und if und.done == "no" else res if res.done != "yes" else und
     return check.CheckResult(pick.done, pick.confidence, ms, res.reason or und.reason, res.error)
+
+
+def ui_fps() -> float:
+    """HANDOVER_UI_FPS: live frames forwarded to each viewer per second, at most."""
+    return float(config.get("HANDOVER_UI_FPS"))  # type: ignore[arg-type]
+
+
+_SOF = {0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF}  # start-of-frame markers
+
+
+def jpeg_size(data: bytes) -> Optional[tuple[int, int]]:
+    """(width, height) from the JPEG's start-of-frame header, without decoding; None when it cannot be read.
+    Walks the marker segments only, so it costs microseconds even on a large frame."""
+    if data[:2] != b"\xff\xd8":
+        return None
+    i, n = 2, len(data)
+    while i + 4 <= n:
+        if data[i] != 0xFF:
+            return None
+        marker = data[i + 1]
+        if marker == 0xFF:  # fill byte
+            i += 1
+            continue
+        if marker in (0x01, *range(0xD0, 0xD8)):  # markers without a length
+            i += 2
+            continue
+        if marker in (0xD9, 0xDA):  # end of image, or entropy-coded data starts before any frame header
+            return None
+        length = int.from_bytes(data[i + 2:i + 4], "big")
+        if length < 2:
+            return None
+        if marker in _SOF:
+            if i + 9 > n:
+                return None
+            height = int.from_bytes(data[i + 5:i + 7], "big")
+            width = int.from_bytes(data[i + 7:i + 9], "big")
+            return (width, height) if width and height else None
+        i += 2 + length
+    return None
 
 
 def check_mode() -> str:
@@ -573,6 +639,10 @@ class Engine:
         self.spare_slots = 0  # extra checks a gate-triggered check may still start on the next settled frames
         self.mistake_task: Optional[asyncio.Task] = None  # the one running mistake compare (or mock confirm)
         self.mock_tick_at = 0.0  # last time the mock mistake hook was looked at
+        self.ahead_streak = 0  # confirmed ahead verdicts in a row on this step (HANDOVER_AHEAD_CONFIRM_N)
+        self.override_streak = 0  # check yes, understanding not yes, in a row (HANDOVER_UNDERSTAND_OVERRIDE_N)
+        self.gated_at = -1e9  # when the motion gate last looked at a frame (GATE_MIN_INTERVAL)
+        self.gate_wake_booked = False
         self.frame_event = asyncio.Event()
         self.ui_frame_event = asyncio.Event()
         self.ref_cache: dict[tuple, bytes] = {}
@@ -732,6 +802,8 @@ class Engine:
         self.spare_slots = 0
         self.gate.reset()
         self.watch.reset()
+        self.ahead_streak = 0
+        self.override_streak = 0
         self.checking = False
         self.verified = False
         self.last_check = None
@@ -842,7 +914,8 @@ class Engine:
         self._enter_step()
         log.info("step %d -> %d (%s)", frm, to, reason)
         metrics[f"advances_{reason}"] += 1
-        self.broadcast({"type": "advance", "from": frm, "to": to, "reason": reason})
+        wire = "camera" if reason in CAMERA_REASONS else reason
+        self.broadcast({"type": "advance", "from": frm, "to": to, "reason": wire})
         self.emit("advance", **{"from": frm, "to": to, "reason": reason, "step_seconds": step_seconds})
         self._record_run(frm, to, reason)
         self.broadcast_state()
@@ -857,7 +930,7 @@ class Engine:
         """Count forward moves for the run, then emit step_enter, or run_done the first time the run finishes."""
         run = self.run
         if run is not None and to > frm:
-            if reason == "camera":
+            if reason in CAMERA_REASONS:
                 run.camera_steps += to - frm
             else:
                 run.manual_steps += to - frm
@@ -964,7 +1037,7 @@ class Engine:
         if len(data) > MAX_FRAME_BYTES or data[:2] != b"\xff\xd8":
             metrics["frames_ignored"] += 1
             return
-        if now - cam.last_frame < config.env_float("HANDOVER_MIN_FRAME_GAP", 0.2, 0, 5):
+        if now - cam.last_frame < config.env_float("HANDOVER_MIN_FRAME_GAP", 0.05, 0, 5):
             metrics["frames_too_fast"] += 1
             return
         cam.last_frame = now
@@ -1032,9 +1105,26 @@ class Engine:
     async def _gate_newest(self) -> None:
         if self.frame is None or self.frame_seq == self.gated_seq:
             return
+        # The gate decodes each frame it sees. Cameras may send 15 fps for a smooth picture, so the gate looks at
+        # the newest frame at most every GATE_MIN_INTERVAL; a wake-up is booked so the last frame of a burst is
+        # still gated. With the gate off nothing is decoded and every frame goes through.
+        now = time.monotonic()
+        if self.gate.enabled:
+            wait = GATE_MIN_INTERVAL - (now - self.gated_at)
+            if wait > 0:
+                if not self.gate_wake_booked:
+                    self.gate_wake_booked = True
+                    asyncio.get_running_loop().call_later(wait, self._gate_wake)
+                return
+        self.gated_at = now
+        metrics["frames_gated"] += 1
         frame, seq = self.frame, self.frame_seq
         wanted = await asyncio.to_thread(self.gate.observe, frame, time.monotonic())
         self.gated_frame, self.gated_seq, self.frame_wanted = frame, seq, wanted
+
+    def _gate_wake(self) -> None:
+        self.gate_wake_booked = False
+        self.frame_event.set()
 
     async def _check_task(self, job: CheckJob) -> None:
         try:
@@ -1052,7 +1142,8 @@ class Engine:
         frame = self.gated_frame
         # Fast confirm: after a yes, the next still frame is checked at once, even though the gate sees no
         # change since the last check; otherwise the confirming yes would wait for the 6 s heartbeat.
-        confirming = self.debouncer.count > 0 and self.gate.settled
+        # The understand_override count (check yes, understanding no) confirms the same way.
+        confirming = (self.debouncer.count > 0 or self.override_streak > 0) and self.gate.settled
         # Pipelined confirm: while a gate-triggered check runs, the next settled frame starts the confirming
         # check right away instead of after the first answer. At most max_inflight() - 1 extra checks per gate
         # trigger (change or heartbeat); a still scene that keeps answering no gets no more than that.
@@ -1104,7 +1195,10 @@ class Engine:
             self.breaker.record(und, time.monotonic())
         offline_changed = self.sync_offline()
         self._record_check(job, res)
+        override = False
         if und is not None:
+            if job.version == self.version and not self.verified:
+                override = self._override_due(res, und)
             res = combine(res, und)
         if job.version != self.version or self.verified:
             if offline_changed:
@@ -1120,6 +1214,12 @@ class Engine:
             cleared = self._apply_understanding(und) or cleared
         if self.debouncer.feed(job.seq, res.done, res.confidence, res.reason):
             await self._verify_and_advance(job.version)
+            return
+        if override:
+            log.info("understand_override on step %d: %d check yes answers in a row while understanding said no",
+                     job.index, self.override_streak)
+            metrics["understand_overrides"] += 1
+            await self._verify_and_advance(job.version, "understand_override")
             return
         # Compared with what clients last got, not with the moment this check started: with checks running at
         # once, an older start would make every answer look new.
@@ -1142,6 +1242,20 @@ class Engine:
         except Exception:  # understand_frame should never raise either
             log.exception("understanding crashed")
             return understand.Understanding("unsure", 0.0, 0, error="error")
+
+    def _override_due(self, res: check.CheckResult, und: check.CheckResult) -> bool:
+        """Bounded fallback for HANDOVER_UNDERSTAND=1: count confident check yes answers (at
+        HANDOVER_UNDERSTAND_OVERRIDE_CONF) given while understanding did not say yes. Any check answer that is not
+        such a yes resets the count; a result where both say yes leaves it alone (the debounce handles that one).
+        True once the count reaches HANDOVER_UNDERSTAND_OVERRIDE_N (0 never)."""
+        need = understand_override_n()
+        if res.done != "yes" or res.confidence < understand_override_conf():
+            self.override_streak = 0
+            return False
+        if und.done == "yes":
+            return False
+        self.override_streak += 1
+        return need > 0 and self.override_streak >= need
 
     def _apply_understanding(self, und: "understand.Understanding") -> bool:
         """progress, stage and (with HANDOVER_LIVE_MISTAKES) live mistakes from one understanding result.
@@ -1181,15 +1295,15 @@ class Engine:
                   latency_ms=res.latency_ms, reason=res.reason, model=model, gated=self.gate.enabled,
                   error_kind=res.error)
 
-    async def _verify_and_advance(self, version: int) -> None:
+    async def _verify_and_advance(self, version: int, reason: str = "camera") -> None:
         """verified (with next_clip) goes out at once, so the badge and the preload start now; the step moves
-        after VERIFIED_HOLD."""
+        after VERIFIED_HOLD. reason is one of CAMERA_REASONS."""
         self.verified = True
         self.checking = False
         self.broadcast_state()
         await asyncio.sleep(VERIFIED_HOLD)
         if version == self.version:
-            self.go(self.position() + 1, "camera")
+            self.go(self.position() + 1, reason)
 
     def _show_checking(self, version: int) -> None:
         if version == self.version and not self.verified:
@@ -1268,15 +1382,34 @@ class Engine:
         if match is None or job.version != self.version:
             return
         found = self.watch.decide(job.index, len(self.steps), match.step, match.confidence, self.steps, check_mode())
-        if found is None:
-            return
         verdict: Optional[str] = "show"
-        if mistake.needs_confirmation(found):
+        if found is not None and mistake.needs_confirmation(found):
             verdict = await self._confirm_ahead(job)
-            if verdict is None:
-                return
-        if job.version == self.version:
+        if job.version != self.version:
+            return
+        confirmed_ahead = found is not None and mistake.needs_confirmation(found) and verdict is not None
+        if verdict != "skip" and self._ahead_confirm_due(job, confirmed_ahead, match.confidence):
+            return
+        if found is not None and verdict is not None:
             self._raise_mistake(found, skip=verdict == "skip")
+
+    def _ahead_confirm_due(self, job: CheckJob, confirmed_ahead: bool, confidence: float) -> bool:
+        """Recovery after a missed advance. A confirmed ahead verdict for step k+1 (compare plus the k+1 check, see
+        _confirm_ahead) at HANDOVER_AHEAD_CONFIRM_CONF or more counts; any other compare answer on this step
+        (behind, same step, too unsure, unconfirmed) resets the count. When HANDOVER_AHEAD_CONFIRM_N verdicts in a
+        row agree, the step moves to k+1, never further, with reason ahead_confirm. True when it moved."""
+        need = ahead_confirm_n()
+        if not confirmed_ahead or confidence < ahead_confirm_conf():
+            self.ahead_streak = 0
+            return False
+        self.ahead_streak += 1
+        if need <= 0 or self.ahead_streak < need or job.index != self.step or self.done or self.verified:
+            return False
+        log.info("ahead_confirm on step %d: %d ahead verdicts in a row for step %d", job.index,
+                 self.ahead_streak, job.index + 1)
+        metrics["ahead_confirms"] += 1
+        self.go(job.index + 1, "ahead_confirm")
+        return True
 
     async def _compare(self, job: CheckJob) -> Optional[check.MatchResult]:
         """One multiple-choice call over references k-1, k, k+1 (those that exist). None when it cannot run."""
@@ -1359,25 +1492,34 @@ class Engine:
             self.go(k + 2, "camera")
 
     async def ui_frame_loop(self) -> None:
-        """Forward the newest camera frame to UI clients, downscaled, at most 4 per second."""
+        """Forward the newest camera frame to UI clients, at most HANDOVER_UI_FPS per second. A frame whose long
+        side is already UI_FRAME_MAX_SIDE or less (read from its header) goes out as is; a larger one is
+        downscaled in a worker thread. Nothing queues: each viewer keeps only the newest frame (UIClient.push)
+        and has its own sender, so a slow viewer drops frames without delaying the others."""
         log_ctx.set("engine")
         last = 0.0
         while True:
             await self.ui_frame_event.wait()
             self.ui_frame_event.clear()
-            wait = UI_FRAME_MIN_INTERVAL - (time.monotonic() - last)
+            wait = 1.0 / ui_fps() - (time.monotonic() - last)
             if wait > 0:
                 await asyncio.sleep(wait)
-            frame = self.frame
+            frame = self.frame  # the newest, taken after the wait
             if frame is None or not self.ui:
                 continue
             last = time.monotonic()
+            size = jpeg_size(frame)
+            if size is not None and max(size) <= UI_FRAME_MAX_SIDE:
+                metrics["ui_frames_passthrough"] += 1
+                self.broadcast(frame)
+                continue
             try:
                 small = await asyncio.to_thread(check.downscale_jpeg, frame, UI_FRAME_MAX_SIDE, 75)
             except Exception as e:
                 log.debug("bad camera frame skipped: %s", e)
                 metrics["frames_undecodable"] += 1
                 continue
+            metrics["ui_frames_downscaled"] += 1
             self.broadcast(small)
 
 

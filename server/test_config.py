@@ -129,13 +129,32 @@ def test_registry_consistent():
 
 
 def test_registry_covers_check_and_docs():
-    """Every HANDOVER_* var named in check.py or the contract's env table is registered."""
+    """Every HANDOVER_* var named in check.py, main.py, the engine and check docs, or the contract's env table is
+    registered."""
     known = {t.name for t in REGISTRY}
-    for path in (REPO / "server" / "check.py", REPO / "CONTRACT.md"):
+    for path in (REPO / "server" / "check.py", REPO / "server" / "main.py", REPO / "CONTRACT.md",
+                 REPO / "server" / "docs" / "engine.md", REPO / "server" / "docs" / "checks.md"):
         found = set(re.findall(r"HANDOVER_[A-Z0-9_]+", path.read_text(encoding="utf-8")))
-        missing = {n for n in found if n not in known and n != "HANDOVER_TEST_LOG"}
+        # a name ending in "_" is a family written as HANDOVER_GATE_*
+        missing = {n for n in found if n not in known and n != "HANDOVER_TEST_LOG" and not n.endswith("_")}
         assert not missing, (path.name, missing)
 
+
+
+def test_recovery_tunables_registered_and_documented():
+    """The ahead recovery and the understanding fallback: registered with their defaults and named in both docs."""
+    want = {"HANDOVER_AHEAD_CONFIRM_N": 3, "HANDOVER_AHEAD_CONFIRM_CONF": 0.8,
+            "HANDOVER_UNDERSTAND_OVERRIDE_N": 3, "HANDOVER_UNDERSTAND_OVERRIDE_CONF": 0.8}
+    docs = "".join((REPO / "server" / "docs" / f).read_text(encoding="utf-8") for f in ("engine.md", "checks.md"))
+    for name, default in want.items():
+        assert config.tunable(name).default == default, name
+        with env(**{name: None}):
+            assert config.get(name) == default, name
+        assert name in docs, name
+    with env(HANDOVER_AHEAD_CONFIRM_N="11", HANDOVER_UNDERSTAND_OVERRIDE_CONF="0.2"):
+        assert config.get("HANDOVER_AHEAD_CONFIRM_N") == 3 and config.get("HANDOVER_UNDERSTAND_OVERRIDE_CONF") == 0.8
+    with env(HANDOVER_AHEAD_CONFIRM_N="0", HANDOVER_UNDERSTAND_OVERRIDE_N="0"):
+        assert config.get("HANDOVER_AHEAD_CONFIRM_N") == 0 and config.get("HANDOVER_UNDERSTAND_OVERRIDE_N") == 0
 
 CALL_RE = re.compile(
     r'config\.env_(float|int|bool|choice)\(\s*"(HANDOVER_[A-Z0-9_]+)"\s*,\s*([^,)]+)(?:,\s*([^,)]+))?(?:,\s*([^,)]+))?\)'

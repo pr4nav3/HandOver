@@ -555,6 +555,41 @@ def test_bench_metrics_and_hard_stop():
     assert out == [] and "max-usd" in why and fake.calls == []
 
 
+
+ORIENTATION_WORDS = {"diamond", "left", "right", "bottom", "upper", "lower", "smaller", "larger", "bigger", "far",
+                     "vertical", "horizontal", "tilted", "rotated", "sideways"}
+
+
+def test_prompts_and_questions_are_rotation_invariant():
+    """The live run: a square turned about 45 degrees was judged "still square outline, not diamond". The
+    understanding and rubric prompts say any angle, place and size matches, and the rubric no longer asks for
+    colors. Every camera question in the synthetic lesson and the templates avoids orientation, size in the picture
+    and color words (the same list scripts/lesson_lint.py warns on)."""
+    import re
+
+    sys.path.insert(0, str(check.REPO / "scripts"))
+    import lesson_lint
+
+    assert "45 degrees" in understand.UNDERSTAND_SYSTEM and "45 degrees" in check.RULE
+    assert "any rotation, position and size" in understand.RUBRIC_SYSTEM
+    assert "colors," not in understand.RUBRIC_SYSTEM and "Do not name colors" in understand.RUBRIC_SYSTEM
+    files = [check.REPO / "lessons" / "synthetic-fortune-teller-v1" / "lesson.json",
+             *sorted((check.REPO / "lessons" / "templates").glob("*.steps.json"))]
+    seen = 0
+    for path in files:
+        for step in json.loads(path.read_text("utf-8"))["steps"]:
+            q = step.get("check_question") or ""
+            if step.get("check_type") == "manual" or q in ("", "manual"):
+                continue
+            seen += 1
+            words = set(re.findall(r"[a-z]+", q.lower()))
+            assert not words & ORIENTATION_WORDS, (path.name, q, words & ORIENTATION_WORDS)
+            assert not words & lesson_lint.COLOR_WORDS, (path.name, q)
+    assert seen >= 15, seen
+    lesson = json.loads(files[0].read_text("utf-8"))
+    step4 = lesson["steps"][3]["check_question"]
+    assert "corners" in step4 and "center" in step4, step4  # what changed, not what it looks like
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

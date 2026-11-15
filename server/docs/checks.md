@@ -71,6 +71,10 @@ Answers are put in frame order, so checks running at once may finish in any orde
 | Fast path: one yes at `HANDOVER_FAST_CONF` (0.92) or more whose `differs` was `nothing`, on the newest frame answered | Pass at once (`HANDOVER_FAST_PATH=1`, the default) |
 | Pass | `verified` and `next_clip` go out at once, the step moves after `HANDOVER_VERIFIED_HOLD` (0.8 s) with reason `camera` |
 | Step change | Everything resets; answers from the old step are dropped |
+| With `HANDOVER_UNDERSTAND=1` | The debounce sees yes only when the check and understanding both say yes |
+| Understanding fallback | `HANDOVER_UNDERSTAND_OVERRIDE_N` (3) check yes answers in a row at `HANDOVER_UNDERSTAND_OVERRIDE_CONF` (0.8) or more while understanding says no (or unsure): the check's verdict is accepted, `verified`, then advance with reason `understand_override` in the event and log (clients see `camera`). Any other check answer resets the count; a both-yes answer leaves it alone; step change resets it. `0` turns it off |
+
+Why the fallback: in a live run on synthetic renders, a learner's paper turned about 45 degrees from the reference never passed step 4 with understanding on, because understanding kept naming an earlier stage for 60 s. Offline replay of the recorded `scripts/understand_bench.py` verdicts (Claude Haiku, 63 not-finished frames): check yes 15.9% per frame, both yes 6.3%. Treating frames as independent, two in a row gives a false pass of 2.5% for the check alone and 0.4% for both; adding the fallback at N = 3 adds at most 0.4% (three check yes in a row), 0.8% in total, still about a third of the check alone. These are estimates from one synthetic run, not a new measurement.
 
 Pipelined confirm: up to `HANDOVER_MAX_INFLIGHT` (2) checks run at once on one step, each on a different settled frame. A gate-triggered check lets one more start on the next settled frame instead of waiting for its answer. No extra check starts when the ones running can already finish the debounce.
 
@@ -107,7 +111,10 @@ flowchart TD
   t -->|yes| cmp["One multiple-choice call:<br/>live vs references k-1, k, k+1<br/>(neutral question)"]
   cmp --> dec{"Best match, confidence 0.7 or more"}
   dec -->|k-1| be["mistake: behind<br/>step never moves"]
-  dec -->|k+1| ah["ahead: confirm with a normal check of k+1<br/>at 0.8 or more, then show the banner.<br/>Never moves the step unless HANDOVER_AHEAD_SKIP=1"]
+  dec -->|k+1| ah["ahead: confirm with a normal check of k+1<br/>at 0.8 or more, then show the banner"]
+  ah --> st{"3 confirmed ahead verdicts in a row,<br/>each at 0.8 or more?"}
+  st -->|yes| adv["go to k+1, reason ahead_confirm"]
+  st -->|no| keep["banner only; the step stays"]
   dec -->|k or low confidence| none["Nothing sent"]
 ```
 
@@ -120,6 +127,8 @@ flowchart TD
 | `ahead`, default | One normal check of k+1 at 0.8 or more, then "You're ahead." shows; the step stays |
 | `ahead`, `HANDOVER_AHEAD_SKIP=1` | The k+1 check at 0.9 or more and a normal check of step k saying yes on the same frame, then go to k+2. Otherwise the banner only |
 | Why skip is off | Accuracy run (synthetic folds, real Claude Haiku): a learner who skipped a flip was called "ahead" in 15 of 23 tries, and the confirm said yes 4 of 6 times. A wrong skip is worse than a missed catch |
+| Ahead recovery (`ahead_confirm`) | `HANDOVER_AHEAD_CONFIRM_N` (3) confirmed ahead verdicts in a row on step k, each naming k+1 at compare confidence `HANDOVER_AHEAD_CONFIRM_CONF` (0.8) or more, move the step to k+1 (never further) with reason `ahead_confirm` in the event and log; clients see `camera`. The first verdicts show the banner as usual. A behind, same-step, unconfirmed or lower-confidence answer resets the count; so does a step change. `0` turns it off. Separate from `HANDOVER_AHEAD_SKIP`, which stays off |
+| Why 0.8 | The live run showed correct "ahead, looks like step k+1" verdicts at 0.85 on a stranded learner, and false ones at 0.7 on the step after; 0.7 still shows the banner (`HANDOVER_MISTAKE_MIN_CONF`) but never counts |
 | `behind` message | The step's `common_mistake`, else `This still looks like step <looks_like + 1>.` |
 | `source` | `claude`, `gemini` or `mock`: whoever answered |
 | Parallel | The compare runs beside normal checks (`HANDOVER_MISTAKE_PARALLEL=1`) |
@@ -141,3 +150,14 @@ flowchart TD
 ```
 
 `eval_checks.py --provider current|claude|gemini` (default `current`, what the hub would use) labels its report with the provider and model that ran.
+
+## 8. Writing check questions
+
+| Rule | Why |
+|---|---|
+| Ask about what changed, never about orientation: "corners folded in so their points meet at the center", not "a diamond" or "a square" alone | Real paper sits at any angle. In the live run a square turned about 45 degrees from the reference was called "still square outline, not diamond" until the learner was stranded |
+| No sizes in the picture ("smaller", "fills the frame") and no left, right, top or bottom of the image; say where parts sit relative to each other ("the nut opposite the lever") | The camera may be nearer, farther or turned |
+| No color words | The paper is two-sided and light shifts color; `scripts/lesson_lint.py` warns |
+| A yes means the step is done, and the previous step's result gets a no | What the teach-time self-test checks |
+
+The check prompt (`check.RULE`) and the understanding prompts say the same: a shape turned to any angle, moved or resized still matches. Rubric cues follow the same rules (`understand.RUBRIC_SYSTEM`); a rubric written before a question changed is stale (its `source` no longer matches the lesson) and understanding stays off for that lesson until `python -m server.understand --rubric` runs again.

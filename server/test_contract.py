@@ -804,7 +804,9 @@ async def test_ui_frame_rate_limit():
         got = binaries(await ui.drain(0.4))
         elapsed = time.monotonic() - start
         assert got, "no frames forwarded"
-        assert len(got) <= int(elapsed * 4) + 1, f"{len(got)} frames in {elapsed:.1f} s, limit 4 per second"
+        from server import config  # the test hub gets no HANDOVER_* from here, so it runs the registry default
+        fps = int(config.tunable("HANDOVER_UI_FPS").default)  # type: ignore[arg-type]
+        assert len(got) <= int(elapsed * fps) + 1, f"{len(got)} frames in {elapsed:.1f} s, limit {fps} per second"
     finally:
         await cam.close()
         await ui.close()

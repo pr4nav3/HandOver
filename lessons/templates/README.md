@@ -73,9 +73,9 @@ Bike front wheel:
 
 1. Manual. Starting setup, same rule as the fortune teller. If you want it on camera, use "Are the brake arms spread open, wider than the tire?"
 2. "lever swung open, standing out away from the fork blade": the lever's angle to the fork blade is the clearest visible state on the wheel.
-3. "nut on the far side backed off, with a gap between it and the fork end": a few turns show as a visible gap. This is the weakest camera question at 360x640; make it manual if the self-test fails it.
+3. "nut on the side opposite the lever backed off, with a gap between it and the fork end": a few turns show as a visible gap. This is the weakest camera question at 360x640; make it manual if the self-test fails it.
 4. "wheel fully out of the fork, with both fork ends empty": empty dropouts (the slots at the fork ends) against a wheel in place.
-5. "axle seated at the top of both fork ends, with the wheel centered between the fork blades": what a correct install looks like. The previous frame has no wheel.
+5. "axle seated all the way into the slots of both fork ends, with the wheel centered between the fork blades": what a correct install looks like. The previous frame has no wheel.
 6. Manual. "Until the lever resists halfway" is felt in the hand, not seen.
 7. "lever closed, lying flat along the fork blade": the opposite of step 2, and the safety-critical state.
 8. "brake arms closed in, with a pad near the rim on each side": the previous frame has the arms still spread open.
