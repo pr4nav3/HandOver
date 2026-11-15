@@ -47,13 +47,14 @@ export function renderTeach(el: HTMLElement) {
             )}</div>`;
   paint(
     el,
-    html`<div class="page">
+    html`<div class="page teach-page">
       ${pageHead("Teach")}
-      <div class="option-cards">
+      <div class="option-cards teach-create-cards">
         <button class="option-card" data-act="teach-pick">
           <span class="tile">${icons.folder}</span>
-          <span class="option-title">Choose a File</span>
-          <span class="option-line">Pick a video of the whole task. Talk through each step as you do it.</span>
+          <span class="option-title">Upload a Video</span>
+          <span class="option-line">Choose one complete recording. HandOver turns it into editable steps.</span>
+          <span class="teach-card-cta">Choose video ${icons.chevron}</span>
         </button>
         <div class="option-card static">
           <span class="tile">${icons.record}</span>

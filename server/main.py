@@ -1963,7 +1963,10 @@ def list_lessons() -> list:
             continue
         if not isinstance(data, dict):
             continue
-        out.append({"id": d.name, "title": data.get("title") or d.name, "steps": len(data.get("steps") or [])})
+        produced = ((data.get("production") or {}).get("output") or {}).get("cover")
+        cover = produced if isinstance(produced, str) and (d / produced).is_file() else "frames/01.jpg"
+        out.append({"id": d.name, "title": data.get("title") or d.name, "steps": len(data.get("steps") or []),
+                    "cover_url": f"/lessons/{d.name}/{cover}"})
     return out
 
 

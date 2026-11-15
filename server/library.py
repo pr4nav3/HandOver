@@ -331,7 +331,10 @@ def load_course(lesson_id: str, lesson: Optional[dict] = None) -> dict:
     if lesson is None:
         lesson = read_lesson(lesson_id)
     updated = _mtime_iso(lesson_dir(lesson_id) / "lesson.json")
-    base = {"owner_id": None, "title": str(lesson.get("title") or lesson_id), "description": "", "cover": None,
+    produced_cover = ((lesson.get("production") or {}).get("output") or {}).get("cover")
+    base = {"owner_id": None, "title": str(lesson.get("title") or lesson_id),
+            "description": str(lesson.get("description") or ""),
+            "cover": produced_cover if isinstance(produced_cover, str) else None,
             "status": "published", "visibility": "everyone", "access": [], "created": None, "updated": updated,
             "published_at": None, "version": 0, "steps_changed_at": None, "org_id": None}
     if isinstance(stored, dict):

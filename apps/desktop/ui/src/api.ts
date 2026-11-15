@@ -169,6 +169,7 @@ export interface LessonSummary {
   id: string;
   title: string;
   steps: number;
+  cover_url?: string | null;
 }
 
 export interface Step {
@@ -187,6 +188,8 @@ export interface Step {
 export interface Lesson {
   id: string;
   title: string;
+  description?: string;
+  production?: { output?: { cover?: string } };
   steps: Step[];
   safety: string[];
   tools: string[];

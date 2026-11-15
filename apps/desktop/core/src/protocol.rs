@@ -316,6 +316,8 @@ pub struct LessonSummary {
     pub title: String,
     #[serde(default)]
     pub steps: i64,
+    #[serde(default)]
+    pub cover_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]

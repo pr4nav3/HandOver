@@ -24,11 +24,11 @@ function metric(state: HubState): string {
 
 const offlineAction = (state: HubState) => {
   switch (state.check_offline_reason) {
-    case "no_key": return "Camera checks are unavailable. Complete the fold, then use Next.";
+    case "no_key": return "Camera checks are unavailable. Complete the step, then use Next.";
     case "rate_limited": return "Checks will resume shortly. You can use Next in the meantime.";
     case "errors": return "Checks are reconnecting. You can keep going with Next.";
-    case "budget": return "Camera checks are off. Complete the fold, then use Next.";
-    default: return state.offline_label || "Complete the fold, then use Next.";
+    case "budget": return "Camera checks are off. Complete the step, then use Next.";
+    default: return state.offline_label || "Complete the step, then use Next.";
   }
 };
 
@@ -42,9 +42,9 @@ export function learnFeedback(state: HubState | null, step: Step | null, flashVe
   if (state.status === "done") return result("done", "Complete", "Lesson finished", "Your progress has been saved.", "good");
   if (state.held) return result("held", "Step held", "Take your time", "Feedback stays live. Release Hold when you want automatic advance.", "caution");
   if (flashVerified || state.status === "verified" || state.observation?.phase === "verified")
-    return result("verified", "Verified", "That fold is right", "The next step is coming up.", "good");
+    return result("verified", "Verified", "That looks right", "The next step is coming up.", "good");
   if (state.status === "manual" || step.check_type === "manual")
-    return result("manual", "You decide", "Match the finished view", "When your paper matches the reference, use Next.", "idle");
+    return result("manual", "You decide", "Match the reference", "When your work matches, use Next.", "idle");
   if (state.check_offline)
     return result("offline", "Checks off", "Keep following the tutorial", offlineAction(state), "caution");
   if (!state.camera_connected || state.observation?.phase === "waiting_camera")
@@ -52,18 +52,18 @@ export function learnFeedback(state: HubState | null, step: Step | null, flashVe
 
   switch (state.observation?.phase) {
     case "waiting_frame":
-      return result("waiting_frame", "Finding the paper", "Bring the fold into view", "Keep your hands and the whole paper inside the camera frame.", "active");
+      return result("waiting_frame", "Finding your work", "Bring the step into view", "Keep your hands and the full work area inside the camera frame.", "active");
     case "moving":
-      return result("moving", "Tracking", "Keep folding", "Finish the motion, then hold the paper still.", "active");
+      return result("moving", "Tracking", "Keep going", "Finish the action, then hold your work still.", "active");
     case "settling":
-      return result("settling", "Almost ready", "Hold it there", "Keep the finished fold still for a moment.", "active");
+      return result("settling", "Almost ready", "Hold it there", "Keep the finished result still for a moment.", "active");
     case "checking":
-      return result("checking", "Checking", "Checking this fold", "Keep the finished fold clearly in view.", "active");
+      return result("checking", "Checking", "Checking this step", "Keep the finished result clearly in view.", "active");
     case "watching":
     case "idle":
     default:
       if (state.status === "checking")
-        return result("checking", "Checking", "Checking this fold", "Keep the finished fold clearly in view.", "active");
+        return result("checking", "Checking", "Checking this step", "Keep the finished result clearly in view.", "active");
       return result("watching", "Watching", "Complete this step", "Follow the tutorial, then hold your result in view.", "idle");
   }
 }

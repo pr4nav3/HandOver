@@ -78,16 +78,6 @@ export interface RunSummary {
 }
 
 const TEMPLATE = html`<div class="learn">
-  <div class="learn-workbar">
-    <div class="progress" role="progressbar" aria-valuemin="0">
-      <span class="progress-track" aria-hidden="true"><span class="progress-fill"></span></span>
-      <span class="progress-label">Getting ready</span>
-    </div>
-    <div class="learn-layout-tools" aria-label="Workspace layout">
-      <button class="quiet small layout-swap" type="button" title="Move the tutorial to the other side">${icons.swap}<span>Swap</span></button>
-      <button class="quiet small layout-reset" type="button" title="Restore the default workspace">Reset</button>
-    </div>
-  </div>
   <main class="learn-grid">
     <div class="live-col">
     <section class="panel live" aria-label="Your camera">
@@ -140,21 +130,31 @@ const TEMPLATE = html`<div class="learn">
         </div>
       </div>
       <div class="step-info">
-        <div class="step-meta-row"><p class="step-count">&nbsp;</p>
-          <button class="hold-step" type="button" aria-pressed="false" title="Keep camera feedback on this step without advancing (H)">${icons.pause}<span>Hold step</span></button>
+        <div class="step-meta-row"><p class="step-count" role="status" aria-live="polite">&nbsp;</p>
+          <div class="step-actions">
+            <div class="learn-layout-tools" aria-label="Workspace layout">
+              <button class="quiet small layout-swap" type="button" title="Move the tutorial to the other side">${icons.swap}<span>Swap</span></button>
+              <button class="quiet small layout-reset" type="button" title="Restore the default workspace">Reset</button>
+            </div>
+            <button class="hold-step" type="button" aria-pressed="false" title="Keep camera feedback on this step without advancing (H)">${icons.pause}<span>Hold step</span></button>
+          </div>
         </div>
         <h1 class="step-title">&nbsp;</h1>
       </div>
-      <details class="steps-disclosure">
-        <summary>All steps <span class="steps-summary-count"></span></summary>
-        <div class="course-list scroll" aria-label="Steps"></div>
-      </details>
       <div class="controls">
         <div class="next-wrap">
           <button class="back" type="button" title="Back (Left Arrow)">Back</button>
           <button class="next" type="button" title="Next (Right Arrow or Space)">Next</button>
         </div>
       </div>
+      <details class="steps-disclosure">
+        <summary>
+          <span class="steps-summary-icon">${icons.grid}</span>
+          <span class="steps-summary-copy"><strong>All lesson steps</strong><small>Jump to another step</small></span>
+          <span class="steps-summary-arrow" aria-hidden="true"></span>
+        </summary>
+        <div class="course-list scroll" aria-label="Steps"></div>
+      </details>
     </section>
   </main>
   <div class="done-layer" hidden></div>
@@ -180,6 +180,7 @@ export class LearnView {
   private hasFrame = false;
   private stale = false;
   private liveAspect = 16 / 9;
+  private tutorialAspect = 16 / 9;
   private mistake: Mistake | null = null;
   /** The last mistake said aloud. */
   private spoken = "";
@@ -217,7 +218,7 @@ export class LearnView {
     });
     this.video.addEventListener("loadedmetadata", () => {
       const v = this.video;
-      if (v.videoWidth && v.videoHeight) this.q<HTMLElement>(".clip").style.aspectRatio = `${v.videoWidth} / ${v.videoHeight}`;
+      if (v.videoWidth && v.videoHeight) this.tutorialAspect = v.videoWidth / v.videoHeight;
       this.syncTutorialTimeline();
       this.fit();
     });
@@ -543,8 +544,8 @@ export class LearnView {
     if (first) this.render();
   }
 
-  /** Fits the camera at the top of its column. The old flex-fill panel centered a short
-   *  landscape feed inside all leftover height, creating a large blank block above it. */
+  /** Fits both media panes around the controls that must stay visible. Waiting states are
+   *  deliberately compact; they are instructions, not pretend camera feeds. */
   private fit() {
     const col = this.q<HTMLElement>(".live-col");
     const pane = this.q<HTMLElement>(".live");
@@ -552,22 +553,45 @@ export class LearnView {
     const goal = this.q<HTMLElement>(".goal");
     const feedback = this.q<HTMLElement>(".feedback-card");
     const mistake = this.q<HTMLElement>(".mistake-card");
-    const showGoal = !!this.model.lesson && col.clientHeight >= 610;
+    const steps = this.model.lesson?.steps ?? [];
+    const step = steps[Math.max(0, Math.min(this.model.state?.step ?? 0, steps.length - 1))];
+    const showGoal = !!step && step.check_type !== "manual" && col.clientHeight >= 390;
     goal.hidden = !showGoal;
 
     const supporting = [goal, feedback, mistake].filter((element) => !element.hidden);
     const gap = Number.parseFloat(getComputedStyle(col).gap) || 0;
     const reserved = supporting.reduce((height, element) => height + element.offsetHeight, 0) + gap * supporting.length;
     const W = col.clientWidth;
-    const H = Math.max(120, col.clientHeight - reserved);
-    if (!W || !H) return;
-    const w = Math.min(W, H * this.liveAspect);
-    const h = w / this.liveAspect;
+    const available = Math.max(120, col.clientHeight - reserved);
+    if (!W || !available) return;
+    const hasPicture = !this.q<HTMLElement>(".live-frame").classList.contains("hidden");
+    const h = hasPicture
+      ? Math.min(W / this.liveAspect, available, col.clientHeight * 0.58)
+      : Math.min(190, Math.max(138, col.clientHeight * 0.21));
+    const w = hasPicture ? Math.min(W, h * this.liveAspect) : W;
     pane.style.flex = `0 0 ${Math.floor(h)}px`;
     pane.style.height = `${Math.floor(h)}px`;
     pane.classList.toggle("snug", this.hasFrame);
     box.style.width = `${Math.floor(w)}px`;
     box.style.height = `${Math.floor(h)}px`;
+
+    const side = this.q<HTMLElement>(".side");
+    const clipBox = this.q<HTMLElement>(".clip-box");
+    const clip = this.q<HTMLElement>(".clip");
+    const sideParts = [this.q<HTMLElement>(".step-info"), this.q<HTMLElement>(".steps-disclosure"), this.q<HTMLElement>(".controls")].filter(
+      (element) => !element.hidden,
+    );
+    const sideGap = Number.parseFloat(getComputedStyle(side).gap) || 0;
+    const sideReserved = sideParts.reduce((height, element) => height + element.offsetHeight, 0) + sideGap * sideParts.length;
+    const clipAvailable = Math.max(160, side.clientHeight - sideReserved);
+    const clipW = Math.min(side.clientWidth, clipAvailable * this.tutorialAspect);
+    const clipH = clipW / this.tutorialAspect;
+    if (clipW && clipH) {
+      clipBox.style.flex = `0 0 ${Math.floor(clipH)}px`;
+      clipBox.style.height = `${Math.floor(clipH)}px`;
+      clip.style.width = `${Math.floor(clipW)}px`;
+      clip.style.height = `${Math.floor(clipH)}px`;
+    }
   }
 
   onAdvance(a: Advance) {
@@ -700,21 +724,17 @@ export class LearnView {
     const step = steps.length ? steps[idx] : null;
     const activeMistake = this.mistake && !isDone && this.mistake.step === s?.step ? this.mistake : null;
 
-    const bar = this.q<HTMLElement>(".progress");
-    bar.setAttribute("aria-valuemax", String(total));
-    const position = isDone ? total : total ? idx + 1 : 0;
-    bar.setAttribute("aria-valuenow", String(position));
-    const percent = total ? Math.max(0, Math.min(100, (position / total) * 100)) : 0;
-    this.q<HTMLElement>(".progress-fill").style.width = `${percent}%`;
-    this.q<HTMLElement>(".progress-fill").classList.toggle("mistake", activeMistake?.kind === "behind");
-    this.q(".progress-label").textContent = total ? (isDone ? `${total} of ${total} complete` : `Step ${idx + 1} of ${total}`) : "Getting ready";
-
     // Live camera: this computer's own preview, or the hub's frames. Never a frozen frame
     // while the hub is unreachable.
     const local = this.localOn;
     const showHub = !local && !down && this.hasFrame && (!!s?.camera_connected || this.stale);
     const showLive = local || showHub;
     const cameraLost = showHub && (this.stale || !s?.camera_connected);
+    const manualStep = step?.check_type === "manual";
+    this.q<HTMLElement>(".learn-grid").classList.toggle("manual-focus", !!manualStep);
+    const livePane = this.q<HTMLElement>(".live");
+    livePane.hidden = !!manualStep;
+    livePane.classList.toggle("waiting", !showLive);
     this.q<HTMLElement>(".live-frame").classList.toggle("hidden", !showLive);
     this.localVideo.hidden = !local;
     this.live.canvas.hidden = local;
@@ -746,16 +766,12 @@ export class LearnView {
       const src = lessonUrl(lesson.id, step.ref_frame, s?.rev);
       if (img.getAttribute("src") !== src) img.src = src;
       this.q(".goal-question").textContent =
-        step.check_type === "manual" ? "This step is checked by you. Tap Next when your work matches the picture." : step.check_question || "Is this step finished?";
+        step.check_type === "manual" ? "Match your work to this reference, then use Next." : step.check_question || "Is this step finished?";
+      this.q<HTMLElement>(".goal").classList.toggle("manual", step.check_type === "manual");
       const lc2 = s?.last_check;
       this.q(".goal-reason").textContent =
         step.check_type !== "manual" && !down && s?.camera_connected && lc2 && s?.check_reason ? `The camera sees: ${s.check_reason}` : "";
     }
-    if (!this.q<HTMLElement>(".goal").dataset.fitted && lesson) {
-      this.q<HTMLElement>(".goal").dataset.fitted = "1";
-      this.fit();
-    }
-
     // Mistake card, directly above the list (section 7.2).
     const card = this.q<HTMLElement>(".mistake-card");
     card.hidden = !activeMistake;
@@ -799,7 +815,6 @@ export class LearnView {
     this.q<HTMLElement>(".clip-ph").hidden = !!step;
 
     this.q(".step-count").textContent = step ? `Step ${idx + 1} of ${total}` : " ";
-    this.q(".steps-summary-count").textContent = total ? `${idx + 1}/${total}` : "";
     this.q(".step-title").textContent = step ? step.title : " ";
     const hold = this.q<HTMLButtonElement>(".hold-step");
     const held = !!s?.held && !isDone;
@@ -833,6 +848,7 @@ export class LearnView {
     const feedback = learnFeedback(s, step, this.flashVerified);
     const feedbackCard = this.q<HTMLElement>(".feedback-card");
     feedbackCard.className = `badge-wrap feedback-card ${feedback.tone} phase-${feedback.phase}`;
+    feedbackCard.hidden = !step || !!manualStep || (!showLive && !s?.camera_connected && !s?.check_offline);
     const b = this.q<HTMLElement>(".badge");
     b.className = `badge ${badge === "nocamera" ? "watching" : badge}${s?.camera_connected ? " live" : ""}`;
     this.q(".badge-label").textContent = feedback.label;
@@ -862,6 +878,9 @@ export class LearnView {
           ? empty(icons.filmBig, "No lesson running", "Pick a lesson to start learning.", html`<button class="primary" data-act="pick">Pick a Lesson</button>`)
           : html`<div class="empty-state"><span class="spinner"></span><p class="empty-message">Starting the lesson</p></div>`,
       );
+    window.requestAnimationFrame(() => {
+      if (this.active) this.fit();
+    });
   }
 
   /** What the live pane says before there is a picture: depends on the chosen camera. */

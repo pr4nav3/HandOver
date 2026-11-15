@@ -22,7 +22,15 @@ async function load(id: string) {
     } else {
       const lesson = await call<Lesson>("lesson", { id });
       const d = {
-        course: { id, title: lesson.title, description: "", cover_url: `/lessons/${id}/frames/01.jpg`, status: "published", owner: null, org: null },
+        course: {
+          id,
+          title: lesson.title,
+          description: lesson.description ?? "",
+          cover_url: `/lessons/${id}/${lesson.production?.output?.cover ?? "frames/01.jpg"}`,
+          status: "published",
+          owner: null,
+          org: null,
+        },
         lesson,
         permissions: { can_edit: true, can_rate: false, can_publish: false },
         history: null,

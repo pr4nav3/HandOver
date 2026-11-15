@@ -19,7 +19,7 @@ function state(phase = "watching"): HubState {
 
 test("live phases say what is happening and what to do next", () => {
   assert.deepEqual(["moving", "settling", "checking"].map((phase) => learnFeedback(state(phase), step).title),
-    ["Keep folding", "Hold it there", "Checking this fold"]);
+    ["Keep going", "Hold it there", "Checking this step"]);
   assert.equal(learnFeedback(state("settling"), step).metric, "15 fps · Live");
 });
 
@@ -35,5 +35,7 @@ test("no camera and manual steps have direct next actions", () => {
   const disconnected = state();
   disconnected.camera_connected = false;
   assert.match(learnFeedback(disconnected, step).action, /phone, computer, or Meta glasses/);
-  assert.match(learnFeedback(state(), { ...step, check_type: "manual" }).action, /use Next/);
+  const manual = learnFeedback(state(), { ...step, check_type: "manual" });
+  assert.match(manual.action, /use Next/);
+  assert.doesNotMatch(`${manual.title} ${manual.action}`, /paper|fold/i);
 });

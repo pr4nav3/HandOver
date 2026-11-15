@@ -1,6 +1,7 @@
 {
   "id": "front-wheel-v1",
-  "title": "Front wheel check",
+  "title": "Inspect and reinstall a front wheel",
+  "description": "Remove the front wheel, inspect the rim and brake pads, then reinstall it and confirm the brake works.",
   "video": "norm.mp4",
   "safety": [],
   "tools": [

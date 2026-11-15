@@ -5,7 +5,7 @@ import { call, hub, type CourseSummary, type LessonSummary } from "../api";
 import { lessonCard, loading, pageHead } from "../components";
 import { icons } from "../icons";
 import { userFacingLessons } from "../lesson_visibility";
-import { app, canTeach, continueList, errorText, learn, rerender, signedIn } from "../state";
+import { app, canTeach, continueList, errorText, learn, prefs, rerender, signedIn } from "../state";
 import { html, paint, type Raw } from "../util";
 
 interface HomeData {
@@ -24,7 +24,7 @@ export const fromLessons = (ls: LessonSummary[]): CourseSummary[] =>
     id: l.id,
     title: l.title,
     steps: l.steps,
-    cover_url: `/lessons/${l.id}/frames/01.jpg`,
+    cover_url: l.cover_url ?? `/lessons/${l.id}/frames/01.jpg`,
     duration: null,
     status: "published",
     visibility: "everyone",
@@ -35,6 +35,23 @@ export const fromLessons = (ls: LessonSummary[]): CourseSummary[] =>
     version: 0,
     progress: null,
   }));
+
+const HOW = [
+  { title: "Pick a lesson", line: "An expert recorded the task once. HandOver cut it into short steps." },
+  { title: "Point a camera at your hands", line: "This computer's webcam, a phone, or Meta glasses." },
+  { title: "Follow each clip", line: "When your work matches the step, the next clip starts." },
+];
+
+function howCard(): Raw | string {
+  if (prefs.howDismissed) return "";
+  return html`<section class="card how" aria-label="How it works">
+    <div class="how-head"><h2>How it works</h2>
+      <button class="icon-button" data-act="how-close" title="Hide" aria-label="Hide How it works">${icons.close}</button></div>
+    <ol class="how-steps">${HOW.map(
+      (h, i) => html`<li><span class="how-num">${i + 1}</span><span class="how-text"><span class="how-title">${h.title}</span><span class="how-line">${h.line}</span></span></li>`,
+    )}</ol>
+  </section>`;
+}
 
 export async function loadHome() {
   if (loadingNow) return;
@@ -120,8 +137,8 @@ function featuredLessons(d: HomeData): Raw {
   return html`<section class="home-lessons" aria-labelledby="home-lessons-title">
     <div class="block-head"><h2 id="home-lessons-title">${continued.length ? "Continue learning" : "Lessons"}</h2>
       <button class="quiet" data-go='{"name":"browse"}'>View all</button></div>
-    <div class="home-lessons-grid count-${visible.length}">${visible.map(({ course, progress }) =>
-      lessonCard(course, progress ? { meta: `Step ${progress.step + 1} of ${progress.total}`, progress: progress.step / Math.max(1, progress.total) } : {}),
+    <div class="home-lessons-grid count-${visible.length}">${visible.map(({ course }) =>
+      lessonCard(course, { meta: "" }),
     )}</div>
   </section>`;
 }
@@ -130,7 +147,7 @@ export function renderHome(el: HTMLElement) {
   const actions = html`${pairButton}<button class="search-button" data-go='{"name":"browse"}'>${icons.search}<span>Search lessons</span></button>`;
   if (!data) {
     void loadHome();
-    paint(el, html`<div class="page home-page">${pageHead("Home", actions)}<main class="home-main">${startCards()}${loading("Loading lessons")}</main></div>`);
+    paint(el, html`<div class="page home-page">${pageHead("Home", actions)}<main class="home-main">${howCard()}${startCards()}${loading("Loading lessons")}</main></div>`);
     return;
   }
   const d = data;
@@ -139,6 +156,7 @@ export function renderHome(el: HTMLElement) {
     html`<div class="page home-page">
       ${pageHead("Home", actions)}
       <main class="home-main">
+        ${howCard()}
         ${startCards()}
         ${runningCard(d)}
         ${d.error
@@ -150,7 +168,10 @@ export function renderHome(el: HTMLElement) {
 }
 
 export function homeAction(act: string) {
-  if (act === "home-retry") {
+  if (act === "how-close") {
+    prefs.howDismissed = true;
+    rerender();
+  } else if (act === "home-retry") {
     data = null;
     rerender();
   } else if (act === "home-open-running" && app.state?.lesson_id) learn.start(app.state.lesson_id, app.state.step);
