@@ -684,6 +684,7 @@ class Engine:
         self.checking = False
         self.verified = False
         self.last_check: Optional[dict] = None
+        self.step_before_frame: Optional[bytes] = None
         self.mistake: Optional[dict] = None  # contract 7.2 fields minus "type"
         self.version = 0  # bumps on every lesson or step change
         self.step_started = time.monotonic()
@@ -958,6 +959,10 @@ class Engine:
         self.tracker.start_step(self.step, self.understand_entry(self.step))
         self.step_started = time.monotonic()
         self.checked_seq = self.frame_seq  # never judge a new step with a frame taken before it began
+        # Opt-in for visually similar consecutive results: use this learner's actual starting arrangement
+        # as BEFORE. The authored previous reference may look very different from a glasses camera angle.
+        cur = self.current()
+        self.step_before_frame = self.frame if cur and cur.get("check_transition") is True and self.cameras > 0 else None
 
     def load_rubric(self) -> None:
         """The lesson's rubric.json when understanding is on; None when missing or stale (after a recut)."""
@@ -1418,7 +1423,7 @@ class Engine:
         if urgent and interval < self.check_interval_s():
             metrics["checks_fast_confirm"] += 1
         question = cur.get("check_question") or "Is this step finished?"
-        prev_ref = self.ref_bytes(self.step - 1) if self.step > 0 else None
+        prev_ref = self.step_before_frame or (self.ref_bytes(self.step - 1) if self.step > 0 else None)
         return CheckJob(self.step, question, ref, frame, self.version, prev_ref, self.gated_seq,
                         self.run.run_id if self.run else None)
 

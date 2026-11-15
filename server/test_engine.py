@@ -745,6 +745,42 @@ def test_check_event_and_mistake_source_name_the_real_provider() -> None:
     assert mis["source"] == "claude" and engine.mistake and engine.mistake["source"] == "claude", mis
 
 
+def test_transition_checks_use_this_learners_before_view_only_when_requested() -> None:
+    make_lesson()
+    engine = main.Engine()
+    engine.select(LESSON)
+    assert engine.lesson is not None
+    engine.lesson["steps"][1]["check_transition"] = True
+    before = jpeg((60, 70, 80))
+    engine.frame = before
+    engine.cameras = 1
+    engine.step = 1
+    engine._enter_step()
+    assert engine.step_before_frame == before
+    # A later camera frame cannot replace the stable BEFORE view while checks run in parallel.
+    engine.frame = FRAME
+    engine.gated_frame, engine.gated_seq = FRAME, engine.checked_seq + 1
+    engine.frame_wanted = True
+    job = engine._next_job()
+    assert job is not None and job.prev_ref == before and job.frame == FRAME
+    # Normal steps retain their authored previous reference, without adding work or latency.
+    engine.step = 2
+    engine._enter_step()
+    assert engine.step_before_frame is None
+    engine.gated_seq = engine.checked_seq + 1
+    engine.frame_wanted = True
+    engine.offered_at = 0
+    job = engine._next_job()
+    assert job is not None and job.prev_ref == engine.ref_bytes(1)
+    # A disconnected camera and an unloaded lesson cannot leak an old learner image into a new step.
+    engine.step, engine.cameras = 1, 0
+    engine._enter_step()
+    assert engine.step_before_frame is None
+    engine.lesson = None
+    engine._enter_step()
+    assert engine.step_before_frame is None
+
+
 def test_frame_debouncer_order_and_fast_path() -> None:
     def deb() -> main.FrameDebouncer:
         return main.FrameDebouncer()

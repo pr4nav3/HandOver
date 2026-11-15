@@ -100,7 +100,8 @@
       "ref_frame": "frames/05.jpg",
       "ref_time": "01:48.3",
       "check_type": "camera",
-      "check_question": "Do four triangular flaps form a square with all four points meeting at the center?",
+      "check_question": "Are all four original outer corners folded inward, with four actual overlapping triangular flaps whose free tips meet at the center? Crossing crease lines on an unfolded sheet are NOT flap edges. Answer no if any corner is still unfolded or LIVE still shows the BEFORE arrangement; unsure if hands hide the flap edges.",
+      "check_transition": true,
       "prerequisites": [
         4
       ],
@@ -121,7 +122,8 @@
       "ref_frame": "frames/06.jpg",
       "ref_time": "01:55.1",
       "check_type": "camera",
-      "check_question": "Is the top a square with no triangular flap seams facing up?",
+      "check_question": "Is the folded square flipped over so its continuous back face is on top and the four triangular flaps are underneath? Ordinary crease lines on the back face are allowed; it need not look perfectly smooth. Answer no if the free edges and tips of the triangular flaps are still facing up, or LIVE still shows the BEFORE arrangement.",
+      "check_transition": true,
       "prerequisites": [
         5
       ],
@@ -140,17 +142,18 @@
       "clip": "clips/07.mp4",
       "captions": "captions/07.vtt",
       "ref_frame": "frames/07.jpg",
-      "ref_time": "02:31.4",
+      "ref_time": "02:29.2",
       "check_type": "camera",
-      "check_question": "Do four triangular flaps with visible seams meet at the center of the top face, forming a smaller square than before?",
+      "check_question": "Does the TOP face now have four folded triangular layers with free flap edges converging at the center, instead of the single continuous back face in BEFORE? Pressed crease lines on one continuous sheet do NOT count as flap edges. Answer no if the top is still the continuous back face or a corner is visibly unfolded. Hands may hold the flaps flat; answer unsure only if the folded layers cannot be distinguished from creases.",
+      "check_transition": true,
       "prerequisites": [
         6
       ],
       "common_mistake": "Bring each corner to the center on this side and keep all four points touching.",
       "self_test": {
         "own": "yes",
-        "prev": "unsure",
-        "ok": false
+        "prev": "no",
+        "ok": true
       }
     },
     {
