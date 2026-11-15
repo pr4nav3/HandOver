@@ -53,7 +53,7 @@ export function renderBrowse(el: HTMLElement) {
   }
   const chips: { label: string; filter: string; org?: string }[] = [{ label: "Everyone", filter: "everyone" }];
   if (app.library && signedIn()) chips.push({ label: "Mine", filter: "mine" }, { label: "Shared with Me", filter: "shared" });
-  for (const o of app.orgs) chips.push({ label: o.name, filter: "orgs", org: o.id });
+  if (signedIn()) for (const o of app.orgs) chips.push({ label: o.name, filter: "orgs", org: o.id });
   let body;
   if (error) body = empty(icons.filmBig, "Could not load lessons", error);
   else if (results === null) body = loading("Loading lessons");

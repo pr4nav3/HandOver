@@ -28,8 +28,7 @@ test("navigation calls the catalog Lessons and Home stays within the app viewpor
   assert.doesNotMatch(`${main}\n${browse}`, /Browse All/);
   assert.match(css, /body\[data-screen="home"\] #content\s*{\s*overflow:\s*hidden/);
   assert.match(css, /\.home-page\s*{[\s\S]*?height:\s*100%[\s\S]*?overflow:\s*hidden/);
-  assert.match(home, /class="card how"/);
-  assert.match(home, /Pick a lesson[\s\S]*Point a camera at your hands[\s\S]*Follow each clip/);
+  assert.doesNotMatch(home, /class="card how"|class="option-cards home-actions"/);
   assert.match(teach, /Upload a Video[\s\S]*Choose video/);
 });
 
