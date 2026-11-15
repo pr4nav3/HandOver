@@ -28,7 +28,6 @@ struct FlowSnapshotTests {
                            covers: CourseMedia.coverCandidates(hub: hub, lessonId: lesson.id, coverURL: nil),
                            steps: 6, status: .published),
         ])
-        UserDefaults.standard.removeObject(forKey: HowItWorks.hiddenKey)
         let view = NavigationStack { LibraryView(preview: store) }.environment(Self.flow())
         try await FeatureSnapshotTests.render(view, model: model, size: Self.phone, name: "flow-home")
     }

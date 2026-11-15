@@ -114,6 +114,13 @@ def lesson(lesson_id: str) -> dict:
     return json.loads((LESSONS / lesson_id / "lesson.json").read_text(encoding="utf-8"))
 
 
+def test_repository_fixtures_are_hidden_only_from_the_real_library():
+    assert not library.is_user_facing_lesson("demo-v1", library.REPO / "lessons")
+    assert not library.is_user_facing_lesson("fortune-teller-v1", library.REPO / "lessons")
+    assert library.is_user_facing_lesson("fortune-teller-v2", library.REPO / "lessons")
+    assert library.is_user_facing_lesson("demo-v1", LESSONS), "test-specific lesson roots keep their fixtures"
+
+
 def auth(token: str) -> dict:
     return {"Authorization": f"Bearer {token}"}
 

@@ -4,6 +4,7 @@
 import { hub, pickVideo, uploadVideo, type CourseSummary, type Job, type LessonSummary, call } from "../api";
 import { closeSheet, drawSheet, empty, loading, openSheet, pageHead, STATUS_WORD, cover, mmss } from "../components";
 import { icons } from "../icons";
+import { userFacingLessons } from "../lesson_visibility";
 import { app, errorText, go, learn, rerender, signedIn } from "../state";
 import { html, paint } from "../util";
 import { fromLessons, resetHome } from "./home";
@@ -14,8 +15,8 @@ let mineError = "";
 async function loadMine() {
   try {
     if (!app.library) mine = fromLessons(await call<LessonSummary[]>("lessons"));
-    else if (signedIn()) mine = await hub<CourseSummary[]>("GET", "/api/courses", { query: { filter: "mine" } });
-    else mine = (await hub<CourseSummary[]>("GET", "/api/courses", { query: { filter: "all" } })).filter((c) => c.legacy);
+    else if (signedIn()) mine = userFacingLessons(await hub<CourseSummary[]>("GET", "/api/courses", { query: { filter: "mine" } }));
+    else mine = userFacingLessons((await hub<CourseSummary[]>("GET", "/api/courses", { query: { filter: "all" } })).filter((c) => c.legacy));
     mineError = "";
   } catch (e) {
     mineError = errorText(e);
@@ -41,7 +42,7 @@ export function renderTeach(el: HTMLElement) {
                 <span class="row-text"><span class="row-title">${c.title || c.id}</span>
                   <span class="row-meta">${c.steps} ${c.steps === 1 ? "step" : "steps"}${c.duration ? `, ${mmss(c.duration)}` : ""}${c.org ? `, ${c.org.name}` : ""}</span></span>
                 <span class="badge-soft ${c.status}">${STATUS_WORD[c.status]}</span>
-                <span class="chev">${icons.chevron}</span>
+                <span class="teach-edit-action">Edit ${icons.chevron}</span>
               </button>`,
             )}</div>`;
   paint(
@@ -61,7 +62,7 @@ export function renderTeach(el: HTMLElement) {
         </div>
       </div>
       <section class="block">
-        <div class="block-head"><h2>Your Lessons</h2></div>
+        <div class="block-head teach-lessons-head"><div><h2>Your Lessons</h2><p>Open a lesson to edit its steps, timing, and checks.</p></div></div>
         ${list}
       </section>
     </div>`,

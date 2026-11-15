@@ -126,7 +126,7 @@ final class AppModel {
         do {
             let list = try await client.lessons()
             guard client === self.client else { return }
-            lessons = list
+            lessons = list.filter { LessonVisibility.isUserFacing($0.id) }
         } catch {
             report(error)
         }

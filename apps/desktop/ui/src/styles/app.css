@@ -955,6 +955,30 @@ button.row:hover {
   display: grid;
 }
 
+.teach-lessons-head {
+  align-items: flex-end;
+}
+
+.teach-lessons-head p {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.teach-edit-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--accent-ink);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.teach-edit-action svg {
+  width: 14px;
+  height: 14px;
+}
+
 /* Browse */
 
 .browse-bar {
@@ -4373,7 +4397,7 @@ button.back:disabled {
   background: var(--bg);
 }
 
-/* Home: one viewport, two actions, three real activity values, and a short lesson shelf. */
+/* Home: one viewport, two actions, and a short lesson shelf. */
 
 .home-page {
   height: 100%;
@@ -4392,49 +4416,11 @@ button.back:disabled {
 .home-main {
   min-height: 0;
   display: grid;
-  grid-template-rows: auto auto auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
   align-content: start;
   gap: clamp(10px, 1.6vh, 16px);
 }
 
-.how {
-  padding: 18px 20px 20px;
-  margin-bottom: 20px;
-}
-
-.how-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 14px;
-}
-
-.how-head h2 {
-  font-size: 16px;
-  font-weight: 600;
-}
-
-.how-head .icon-button {
-  width: 28px;
-  height: 28px;
-}
-
-.how-steps {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 20px;
-}
-
-.how-steps li {
-  display: flex;
-  gap: 12px;
-  align-items: flex-start;
-}
-
-.how-num,
 .pair-num {
   flex: none;
   display: grid;
@@ -4449,23 +4435,6 @@ button.back:disabled {
   font-variant-numeric: tabular-nums;
 }
 
-.how-text {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  padding-top: 2px;
-}
-
-.how-title {
-  font-weight: 600;
-  font-size: 14px;
-}
-
-.how-line {
-  color: var(--muted);
-  font-size: 13px;
-}
-
 .home-actions {
   margin-bottom: 0;
 }
@@ -4475,43 +4444,6 @@ button.back:disabled {
   align-items: center;
   gap: 14px;
   padding: 16px 18px;
-}
-
-.home-insights {
-  min-height: 58px;
-  display: flex;
-  align-items: center;
-  gap: clamp(16px, 2.5vw, 34px);
-  padding: 10px 16px;
-  border-top: 1px solid var(--border);
-  border-bottom: 1px solid var(--border);
-}
-
-.home-insights-title {
-  color: var(--muted);
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.home-insight {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 6px;
-  min-width: 0;
-  color: var(--muted);
-  font-size: 13px;
-  white-space: nowrap;
-}
-
-.home-insight-value {
-  color: var(--text);
-  font-size: 18px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
-
-.home-insights .quiet {
-  margin-left: auto;
 }
 
 .home-lessons {
@@ -4536,6 +4468,18 @@ button.back:disabled {
 
 .home-lessons-grid .lesson-card {
   align-self: start;
+}
+
+.home-lessons-grid.count-1 {
+  grid-template-columns: minmax(0, 620px);
+}
+
+.home-lessons-grid.count-2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.home-lessons-grid.count-3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .home-empty,
@@ -4573,10 +4517,6 @@ button.back:disabled {
   .home-lessons-grid .lesson-card:nth-child(n + 3) {
     display: none;
   }
-
-  .home-insights-title {
-    display: none;
-  }
 }
 
 @media (max-height: 700px) {
@@ -4591,15 +4531,6 @@ button.back:disabled {
 
   .home-actions .option-line {
     display: none;
-  }
-
-  .home-insights {
-    min-height: 48px;
-    padding-block: 7px;
-  }
-
-  .home-insight-value {
-    font-size: 16px;
   }
 }
 
@@ -4974,13 +4905,6 @@ button.back:disabled {
 
 .camera-option.on .role-check {
   color: var(--accent-ink);
-}
-
-@media (max-width: 1000px) {
-  .how-steps {
-    grid-template-columns: 1fr;
-    gap: 12px;
-  }
 }
 
 @media (max-width: 700px) {

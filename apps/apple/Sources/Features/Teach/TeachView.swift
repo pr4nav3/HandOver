@@ -242,7 +242,12 @@ private struct TeachScreen: View {
     @ViewBuilder private var yourLessons: some View {
         if flow.isWorking || flow.phase == .failed || !lessons.items.isEmpty {
             VStack(alignment: .leading, spacing: HOSpace.s) {
-                Text("Your Lessons").sectionHeaderStyle(theme)
+                VStack(alignment: .leading, spacing: HOSpace.xxs) {
+                    Text("Your Lessons").sectionHeaderStyle(theme)
+                    Text("Open a lesson to edit its steps, timing, and checks.")
+                        .font(theme.fonts.footnote)
+                        .foregroundStyle(theme.colors.ink2)
+                }
                 if flow.isWorking || flow.phase == .failed {
                     Button { showSheet = true } label: { processingRow }.buttonStyle(.plain)
                 }
@@ -259,10 +264,6 @@ private struct TeachScreen: View {
                     .background(theme.colors.raised, in: RoundedRectangle(cornerRadius: HORadius.card, style: .continuous))
                     .overlay(RoundedRectangle(cornerRadius: HORadius.card, style: .continuous)
                         .strokeBorder(theme.colors.line, lineWidth: HOLine.width))
-                    Text("Tap a lesson to review its steps in the editor.")
-                        .font(theme.fonts.footnote)
-                        .foregroundStyle(theme.colors.ink2)
-                        .padding(.horizontal, HOSpace.xs)
                 }
             }
         }
@@ -433,8 +434,9 @@ private struct TeachLessonRow: View {
             }
             Spacer(minLength: 0)
             if let status = item.status { CourseStatusBadge(status) }
-            Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(theme.colors.ink3)
-                .accessibilityHidden(true)
+            Label("Edit", systemImage: "pencil")
+                .font(theme.fonts.footnote.weight(.semibold))
+                .foregroundStyle(theme.colors.accentInk)
         }
         .padding(.horizontal, HOSpace.l)
         .padding(.vertical, HOSpace.m)

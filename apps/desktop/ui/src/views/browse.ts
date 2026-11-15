@@ -4,6 +4,7 @@
 import { call, hub, type CourseSummary, type LessonSummary } from "../api";
 import { empty, lessonCard, loading, pageHead } from "../components";
 import { icons } from "../icons";
+import { userFacingLessons } from "../lesson_visibility";
 import { app, canTeach, errorText, go, rerender, signedIn } from "../state";
 import { html, paint } from "../util";
 import { fromLessons } from "./home";
@@ -33,6 +34,7 @@ async function load() {
       list = await hub<CourseSummary[]>("GET", "/api/courses", { query: { filter, org: c.org, q: c.q } });
       if (c.filter === "everyone" && !c.org) list = list.filter((x) => x.status !== "draft" || x.owner?.id === app.me?.user?.id);
     }
+    list = userFacingLessons(list);
     if (key === k) {
       results = list;
       error = "";

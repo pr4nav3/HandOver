@@ -48,7 +48,6 @@ struct LandscapeSnapshotTests {
                            covers: CourseMedia.coverCandidates(hub: hub, lessonId: lesson.id, coverURL: nil),
                            steps: 6, status: .published),
         ])
-        UserDefaults.standard.removeObject(forKey: HowItWorks.hiddenKey)
         let view = NavigationStack { LibraryView(preview: store) }.environment(FlowSnapshotTests.flow())
         try await Self.shoot("home", view, model: model)
     }

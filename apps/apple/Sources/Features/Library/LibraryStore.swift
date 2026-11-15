@@ -89,7 +89,7 @@ final class LibraryStore {
                 let list = try await courses(filter, q)
                 if Task.isCancelled { return }
                 source = .courses
-                items = list.map { card($0, hub: backend.hub) }
+                items = list.filter { LessonVisibility.isUserFacing($0.id) }.map { card($0, hub: backend.hub) }
                 lastQuery = q
                 phase = .loaded
                 return
@@ -105,7 +105,7 @@ final class LibraryStore {
         }
         source = .legacy
         do {
-            legacyAll = try await backend.lessons()
+            legacyAll = (try await backend.lessons()).filter { LessonVisibility.isUserFacing($0.id) }
             if Task.isCancelled { return }
             applyLegacy(query: q, hub: backend.hub)
             lastQuery = q

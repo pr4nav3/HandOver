@@ -1,11 +1,11 @@
-// Home is a one-screen launch surface: two primary actions, three truthful activity values, an active
-// lesson when there is one, and a small set of useful lessons. The complete catalog lives in Lessons.
+// Home is a one-screen launch surface: two primary actions, an active lesson when there is one,
+// and a small set of useful lessons. The complete catalog lives in Lessons.
 
-import { call, hub, type CourseSummary, type LessonSummary, type ProfileAnalytics } from "../api";
+import { call, hub, type CourseSummary, type LessonSummary } from "../api";
 import { lessonCard, loading, pageHead } from "../components";
-import { homeMetrics } from "../home_metrics";
 import { icons } from "../icons";
-import { app, canTeach, continueList, errorText, learn, localProgress, rerender, signedIn } from "../state";
+import { userFacingLessons } from "../lesson_visibility";
+import { app, canTeach, continueList, errorText, learn, rerender, signedIn } from "../state";
 import { html, paint, type Raw } from "../util";
 
 interface HomeData {
@@ -20,7 +20,7 @@ let loadingNow = false;
 
 /** Lessons from a hub without the library routes, shaped like course summaries. */
 export const fromLessons = (ls: LessonSummary[]): CourseSummary[] =>
-  ls.map((l) => ({
+  userFacingLessons(ls).map((l) => ({
     id: l.id,
     title: l.title,
     steps: l.steps,
@@ -45,16 +45,14 @@ export async function loadHome() {
       data = { everyone: fromLessons(ls), mine: [], byOrg: [], error: "" };
       app.analytics = undefined;
     } else {
-      const [everyone, mine, analytics] = await Promise.all([
+      const [everyone, mine] = await Promise.all([
         hub<CourseSummary[]>("GET", "/api/courses", { query: { filter: "all" } }),
         signedIn() ? hub<CourseSummary[]>("GET", "/api/courses", { query: { filter: "mine" } }) : Promise.resolve([]),
-        signedIn()
-          ? hub<ProfileAnalytics>("GET", "/api/profile/analytics").catch(() => null)
-          : Promise.resolve(undefined),
       ]);
-      app.analytics = analytics;
-      const byOrg = app.orgs.map((o) => ({ id: o.id, name: o.name, courses: everyone.filter((c) => c.org?.id === o.id) }));
-      data = { everyone, mine, byOrg, error: "" };
+      const visibleEveryone = userFacingLessons(everyone);
+      const visibleMine = userFacingLessons(mine);
+      const byOrg = app.orgs.map((o) => ({ id: o.id, name: o.name, courses: visibleEveryone.filter((c) => c.org?.id === o.id) }));
+      data = { everyone: visibleEveryone, mine: visibleMine, byOrg, error: "" };
     }
   } catch (e) {
     data = { everyone: [], mine: [], byOrg: [], error: errorText(e) };
@@ -102,17 +100,6 @@ function runningCard(d: HomeData): Raw | string {
 
 const pairButton = html`<button class="secondary small" data-act="pair-phone">${icons.qr}<span>Pair a Phone</span></button>`;
 
-function activityStrip(): Raw {
-  const metrics = homeMetrics(app.analytics, localProgress());
-  return html`<section class="home-insights" aria-label="Your activity">
-    <span class="home-insights-title">Your activity</span>
-    ${metrics.map(
-      (metric) => html`<span class="home-insight"><span class="home-insight-value">${metric.value}</span><span>${metric.label}</span></span>`,
-    )}
-    <button class="quiet" data-go='{"name":"profile"}'>Details</button>
-  </section>`;
-}
-
 function featuredLessons(d: HomeData): Raw {
   const continued = continueList(d.everyone);
   const picked: { course: CourseSummary; progress?: { step: number; total: number } }[] = [];
@@ -133,7 +120,7 @@ function featuredLessons(d: HomeData): Raw {
   return html`<section class="home-lessons" aria-labelledby="home-lessons-title">
     <div class="block-head"><h2 id="home-lessons-title">${continued.length ? "Continue learning" : "Lessons"}</h2>
       <button class="quiet" data-go='{"name":"browse"}'>View all</button></div>
-    <div class="home-lessons-grid">${visible.map(({ course, progress }) =>
+    <div class="home-lessons-grid count-${visible.length}">${visible.map(({ course, progress }) =>
       lessonCard(course, progress ? { meta: `Step ${progress.step + 1} of ${progress.total}`, progress: progress.step / Math.max(1, progress.total) } : {}),
     )}</div>
   </section>`;
@@ -143,7 +130,7 @@ export function renderHome(el: HTMLElement) {
   const actions = html`${pairButton}<button class="search-button" data-go='{"name":"browse"}'>${icons.search}<span>Search lessons</span></button>`;
   if (!data) {
     void loadHome();
-    paint(el, html`<div class="page home-page">${pageHead("Home", actions)}<main class="home-main">${startCards()}${activityStrip()}${loading("Loading lessons")}</main></div>`);
+    paint(el, html`<div class="page home-page">${pageHead("Home", actions)}<main class="home-main">${startCards()}${loading("Loading lessons")}</main></div>`);
     return;
   }
   const d = data;
@@ -153,7 +140,6 @@ export function renderHome(el: HTMLElement) {
       ${pageHead("Home", actions)}
       <main class="home-main">
         ${startCards()}
-        ${activityStrip()}
         ${runningCard(d)}
         ${d.error
           ? html`<section class="home-error" role="alert"><span>${d.error}</span><button class="secondary small" data-act="home-retry">Try again</button></section>`

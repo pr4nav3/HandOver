@@ -47,6 +47,7 @@ ACCESS_ROLES = ("editor", "learner")
 COVER_SUFFIXES = (".jpg", ".jpeg", ".png", ".webp")
 MAX_ACCESS = 200
 DEFAULT_QUESTION = "Is this step finished?"  # same as teach.DEFAULT_QUESTION (CONTRACT.md section 3)
+INTERNAL_LESSON_IDS = frozenset({"demo-v1", "fortune-teller-v1", "synthetic-fortune-teller-v1"})
 
 # ---------------------------------------------------------------- settings
 
@@ -184,7 +185,14 @@ def lesson_ids() -> list[str]:
     if not root.is_dir():
         return []
     return sorted(d.name for d in root.iterdir()
-                  if d.is_dir() and ID_RE.match(d.name) and (d / "lesson.json").is_file())
+                  if d.is_dir() and ID_RE.match(d.name) and (d / "lesson.json").is_file()
+                  and is_user_facing_lesson(d.name, root))
+
+
+def is_user_facing_lesson(lesson_id: str, root: Optional[Path] = None) -> bool:
+    """Hide repository fixtures without changing lesson IDs in test-specific roots."""
+    active_root = (root or lessons_root()).resolve()
+    return active_root != (REPO / "lessons").resolve() or lesson_id not in INTERNAL_LESSON_IDS
 
 
 def parse_time(value: Any) -> float:

@@ -31,7 +31,7 @@ from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Upload
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from server import accounts, analytics_privacy, check, config, gate, mistake, routes_library, understand
+from server import accounts, analytics_privacy, check, config, gate, library, mistake, routes_library, understand
 
 for _ext, _type in ((".vtt", "text/vtt"), (".mp4", "video/mp4"), (".js", "text/javascript"),
                     (".mjs", "text/javascript"), (".css", "text/css"), (".svg", "image/svg+xml"),
@@ -1952,6 +1952,8 @@ def has_certs() -> bool:
 def list_lessons() -> list:
     out = []
     for d in sorted(LESSONS.iterdir()) if LESSONS.is_dir() else []:
+        if not library.is_user_facing_lesson(d.name, LESSONS):
+            continue
         f = d / "lesson.json"
         if not (d.is_dir() and f.is_file() and ID_RE.match(d.name)):
             continue

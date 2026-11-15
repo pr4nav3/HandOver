@@ -177,6 +177,20 @@ struct LibraryStoreTests {
         #expect(store.items.map(\.id) == ["b"], "legacy search runs on this device")
     }
 
+    @Test func placeholderLessonsStayOutOfLiveLists() async {
+        let summaries = [
+            LessonSummary(id: "demo-v1", title: "Fixture", steps: 1),
+            LessonSummary(id: "fortune-teller-v2", title: "Fortune teller", steps: 9),
+        ]
+        let store = LibraryStore(backend: LibraryStore.Backend(
+            hub: hub,
+            courses: { _, _ in throw HubError.http(status: 404, detail: "Not Found") },
+            lessons: { summaries },
+            lesson: { id in Lesson(id: id, title: id) }))
+        await store.reload()
+        #expect(store.items.map(\.id) == ["fortune-teller-v2"])
+    }
+
     @Test func coursesCarryStatusProgressAndContinue() async throws {
         let json = """
         [{"id":"a","title":"A","cover_url":"/lessons/a/covers/c.jpg","steps":4,"duration":61.2,"status":"draft",
