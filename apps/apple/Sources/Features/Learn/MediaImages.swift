@@ -38,10 +38,17 @@ final class MediaImages {
         Task { [weak self] in
             defer { self?.loading.remove(url) }
             guard let (data, response) = try? await URLSession.shared.data(from: url),
-                  (response as? HTTPURLResponse)?.statusCode ?? 200 < 400,
-                  let image = Self.decode(data, maxPixels: maxPixels) else { return }
-            self?.store(image, for: url)
+                  (response as? HTTPURLResponse)?.statusCode ?? 200 < 400 else { return }
+            // Decoded and downsampled off the main thread, so a frame landing never stalls a redraw or a rotation.
+            let decoded = await Task.detached(priority: .utility) { Self.decode(data, maxPixels: maxPixels).map(Decoded.init) }.value
+            guard let decoded else { return }
+            self?.store(decoded.image, for: url)
         }
+    }
+
+    /// A decoded picture crossing back from the decode thread. CGImage is immutable, so this is safe.
+    private struct Decoded: @unchecked Sendable {
+        let image: CGImage
     }
 
     nonisolated static func decode(_ data: Data, maxPixels: Int) -> CGImage? {

@@ -18,16 +18,38 @@ enum SampleLesson {
 
     @MainActor private static var cache: [Int: CGImage] = [:]
 
-    /// Frame `n` (1-based), or nil if the art is missing from the bundle.
+    /// Frame `n` (1-based), or nil if the art is missing from the bundle. `prewarm` usually has it decoded already;
+    /// otherwise it is decoded here once, fully, so drawing it later never decodes again.
     @MainActor
     static func frame(_ n: Int) -> CGImage? {
         if let hit = cache[n] { return hit }
-        let name = String(format: "sample-step-%02d", n)
-        guard let url = Bundle.main.url(forResource: name, withExtension: "jpg"),
-              let source = CGImageSourceCreateWithURL(url as CFURL, nil),
-              let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return nil }
+        guard let image = decode(n) else { return nil }
         cache[n] = image
         return image
+    }
+
+    /// Decodes every frame on a background thread, so the welcome pages never decode a picture while drawing.
+    @MainActor
+    static func prewarm() async {
+        let missing = (1...steps).filter { cache[$0] == nil }
+        guard !missing.isEmpty else { return }
+        let decoded = await Task.detached(priority: .userInitiated) {
+            missing.compactMap { n in decode(n).map { Decoded(n: n, image: $0) } }
+        }.value
+        for frame in decoded where cache[frame.n] == nil { cache[frame.n] = frame.image }
+    }
+
+    /// The art is 960 by 540, the size it is drawn at most, so it is decoded at its own size.
+    nonisolated private static func decode(_ n: Int) -> CGImage? {
+        let name = String(format: "sample-step-%02d", n)
+        guard let url = Bundle.main.url(forResource: name, withExtension: "jpg"),
+              let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+        return CGImageSourceCreateImageAtIndex(source, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary)
+    }
+
+    private struct Decoded: @unchecked Sendable {
+        let n: Int
+        let image: CGImage
     }
 }
 

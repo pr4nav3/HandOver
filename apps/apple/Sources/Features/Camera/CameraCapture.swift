@@ -63,6 +63,7 @@ final class CameraCapture: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
     #if os(iOS)
     @MainActor private var rotation: CameraRotationFollower?
     #endif
+    @MainActor private var preview: CameraPreview.PreviewView?
 
     init(encoder: FrameEncoder = .shared) {
         self.encoder = encoder
@@ -114,6 +115,18 @@ final class CameraCapture: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
         sessionQueue.async { [self] in
             if session.isRunning { session.stopRunning() }
         }
+    }
+
+    /// The one on-screen preview of this capture, made on first use and moved between places by `CameraPreview`.
+    /// `CameraStreamer` makes it before `start`, so the preview joins the session while the session queue adds the
+    /// camera, not later on the main thread with the session running.
+    @MainActor
+    func previewView() -> CameraPreview.PreviewView {
+        if let preview { return preview }
+        let view = CameraPreview.PreviewView()
+        view.attach(self)
+        preview = view
+        return view
     }
 
     #if os(iOS)
