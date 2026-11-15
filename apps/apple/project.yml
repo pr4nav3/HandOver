@@ -75,10 +75,15 @@ targets:
         NSPhotoLibraryUsageDescription: HandOver opens the video you pick so it can turn it into a lesson.
         NSSpeechRecognitionUsageDescription: HandOver recognizes "next" and "back" on this device to move between steps.
         NSMicrophoneUsageDescription: HandOver records your narration with a take. Steps are found from what you say.
-        NSBluetoothAlwaysUsageDescription: HandOver uses Bluetooth to reach your Meta glasses when you record with them.
+        NSBluetoothAlwaysUsageDescription: HandOver uses Bluetooth to reach your Meta glasses, to record a lesson or to follow one with their camera.
+        # Meta Wearables toolkit: Meta AI returns to this scheme after registration; fb-viewapp lets the app open Meta AI.
+        MWDAT:
+          AppLinkURLScheme: "handover://"
+        LSApplicationQueriesSchemes: [fb-viewapp]
+        NSBonjourServices: [_bonjour._tcp]
         # Glasses over Bluetooth Classic.
         UISupportedExternalAccessoryProtocols: [com.meta.ar.wearable]
-        UIBackgroundModes: [bluetooth-peripheral, external-accessory]
+        UIBackgroundModes: [bluetooth-central, bluetooth-peripheral, external-accessory]
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
         ITSAppUsesNonExemptEncryption: false

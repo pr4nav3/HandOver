@@ -4,6 +4,7 @@
 import type { Catalog, LinkStatus, Look, Settings, Theme } from "../api";
 import { html, modLabel, paint, type Raw } from "../util";
 import { icons } from "../icons";
+import { toast } from "../state";
 
 export interface SettingsModel {
   open: boolean;
@@ -14,6 +15,8 @@ export interface SettingsModel {
   search: string;
   /** "Camera checks", "Simulated checks" or "Off: <reason>". */
   checks: string;
+  /** The chosen camera in words, or "Not chosen yet". */
+  camera: string;
   /** "<name>, <role>" when signed in. */
   account: string;
 }
@@ -25,6 +28,8 @@ export interface SettingsActions {
   search: (text: string) => void;
   otherHub: () => void;
   welcome: () => void;
+  pair: () => void;
+  camera: () => void;
 }
 
 /** Extra search words from the Theme picker section of THEMES.md. */
@@ -89,6 +94,16 @@ export function renderSettings(el: HTMLElement, m: SettingsModel) {
           <button class="icon-button" data-close title="Close (Esc)" aria-label="Close">${icons.close}</button>
         </header>
         <div class="sheet-body">
+          <section>
+            <h3>Camera</h3>
+            <dl class="hub-details">
+              <div><dt>Sees your hands</dt><dd>${m.camera}<button class="quiet small" data-camera>Change</button></dd></div>
+            </dl>
+            ${connected
+              ? html`<div class="hub-actions"><button class="secondary" data-pair>${icons.qr}<span>Pair a Phone</span></button>
+                  <span class="hint">Show a code the HandOver phone app scans to join this hub.</span></div>`
+              : ""}
+          </section>
           <section>
             <h3>Appearance</h3>
             <div class="segmented" role="radiogroup" aria-label="Appearance">
@@ -171,8 +186,10 @@ export function bindSettings(el: HTMLElement, a: SettingsActions) {
     if (t.closest("[data-disconnect]")) return a.disconnect();
     if (t.closest("[data-other-hub]")) return a.otherHub();
     if (t.closest("[data-welcome]")) return a.welcome();
+    if (t.closest("[data-pair]")) return a.pair();
+    if (t.closest("[data-camera]")) return a.camera();
     const copy = t.closest<HTMLElement>("[data-copy]")?.dataset.copy;
-    if (copy) return void navigator.clipboard.writeText(copy).catch(() => {});
+    if (copy) return void navigator.clipboard.writeText(copy).then(() => toast("Copied address"), () => {});
     const appearance = t.closest<HTMLElement>("[data-appearance]")?.dataset.appearance;
     if (appearance) return a.set({ appearance });
     const theme = t.closest<HTMLElement>("[data-theme]")?.dataset.theme;

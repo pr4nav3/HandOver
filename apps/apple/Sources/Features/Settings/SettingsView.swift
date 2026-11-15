@@ -70,7 +70,7 @@ private struct SettingsList: View {
     // MARK: - Hub
 
     private var hubSection: some View {
-        Section("Hub") {
+        Section {
             if let hub = model.hub {
                 NavigationLink { HubDetailView(hub: hub) } label: {
                     HubRow(hub: hub, status: model.connection.label)
@@ -91,6 +91,12 @@ private struct SettingsList: View {
                 .swipeActions { Button("Remove", role: .destructive) { forgetting = hub } }
                 #endif
             }
+        } header: {
+            Text("Hub")
+        } footer: {
+            Text(model.hub == nil
+                 ? "Connect to get lessons. The hub is the HandOver app running on a laptop near you."
+                 : "The hub is the HandOver app running on a laptop near you. It keeps your lessons and checks your steps.")
         }
     }
 
@@ -125,17 +131,25 @@ private struct SettingsList: View {
 
     private var learnSection: some View {
         Section {
-            Toggle(isOn: $captions) { SettingsLabel("Captions", symbol: "captions.bubble") }
+            Toggle(isOn: $captions) {
+                SettingsLabel("Captions", symbol: "captions.bubble", detail: "Words under the expert's clip.")
+            }
             Picker(selection: $captionSize) {
                 ForEach(CaptionSize.allCases) { Text($0.title).tag($0.rawValue) }
             } label: {
                 SettingsLabel("Caption Size", symbol: "textformat.size")
             }
             CaptionPreview(size: CaptionSize(rawValue: captionSize) ?? .medium)
-            Toggle(isOn: Binding(get: { voiceNext }, set: setVoiceNext)) { SettingsLabel("Voice Next", symbol: "waveform") }
-            Toggle(isOn: $stepResults) { SettingsLabel("Step Results", symbol: "flag.checkered") }
+            Toggle(isOn: Binding(get: { voiceNext }, set: setVoiceNext)) {
+                SettingsLabel("Voice Next", symbol: "waveform", detail: "Say \u{201C}next\u{201D} or \u{201C}back\u{201D} to move between steps.")
+            }
+            Toggle(isOn: $stepResults) {
+                SettingsLabel("Step Results", symbol: "flag.checkered", detail: "A short note after each step with your time.")
+            }
             #if os(iOS)
-            Toggle(isOn: $haptics) { SettingsLabel("Haptics", symbol: "hand.tap") }
+            Toggle(isOn: $haptics) {
+                SettingsLabel("Haptics", symbol: "hand.tap", detail: "Light taps when you press buttons and finish steps.")
+            }
             #endif
         } header: {
             Text("Learn")
@@ -148,7 +162,7 @@ private struct SettingsList: View {
         if AppPermission.speech.status == .unavailable {
             return "Voice Next needs speech recognition, which this build of HandOver cannot use yet."
         }
-        return "Voice Next listens for \u{201C}next\u{201D} and \u{201C}back\u{201D} while a lesson is open, and ignores the expert's clip while it plays. Turn it off in a noisy room."
+        return "Voice Next listens only while a lesson is open, and ignores the expert's clip while it plays. Turn it off in a noisy room."
     }
 
     private func setVoiceNext(_ on: Bool) {
@@ -228,17 +242,26 @@ private struct SettingsList: View {
 struct SettingsLabel: View {
     let title: String
     let symbol: String
+    /// One short line under the title, for rows whose name alone does not say what they do.
+    var detail: String?
     @Environment(\.theme) private var theme
 
-    init(_ title: String, symbol: String) {
+    init(_ title: String, symbol: String, detail: String? = nil) {
         self.title = title
         self.symbol = symbol
+        self.detail = detail
     }
 
     var body: some View {
         HStack(spacing: HOSpace.m) {
             SymbolTile(symbol: symbol, side: 30)
-            Text(title).font(theme.fonts.body).foregroundStyle(theme.colors.ink)
+            VStack(alignment: .leading, spacing: HOSpace.xxs) {
+                Text(title).font(theme.fonts.body).foregroundStyle(theme.colors.ink)
+                if let detail {
+                    Text(detail).font(theme.fonts.footnote).foregroundStyle(theme.colors.ink2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
         }
     }
 

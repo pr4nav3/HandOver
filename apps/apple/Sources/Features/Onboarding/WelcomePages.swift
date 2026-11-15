@@ -13,7 +13,7 @@ struct WelcomePages: View {
     static let pages: [(title: String, line: String)] = [
         ("An expert does it once", "They record the task on their phone or Ray-Ban Meta glasses and talk through each step."),
         ("We turn it into steps", "HandOver finds where each step starts and ends, cuts a clip for each one, and adds captions."),
-        ("Your camera follows along", "Point a phone at your work. When a step looks done, the next clip starts."),
+        ("Your camera follows along", "Prop up a phone or wear Meta glasses. When a step looks done, the next clip starts."),
         ("You get a score and a tip", "See how each step went against the expert, and what to practice next."),
     ]
 

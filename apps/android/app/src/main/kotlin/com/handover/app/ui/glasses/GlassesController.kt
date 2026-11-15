@@ -88,8 +88,8 @@ sealed interface GlassesEvent {
 /**
  * The learner's Ray-Ban Meta glasses as a frame source, through the Meta Wearables Device Access
  * Toolkit 1.0.1 (API checked against the 1.0.1 AARs and Meta's CameraAccess sample). The session
- * streams VideoQuality.LOW at 2 fps, raw frames; each frame the caller accepts becomes a JPEG at
- * quality 60 through NV21. A session that reaches STARTED but sends no frame in 5 s, or a critical
+ * streams VideoQuality.LOW at 15 fps, raw frames; each frame the caller accepts becomes a JPEG
+ * through NV21 (see GlassesFrames). A session that reaches STARTED but sends no frame in 5 s, or a critical
  * stream error, asks the screen to fall back to the phone camera.
  *
  * Not device-tested in this repo: everything here compiles against the real toolkit, but no glasses
@@ -209,7 +209,7 @@ class GlassesController(private val context: Context, private val scope: Corouti
     }
 
     private fun startCamera(s: DeviceSession, offer: (FrameSize, () -> ByteArray) -> Boolean) {
-        val added = s.addCamera(StreamConfiguration(videoQuality = VideoQuality.LOW, frameRate = 2, compressVideo = false))
+        val added = s.addCamera(StreamConfiguration(videoQuality = VideoQuality.LOW, frameRate = 15, compressVideo = false))
         val cam = added.getOrNull()
         if (cam == null) {
             fail(GlassesPhase.Failed, added.errorOrNull()?.description, fallBack = "The glasses camera did not start. Using the phone camera.")

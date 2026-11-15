@@ -77,6 +77,7 @@ enum HubCommand: Sendable, Equatable {
     case back(from: Int?)
     case goto(step: Int)
     case dismissMistake
+    case endLesson
     case hello(CameraHello)
 
     var isNavigation: Bool {
@@ -102,6 +103,8 @@ enum HubCommand: Sendable, Equatable {
             object = ["type": .string("goto"), "step": .int(step)]
         case .dismissMistake:
             object = ["type": .string("dismiss_mistake")]
+        case .endLesson:
+            object = ["type": .string("end_lesson")]
         case .hello(let hello):
             object = [
                 "type": .string("hello"), "device_id": .string(hello.deviceId), "name": .string(hello.name),

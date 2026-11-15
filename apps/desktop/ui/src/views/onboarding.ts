@@ -201,7 +201,7 @@ function connectPage(): Raw {
       <form class="ob-form" id="ob-connect" autocomplete="off">
         <label class="field"><span>Hub address</span>
           <input id="ob-address" name="address" placeholder="192.168.1.20:8000" spellcheck="false" autocapitalize="off" value="${ob.typed}" /></label>
-        <p class="hint">Find it on the hub computer. HandOver uses port 8000 unless you set another.</p>
+        <p class="hint">If the hub runs on this computer, type localhost. HandOver uses port 8000 unless you set another.</p>
         <button class="primary large" type="submit">Connect</button>
       </form>
       ${recent.length
@@ -212,7 +212,7 @@ function connectPage(): Raw {
               <button class="icon-button" data-act="ob-forget" data-base="${h.base}" title="Remove ${h.label}" aria-label="Remove ${h.label}">${icons.close}</button></div>`,
           )}</div>`
         : ""}
-      <p class="ob-foot">A hub is the HandOver server running on a computer near you.</p>`,
+`,
     { back: !ob.connectOnly },
   );
 }
@@ -393,7 +393,7 @@ export async function onboardingAction(act: string, t: HTMLElement) {
 
 async function doConnect(address: string) {
   if (!address.trim()) {
-    ob.fail = { title: "Type the hub's address", message: "Find it on the hub computer. HandOver uses port 8000 unless you set another." };
+    ob.fail = { title: "Type the hub's address", message: "If the hub runs on this computer, type localhost. HandOver uses port 8000 unless you set another." };
     return rerender();
   }
   ob.typed = address;

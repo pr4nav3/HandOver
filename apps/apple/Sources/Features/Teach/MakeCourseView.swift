@@ -51,7 +51,7 @@ struct MakeCourseView: View {
 
     private var navigationTitle: String {
         switch flow.phase {
-        case .idle, .titling: "Make Course"
+        case .idle, .titling: "New Lesson"
         case .finished: "Ready"
         default: flow.title
         }
@@ -90,12 +90,20 @@ struct MakeCourseView: View {
                     .focused($titleFocused)
                     .submitLabel(.go)
                     .onSubmit { flow.start() }
-                Text("One video of the whole task works best. Talk through each step as you do it.")
+                Text("Name it for what learners will make.")
                     .font(theme.fonts.footnote)
                     .foregroundStyle(theme.colors.ink2)
             }
+            Label {
+                Text("Next, HandOver finds the steps, cuts a clip for each one, and adds captions. Then you check them in the editor.")
+                    .fixedSize(horizontal: false, vertical: true)
+            } icon: {
+                Image(systemName: "wand.and.stars").foregroundStyle(theme.colors.accentInk)
+            }
+            .font(theme.fonts.callout)
+            .foregroundStyle(theme.colors.ink2)
             Button { flow.start() } label: {
-                Text("Make Course").frame(maxWidth: .infinity)
+                Text("Make Lesson").frame(maxWidth: .infinity)
             }
             .buttonStyle(HOButtonStyle(.primary, size: .large, fullWidth: true))
             .disabled(flow.video == nil)
@@ -108,11 +116,19 @@ struct MakeCourseView: View {
 
     private var progress: some View {
         VStack(alignment: .leading, spacing: HOSpace.l) {
-            Text(flow.title.isEmpty ? "New lesson" : flow.title)
-                .hoFont(.title, theme)
-                .foregroundStyle(theme.colors.ink)
+            VStack(alignment: .leading, spacing: HOSpace.xs) {
+                Text(flow.title.isEmpty ? "New lesson" : flow.title)
+                    .hoFont(.title, theme)
+                    .foregroundStyle(theme.colors.ink)
+                if flow.phase != .failed {
+                    Text("HandOver is turning your video into steps. You check them in the editor when it is done.")
+                        .font(theme.fonts.callout)
+                        .foregroundStyle(theme.colors.ink2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
             VStack(alignment: .leading, spacing: HOSpace.m) {
-                ForEach(flow.rows) { row in TeachStageRowView(row: row) }
+                ForEach(flow.rows) { row in TeachStageRowView(row: shown(row)) }
             }
             .raisedCard()
             if flow.phase == .failed, let failure = flow.failure {
@@ -122,6 +138,10 @@ struct MakeCourseView: View {
                     Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(theme.colors.bad)
                 }
                 .font(theme.fonts.body)
+                Text("Try Again sends the same video. If it fails again, record a new take and talk through each step.")
+                    .font(theme.fonts.footnote)
+                    .foregroundStyle(theme.colors.ink2)
+                    .fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: HOSpace.m) {
                     Button { flow.retry() } label: { Text("Try Again").frame(maxWidth: .infinity) }
                         .buttonStyle(HOButtonStyle(.primary, size: .large, fullWidth: true))
@@ -136,7 +156,7 @@ struct MakeCourseView: View {
                     .buttonStyle(HOButtonStyle(.secondary, size: .large, fullWidth: true))
                     .frame(maxWidth: .infinity)
             } else {
-                Text("You can leave this screen. The hub keeps working.")
+                Text("You can leave this screen. The hub keeps working, and the lesson shows up in Your Lessons.")
                     .font(theme.fonts.footnote)
                     .foregroundStyle(theme.colors.ink2)
                 Button { onClose() } label: { Text("Done").frame(maxWidth: .infinity) }
@@ -145,7 +165,23 @@ struct MakeCourseView: View {
         }
     }
 
+    /// The failure line under the card already says what went wrong and what to do, so the failed row does
+    /// not repeat the hub's words above it.
+    private func shown(_ row: TeachStageRow) -> TeachStageRow {
+        guard row.state == .failed, flow.failure != nil else { return row }
+        var row = row
+        row.detail = nil
+        return row
+    }
+
     // MARK: - Finished
+
+    /// What HandOver did, and what to do now.
+    private func readyLine(_ lesson: Lesson) -> String {
+        let n = lesson.steps.count
+        let found = "HandOver found \(n) \(n == 1 ? "step" : "steps"), cut a clip for each, and added captions."
+        return "\(found) Check them, then publish so learners can find it."
+    }
 
     private var finished: some View {
         VStack(alignment: .leading, spacing: HOSpace.l) {
@@ -156,9 +192,10 @@ struct MakeCourseView: View {
                     .symbolEffect(.bounce, value: flow.finishCount)
             }
             if let lesson = flow.lesson {
-                Text(CourseFormat.meta(steps: lesson.steps.count, duration: CourseFormat.duration(of: lesson)))
+                Text(readyLine(lesson))
                     .font(theme.fonts.callout)
                     .foregroundStyle(theme.colors.ink2)
+                    .fixedSize(horizontal: false, vertical: true)
                 LessonTimelineView(lesson: lesson, hub: hub)
             }
             if let id = flow.lessonId {

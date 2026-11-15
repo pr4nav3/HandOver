@@ -22,6 +22,7 @@ struct OrgPageView: View {
     @State private var confirmLeave = false
     @State private var confirmDelete = false
     @State private var toast: ToastItem?
+    @State private var teaching = false
 
     enum Tab: String, CaseIterable { case lessons = "Lessons", members = "Members" }
 
@@ -88,6 +89,15 @@ struct OrgPageView: View {
         .sheet(isPresented: $inviting, onDismiss: { Task { await load() } }) {
             InviteSheet(org: org)
         }
+        .sheet(isPresented: $teaching, onDismiss: { Task { await load() } }) {
+            NavigationStack {
+                TeachView()
+                    .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { teaching = false } } }
+            }
+            #if os(macOS)
+            .frame(minWidth: 720, minHeight: 600)
+            #endif
+        }
         .confirmationDialog("Remove \(removing?.name ?? "this person") from \(org.name)?",
                             isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }),
                             titleVisibility: .visible) {
@@ -120,7 +130,10 @@ struct OrgPageView: View {
             if can.canTeach || can.canInvite {
                 HStack(spacing: HOSpace.s) {
                     if can.canTeach {
-                        Button { Haptics.tap(); onTeach?(org) } label: { Label("Teach", systemImage: "video.badge.plus") }
+                        Button {
+                            Haptics.tap()
+                            if let onTeach { onTeach(org) } else { teaching = true }
+                        } label: { Label("Teach", systemImage: "video.badge.plus") }
                             .buttonStyle(HOButtonStyle(.primary))
                     }
                     if can.canInvite {
@@ -149,7 +162,14 @@ struct OrgPageView: View {
             VStack(spacing: 0) {
                 ForEach(Array(org.courses.enumerated()), id: \.element.id) { index, course in
                     if index > 0 { Divider().padding(.leading, HOSpace.l) }
-                    HORow(title: course.title, meta: lessonMeta(course))
+                    NavigationLink { LessonDetailView(lessonId: course.id) } label: {
+                        HORow(title: course.title, meta: lessonMeta(course), leading: { EmptyView() }) {
+                            Image(systemName: "chevron.right").font(.footnote.weight(.semibold))
+                                .foregroundStyle(theme.colors.ink3)
+                                .accessibilityHidden(true)
+                        }
+                    }
+                    .buttonStyle(HORowButtonStyle())
                 }
             }
             .hoCard()

@@ -23,6 +23,19 @@ async fn call(state: tauri::State<'_, AppState>, cmd: String, args: Value) -> Re
     tauri::async_runtime::spawn_blocking(move || engine.call(&cmd, &args)).await.map_err(|e| e.to_string())?
 }
 
+/// One JPEG from the window's webcam, as raw bytes (no JSON), for the hub's `/ws/camera`. The
+/// core keeps only the newest unsent frame, so this returns at once.
+#[tauri::command]
+fn camera_frame(state: tauri::State<'_, AppState>, request: tauri::ipc::Request<'_>) -> Result<(), String> {
+    match request.body() {
+        tauri::ipc::InvokeBody::Raw(bytes) => {
+            state.engine.camera_frame(bytes.clone());
+            Ok(())
+        }
+        _ => Err("camera_frame takes raw bytes".into()),
+    }
+}
+
 /// `--hub ADDRESS` and `--lesson ID` from the command line, so a shortcut or a script can open
 /// the app straight onto a hub and a lesson.
 #[tauri::command]
@@ -108,7 +121,7 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
         .manage(AppState { engine: engine.clone(), launch: options })
-        .invoke_handler(tauri::generate_handler![call, launch, notify, pick_video])
+        .invoke_handler(tauri::generate_handler![call, camera_frame, launch, notify, pick_video])
         .register_asynchronous_uri_scheme_protocol("hub", {
             let engine = engine.clone();
             move |_ctx, request, responder| {

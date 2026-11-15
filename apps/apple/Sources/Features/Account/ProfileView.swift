@@ -75,7 +75,10 @@ struct ProfileView: View {
                 Text(user.name).hoFont(.title, theme).foregroundStyle(theme.colors.ink)
                 HStack(spacing: HOSpace.s) {
                     RolePill(text: user.roleTitle)
-                    Text(accounts.hub?.host ?? "").font(theme.fonts.callout).foregroundStyle(theme.colors.ink2)
+                    if let host = accounts.hub?.host {
+                        Text("Account on \(host)").font(theme.fonts.callout).foregroundStyle(theme.colors.ink2)
+                            .lineLimit(1)
+                    }
                 }
             }
             Spacer(minLength: 0)
@@ -95,7 +98,7 @@ struct ProfileView: View {
                 let tracked = items.filter { $0.progress != nil }
                 if tracked.isEmpty {
                     HOEmptyState(symbol: "chart.bar", title: "No progress yet",
-                                 message: "Finish a lesson and your results show up here.")
+                                 message: "Open a lesson from Home. When you finish it, your results show up here.")
                         .frame(minHeight: 220)
                         .hoCard()
                 } else {

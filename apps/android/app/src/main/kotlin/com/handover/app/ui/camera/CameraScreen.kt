@@ -232,21 +232,23 @@ private fun CameraMode(state: AppState, vm: AppViewModel, modifier: Modifier, on
         toast = toast,
     )
 
-    // One offer function for both sources: the gate lets about one frame a second through, the
+    // One offer function for both sources: the gate lets about 15 frames a second through, the
     // socket sends only when idle, and the stats count only frames that left the phone.
+    // The JPEG is made only for frames that will go out; a busy socket drops the frame (FrameSender).
+    val useGlassesNow by rememberUpdatedState(prefs.useGlasses)
+    val lastBytes = remember { arrayOfNulls<ByteArray>(1) }
+    val sender = remember(gate) {
+        FrameSender(gate, busy = { socket?.isBusy() ?: true }, send = { bytes -> (socket?.sendFrame(bytes) == true).also { if (it) lastBytes[0] = bytes } })
+    }
     val offer: (FrameSize, () -> ByteArray) -> Boolean = { jpegSize, jpeg ->
-        val now = SystemClock.elapsedRealtime()
-        if (!gate.ready(now)) false else {
-            val bytes = jpeg()
-            val sent = socket?.sendFrame(bytes) == true
-            if (sent) {
-                gate.sent(now)
-                meter.record(now)
-                sentSize = jpegSize
-                if (prefs.useGlasses) glassesFrame = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
-            }
-            sent
+        val sent = sender.offer(jpeg)
+        if (sent) {
+            meter.record(SystemClock.elapsedRealtime())
+            sentSize = jpegSize
+            val bytes = lastBytes[0]
+            if (useGlassesNow && bytes != null) glassesFrame = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
         }
+        sent
     }
     val activityForGlasses = activity
     val cameraPermission = rememberLauncherForActivityResult(Wearables.RequestPermissionContract()) { result ->
@@ -295,7 +297,7 @@ private fun CameraMode(state: AppState, vm: AppViewModel, modifier: Modifier, on
         }) else null,
         preview = {
             if (prefs.useGlasses) {
-                // The glasses' own picture: the last frame sent, about once a second.
+                // The glasses' own picture: the last frame sent, up to 15 a second.
                 glassesFrame?.let { Image(it, "Glasses view", contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize()) }
             } else CameraPreview(facing, offer)
         },
@@ -327,9 +329,9 @@ private fun CameraPreview(facing: CameraFacing, offer: (FrameSize, () -> ByteArr
         future.addListener({
             val p = future.get().also { provider[0] = it }
             val preview = Preview.Builder().build().also { it.surfaceProvider = previewView.surfaceProvider }
-            // Ask for about 1280 x 720; the pipeline scales to 960 on the long side either way.
+            // Ask for about 640 x 480 for analysis, so 15 encodes a second stay light; the preview keeps its own full size.
             val selector = ResolutionSelector.Builder()
-                .setResolutionStrategy(ResolutionStrategy(android.util.Size(1280, 720), ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER))
+                .setResolutionStrategy(ResolutionStrategy(android.util.Size(640, 480), ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER))
                 .build()
             val analysis = ImageAnalysis.Builder()
                 .setResolutionSelector(selector)

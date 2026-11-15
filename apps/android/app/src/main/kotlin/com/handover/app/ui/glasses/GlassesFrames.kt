@@ -25,7 +25,7 @@ enum class YuvLayout {
  * [toNv21] so it is unit-tested; the JPEG step needs Android.
  */
 object GlassesFrames {
-    const val JPEG_QUALITY = 60
+    const val JPEG_QUALITY = 50
 
     /**
      * Set when a device test shows swapped colors (blue skin, orange sky). Off by default. Kept here,

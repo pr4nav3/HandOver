@@ -121,6 +121,8 @@ export interface Sheet {
   onAction?: (action: string, el: HTMLElement) => void;
   onSubmit?: (form: HTMLFormElement) => void;
   onInput?: (el: HTMLInputElement) => void;
+  /** Runs when the sheet closes (not when another sheet replaces it). */
+  onClose?: () => void;
 }
 
 let current: Sheet | null = null;
@@ -133,7 +135,9 @@ export function openSheet(s: Sheet) {
 }
 
 export function closeSheet() {
+  const closing = current;
   current = null;
+  closing?.onClose?.();
   const el = document.getElementById("sheet")!;
   el.hidden = true;
   el.innerHTML = "";

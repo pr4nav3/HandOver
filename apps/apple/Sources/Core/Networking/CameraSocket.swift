@@ -7,7 +7,7 @@ actor CameraSocket {
     /// The hub ignores frames over 2 MB.
     static let maxFrameBytes = 2 * 1024 * 1024
     /// The hub drops frames from one camera closer together than 0.2 s, so do not spend the upload.
-    static let minFrameGap: Duration = .milliseconds(200)
+    static let minFrameGap: Duration = .milliseconds(50)
 
     nonisolated let events: AsyncStream<HubSocket.Event>
     nonisolated let hello: CameraHello

@@ -164,6 +164,11 @@ final class AppModel {
         Task { await socket?.dismissMistake() }
     }
 
+    /// Tells the hub to stop the run and unload the lesson (end_lesson), for every viewer.
+    func endLesson() {
+        Task { await socket?.endLesson() }
+    }
+
     func clearError() {
         errorMessage = nil
         session.clearError()

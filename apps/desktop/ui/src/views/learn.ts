@@ -4,9 +4,11 @@
 // (section 8) with the score, best and weakest step, a tip and the steps breakdown, all from
 // this run's real events (section 20).
 
-import { frameUrl, lessonUrl, toSeconds, type Advance, type HubState, type Lesson, type Mistake, type Step } from "../api";
+import { frameUrl, lessonUrl, toSeconds, type Advance, type CameraLink, type HubState, type Lesson, type Mistake, type Step } from "../api";
 import { playChime } from "../chime";
-import { mmss, ring } from "../components";
+import { empty, mmss, ring } from "../components";
+import { LiveCanvas, type LocalState } from "../frames";
+import type { CameraChoice } from "../state";
 import { icons } from "../icons";
 import { html, paint, type Raw } from "../util";
 import { stepRow } from "./course";
@@ -16,6 +18,9 @@ export interface LearnModel {
   lesson: Lesson | null;
   down: boolean;
   chime: boolean;
+  /** running: the hub has this lesson; starting: it was asked to; none: no lesson to show. */
+  phase: "running" | "starting" | "none";
+  camera: { choice: CameraChoice | null; local: LocalState; link: CameraLink };
 }
 
 export interface LearnActions {
@@ -24,6 +29,14 @@ export interface LearnActions {
   goto: (step: number) => void;
   dismissMistake: () => void;
   library: () => void;
+  /** Opens the lesson list (no lesson running). */
+  pick: () => void;
+  /** Shows the phone pairing code. */
+  pair: () => void;
+  /** Opens "How should HandOver see your hands?". */
+  chooseCamera: () => void;
+  /** Tries this computer's camera again after it failed. */
+  retryCamera: () => void;
   /** The run finished: its summary, for this device's progress and the rating prompt. */
   finished: (s: RunSummary) => void;
 }
@@ -72,15 +85,12 @@ const TEMPLATE = html`<div class="learn">
   <main class="learn-grid">
     <div class="live-col">
     <section class="panel live" aria-label="Your camera">
-      <div class="live-frame hidden"><img alt="Your camera" />
+      <div class="live-frame hidden"><canvas class="live-canvas" role="img" aria-label="Your camera"></canvas>
+        <video class="local-preview" muted playsinline aria-label="This computer's camera" hidden></video>
         <span class="rec" hidden title="Frames come from a recorded video, not a live camera"><span class="rec-dot"></span>Recording</span>
         <p class="live-note" role="status" hidden>Camera lost. Keep going with Next.</p>
       </div>
-      <div class="placeholder live-ph">
-        ${icons.camera}
-        <p class="placeholder-title">Waiting for camera</p>
-        <p class="placeholder-hint">Open HandOver on your phone and tap Be the Camera.</p>
-      </div>
+      <div class="placeholder live-ph"></div>
       <span class="live-chip" hidden></span>
     </section>
     <section class="goal panel" aria-label="What done looks like" hidden>
@@ -120,19 +130,27 @@ const TEMPLATE = html`<div class="learn">
     </section>
   </main>
   <div class="done-layer" hidden></div>
+  <div class="learn-empty" hidden></div>
 </div>`;
 
 const expertOf = (s: Step) => Math.max(0, toSeconds(s.end) - toSeconds(s.start));
 
 export class LearnView {
   private q = <T extends Element>(sel: string) => this.el.querySelector(sel) as T;
-  private live: HTMLImageElement;
+  private live: LiveCanvas;
   private video: HTMLVideoElement;
-  private model: LearnModel = { state: null, lesson: null, down: false, chime: true };
+  /** The preview of this computer's camera, straight from getUserMedia. */
+  readonly localVideo: HTMLVideoElement;
+  private model: LearnModel = {
+    state: null,
+    lesson: null,
+    down: false,
+    chime: true,
+    phase: "none",
+    camera: { choice: null, local: "off", link: "off" },
+  };
   private hasFrame = false;
   private stale = false;
-  private loadingFrame = false;
-  private pendingFrame = 0;
   private liveAspect = 16 / 9;
   private mistake: Mistake | null = null;
   private flashVerified = false;
@@ -155,10 +173,14 @@ export class LearnView {
     private actions: LearnActions,
   ) {
     paint(el, TEMPLATE);
-    this.live = this.q(".live-frame img");
-    this.video = this.q("video");
-    this.live.addEventListener("load", () => this.frameLoaded(true));
-    this.live.addEventListener("error", () => this.frameLoaded(false));
+    this.live = new LiveCanvas(this.q(".live-canvas"), frameUrl);
+    this.live.onDraw = (w, h) => this.frameDrawn(w, h);
+    this.video = this.q(".clip video");
+    this.localVideo = this.q(".local-preview");
+    this.localVideo.addEventListener("loadedmetadata", () => {
+      const v = this.localVideo;
+      if (v.videoWidth && v.videoHeight) this.setAspect(v.videoWidth / v.videoHeight);
+    });
     this.video.addEventListener("loadedmetadata", () => {
       const v = this.video;
       if (v.videoWidth && v.videoHeight) this.q<HTMLElement>(".clip").style.aspectRatio = `${v.videoWidth} / ${v.videoHeight}`;
@@ -185,6 +207,10 @@ export class LearnView {
         this.actions.goto(0);
       } else if (act === "practice") this.actions.goto(Number(t.dataset.step));
       else if (act === "library") this.actions.library();
+      else if (act === "pick") this.actions.pick();
+      else if (act === "pair-phone") this.actions.pair();
+      else if (act === "camera-change") this.actions.chooseCamera();
+      else if (act === "camera-retry") this.actions.retryCamera();
     });
     new ResizeObserver(() => this.fit()).observe(this.q(".live-col"));
     new ResizeObserver(() => this.fit()).observe(this.q(".side"));
@@ -206,7 +232,10 @@ export class LearnView {
 
   setActive(on: boolean) {
     this.active = on;
-    if (!on) this.video.pause();
+    if (!on) {
+      this.video.pause();
+      this.live.stop();
+    }
     this.render();
   }
 
@@ -244,35 +273,33 @@ export class LearnView {
     this.render();
   }
 
-  onFrame(n: number) {
-    if (this.loadingFrame) {
-      this.pendingFrame = n;
-      return;
-    }
-    this.loadingFrame = true;
-    this.live.src = frameUrl(n);
+  /** True while this computer's own camera is the picture (its echo from the hub is ignored). */
+  private get localOn(): boolean {
+    return this.model.camera.choice === "computer" && this.model.camera.local === "on";
   }
 
-  private frameLoaded(ok: boolean) {
-    this.loadingFrame = false;
-    if (ok) {
-      const w = this.live.naturalWidth;
-      const h = this.live.naturalHeight;
-      if (w && h && Math.abs(w / h - this.liveAspect) > 0.01) {
-        this.liveAspect = w / h;
-        this.fit();
-      }
-      if (!this.hasFrame) {
-        this.hasFrame = true;
-        this.fit();
-      }
+  /** A new live frame from the hub: only the newest is fetched, decoded and drawn. */
+  onFrame(n: number) {
+    if (!this.active || this.localOn) return;
+    this.live.offer(n);
+  }
+
+  private setAspect(a: number) {
+    if (Math.abs(a - this.liveAspect) > 0.01) {
+      this.liveAspect = a;
+      this.fit();
+    }
+  }
+
+  private frameDrawn(w: number, h: number) {
+    if (w && h) this.setAspect(w / h);
+    const first = !this.hasFrame;
+    this.hasFrame = true;
+    if (first) this.fit();
+    // Only a change of state needs a render; plain new frames are already on the canvas.
+    if (first || this.stale) {
       this.stale = false;
       this.render();
-    }
-    if (this.pendingFrame) {
-      const n = this.pendingFrame;
-      this.pendingFrame = 0;
-      this.onFrame(n);
     }
   }
 
@@ -427,16 +454,34 @@ export class LearnView {
       }).join(""),
     );
 
-    // Live camera: never a frozen frame while the hub is unreachable.
-    const showLive = !down && this.hasFrame && (!!s?.camera_connected || this.stale);
-    const cameraLost = showLive && (this.stale || !s?.camera_connected);
+    // Live camera: this computer's own preview, or the hub's frames. Never a frozen frame
+    // while the hub is unreachable.
+    const local = this.localOn;
+    const showHub = !local && !down && this.hasFrame && (!!s?.camera_connected || this.stale);
+    const showLive = local || showHub;
+    const cameraLost = showHub && (this.stale || !s?.camera_connected);
     this.q<HTMLElement>(".live-frame").classList.toggle("hidden", !showLive);
-    this.live.className = cameraLost ? "lost" : "";
+    this.localVideo.hidden = !local;
+    this.live.canvas.hidden = local;
+    this.live.canvas.classList.toggle("lost", cameraLost);
     this.q<HTMLElement>(".live-note").hidden = !cameraLost;
-    this.q<HTMLElement>(".rec").hidden = !(showLive && !cameraLost && s?.camera?.source === "file");
-    this.q<HTMLElement>(".live-ph").hidden = showLive;
+    this.q<HTMLElement>(".rec").hidden = !(showHub && !cameraLost && s?.camera?.source === "file");
+    const ph = this.q<HTMLElement>(".live-ph");
+    ph.hidden = showLive;
+    if (!showLive) paint(ph, this.placeholder());
     const chip = this.q<HTMLElement>(".live-chip");
-    const camName = !down && s?.camera_connected && s?.camera?.source !== "file" ? s?.camera?.name : "";
+    const link = this.model.camera.link;
+    const camName = local
+      ? link === "standby"
+        ? "This computer, standby: another camera is active"
+        : link === "sending"
+          ? "This computer"
+          : link === "replaced"
+            ? "This computer, stopped: another window took over"
+            : "This computer, connecting"
+      : !down && s?.camera_connected && s?.camera?.source !== "file"
+        ? s?.camera?.name
+        : "";
     chip.hidden = !camName;
     chip.textContent = camName ?? "";
 
@@ -547,6 +592,41 @@ export class LearnView {
     const done = this.q<HTMLElement>(".done-layer");
     done.hidden = !(isDone && this.summary);
     if (isDone && this.summary) paint(done, this.doneMarkup(this.summary, lesson));
+
+    // No lesson, or one on its way.
+    const blank = this.q<HTMLElement>(".learn-empty");
+    const phase = this.model.phase;
+    blank.hidden = phase === "running" && !!lesson;
+    if (!blank.hidden)
+      paint(
+        blank,
+        phase === "none"
+          ? empty(icons.filmBig, "No lesson running", "Pick a lesson to start learning.", html`<button class="primary" data-act="pick">Pick a Lesson</button>`)
+          : html`<div class="empty-state"><span class="spinner"></span><p class="empty-message">Starting the lesson</p></div>`,
+      );
+  }
+
+  /** What the live pane says before there is a picture: depends on the chosen camera. */
+  private placeholder(): Raw {
+    const { choice, local } = this.model.camera;
+    const box = (icon: Raw, title: string, hint: string, actions: Raw | string = "") =>
+      html`${icon}<p class="placeholder-title">${title}</p><p class="placeholder-hint">${hint}</p>${actions ? html`<div class="placeholder-actions">${actions}</div>` : ""}`;
+    const change = html`<button class="ghost small" data-act="camera-change">Change Camera</button>`;
+    if (this.model.down) return box(icons.camera, "Reconnecting to the hub", "The picture comes back when the hub does.");
+    if (choice === "computer") {
+      if (local === "denied")
+        return box(icons.camera, "Camera access is off", "Allow HandOver to use the camera in your system settings, then try again.", html`<button class="ghost small" data-act="camera-retry">Try Again</button>${change}`);
+      if (local === "missing")
+        return box(icons.camera, "No camera found", "Connect a webcam, or use a phone as the camera.", html`<button class="ghost small" data-act="camera-retry">Try Again</button>${change}`);
+      if (local === "error")
+        return box(icons.camera, "The camera did not start", "Close other apps that use the camera, then try again.", html`<button class="ghost small" data-act="camera-retry">Try Again</button>${change}`);
+      return html`<span class="spinner"></span><p class="placeholder-title">Starting the camera</p>`;
+    }
+    if (choice === "phone")
+      return box(icons.camera, "Waiting for the phone", "Open HandOver on the phone and tap Be the Camera.", html`<button class="ghost small" data-act="pair-phone">Show Pairing Code</button>${change}`);
+    if (choice === "glasses")
+      return box(icons.camera, "Waiting for the glasses", "On the phone, open HandOver, tap Be the Camera, then choose Glasses.", html`<button class="ghost small" data-act="pair-phone">Show Pairing Code</button>${change}`);
+    return box(icons.camera, "No camera yet", "Choose how HandOver sees your hands.", html`<button class="ghost small" data-act="camera-change">Choose Camera</button>`);
   }
 
   private play() {

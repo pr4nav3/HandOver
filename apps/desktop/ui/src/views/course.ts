@@ -6,6 +6,7 @@ import { cover, empty, loading, mmss, openSheet, closeSheet, drawSheet, ring, st
 import { icons } from "../icons";
 import { app, errorText, learn, localProgress, rerender, toast } from "../state";
 import { html, paint, type Raw } from "../util";
+import { cameraRow } from "./pair";
 
 let detail: { id: string; d: CourseDetail | null; ratings: Ratings | null; error: string } | null = null;
 
@@ -66,7 +67,7 @@ export function renderCourse(el: HTMLElement, id: string) {
     return;
   }
   if (detail.error) {
-    paint(el, html`<div class="page">${empty(icons.filmBig, "Could not open this lesson", detail.error)}</div>`);
+    paint(el, html`<div class="page">${empty(icons.filmBig, "Could not open this lesson", detail.error, html`<button class="secondary" data-go='{"name":"browse"}'>Back to Lessons</button>`)}</div>`);
     return;
   }
   if (!detail.d) {
@@ -100,6 +101,7 @@ export function renderCourse(el: HTMLElement, id: string) {
               ${lesson.tools?.length ? html`<p class="tools"><strong>Tools</strong> ${lesson.tools.join(", ")}</p>` : ""}
             </div>`
           : ""}
+        ${steps.length ? cameraRow() : ""}
         <div class="detail-actions">
           ${p && !p.done && p.step > 0
             ? html`<button class="primary large" data-act="course-continue">Continue at Step ${p.step + 1}</button>

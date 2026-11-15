@@ -28,7 +28,7 @@ struct CameraView: View {
             start
             #endif
         }
-        .navigationTitle("Camera")
+        .navigationTitle("Be the Camera")
         #if os(iOS)
         .fullScreenCover(isPresented: $running) { CameraModeScreen { running = false }.environment(model) }
         #endif
@@ -61,17 +61,17 @@ struct CameraView: View {
         ScrollView {
             VStack(spacing: HOSpace.xl) {
                 VStack(spacing: HOSpace.m) {
-                    SymbolTile(symbol: "camera.viewfinder", side: 64)
-                    Text("Use \(DeviceWord.this) as the camera")
+                    SymbolTile(symbol: "video.circle", side: 64)
+                    Text("Be the Camera")
                         .hoFont(.display, theme).foregroundStyle(theme.colors.ink).multilineTextAlignment(.center)
-                    Text("Point it at your work. The hub watches through it to know when a step is done. Frames go to your hub only and are never saved.")
-                        .font(theme.fonts.callout).foregroundStyle(theme.colors.ink2).multilineTextAlignment(.center)
+                    Text("Use \(DeviceWord.this) as the camera for someone else's lesson.")
+                        .font(theme.fonts.body).foregroundStyle(theme.colors.ink2).multilineTextAlignment(.center)
                         .frame(maxWidth: 400)
                 }
-                .padding(.top, HOSpace.xxl)
-                if model.hub == nil {
-                    HOBanner(symbol: "wifi.exclamationmark", text: "Connect to a hub in Settings first.")
-                }
+                .padding(.top, HOSpace.xl)
+                hubStatus.frame(maxWidth: 400)
+                SetupSteps(title: "How to use it", steps: Self.steps)
+                .frame(maxWidth: 400)
                 VStack(spacing: HOSpace.s) {
                     Button { begin() } label: { Label("Start Camera", systemImage: "video.fill") }
                         .buttonStyle(HOButtonStyle(.primary, size: .large, fullWidth: true))
@@ -84,6 +84,9 @@ struct CameraView: View {
                         .font(theme.fonts.footnote).foregroundStyle(theme.colors.ink2).multilineTextAlignment(.center)
                         .padding(.top, HOSpace.xs)
                     #endif
+                    Text("Frames go to your hub only and are never saved.")
+                        .font(theme.fonts.footnote).foregroundStyle(theme.colors.ink2).multilineTextAlignment(.center)
+                        .padding(.top, HOSpace.xs)
                 }
                 .frame(maxWidth: 400)
             }
@@ -91,6 +94,28 @@ struct CameraView: View {
             .frame(maxWidth: .infinity)
         }
         .hoPaperBackground()
+    }
+
+    private static var steps: [String] {
+        #if os(macOS)
+        ["Point this Mac's camera at the learner's hands.", "Click Start Camera.",
+         "Start the lesson on the learner's screen. This screen shows the step and Next."]
+        #else
+        ["Prop \(DeviceWord.this) up so the back camera sees the learner's hands.", "Tap Start Camera.",
+         "Start the lesson on the learner's screen. This screen shows the step and Next."]
+        #endif
+    }
+
+    /// Which hub the frames go to, or what to do first.
+    @ViewBuilder private var hubStatus: some View {
+        if let hub = model.hub {
+            HOBanner(symbol: model.connection.isConnected ? "checkmark.circle.fill" : "arrow.clockwise",
+                     tone: model.connection.isConnected ? .good : .caution,
+                     text: model.connection.isConnected ? "Connected to the hub at \(hub.displayName)."
+                         : "Connecting to the hub at \(hub.displayName).")
+        } else {
+            HOBanner(symbol: "wifi.exclamationmark", text: "Connect to a hub in Settings first.")
+        }
     }
 
     private func begin() {

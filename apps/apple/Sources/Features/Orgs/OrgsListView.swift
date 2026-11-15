@@ -53,7 +53,7 @@ struct OrgsListView: View {
         let data = preset ?? mine
         if !accounts.support.hasAccounts && preset == nil {
             HOEmptyState(symbol: "person.3", title: "No organizations on this hub",
-                         message: "This hub has no accounts, so everyone shares one library.")
+                         message: "This hub has no accounts, so everyone shares the same lessons on Home.")
         } else if !accounts.isSignedIn && preset == nil {
             HOEmptyState(symbol: "person.3", title: "Sign in to see your organizations",
                          message: "Organizations group people and lessons, like a team or a class.") {
@@ -62,12 +62,12 @@ struct OrgsListView: View {
         } else if let data {
             if data.orgs.isEmpty && data.invites.isEmpty {
                 HOEmptyState(symbol: "person.3", title: "No organizations yet",
-                             message: "Organizations group people and lessons, like a team or a class.") {
+                             message: "Organizations group people and lessons, like a team or a class. Got an invite code? Join here.") {
                     VStack(spacing: HOSpace.s) {
                         Button("Join with a Code") { Haptics.tap(); joining = true }
                             .buttonStyle(HOButtonStyle(.primary, size: .large, fullWidth: true))
                         Button("Create Organization") { Haptics.tap(); creating = true }
-                            .buttonStyle(HOButtonStyle(.secondary, size: .large, fullWidth: true))
+                            .buttonStyle(HOButtonStyle(.quiet, size: .large, fullWidth: true))
                     }
                     .frame(maxWidth: 280)
                 }

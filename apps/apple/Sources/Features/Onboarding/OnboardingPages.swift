@@ -80,7 +80,7 @@ struct ConnectPage: View {
                         .hoFont(.largeTitle, theme)
                         .foregroundStyle(theme.colors.ink)
                         .multilineTextAlignment(.center)
-                    Text("The hub is HandOver running on a computer near you. It keeps your lessons.")
+                    Text("The hub is the HandOver app running on a laptop near you. It keeps your lessons.")
                         .font(theme.fonts.body)
                         .foregroundStyle(theme.colors.ink2)
                         .multilineTextAlignment(.center)
@@ -92,7 +92,7 @@ struct ConnectPage: View {
             .padding(.horizontal, HOSpace.l)
             Spacer(minLength: HOSpace.xxl)
             VStack(spacing: HOSpace.s) {
-                #if os(macOS)
+                // The hub shows no QR code of its own (run_server.sh prints the address), so typing comes first.
                 Button { open(address: true) } label: { Text("Enter Address") }
                     .buttonStyle(HOButtonStyle(.primary, size: .large, fullWidth: true))
                     .keyboardShortcut(.defaultAction)
@@ -100,16 +100,11 @@ struct ConnectPage: View {
                     Button { open(address: false) } label: { Label("Scan a Code", systemImage: "qrcode.viewfinder") }
                         .buttonStyle(HOButtonStyle(.secondary, size: .large, fullWidth: true))
                 }
-                #else
-                Button { open(address: false) } label: { Label("Connect to a Hub", systemImage: "qrcode.viewfinder") }
-                    .buttonStyle(HOButtonStyle(.primary, size: .large, fullWidth: true))
-                Button { open(address: true) } label: { Text("Enter Address") }
-                    .buttonStyle(HOButtonStyle(.secondary, size: .large, fullWidth: true))
-                #endif
-                Text("A hub is the HandOver server running on a computer near you.")
-                    .font(theme.fonts.caption)
-                    .foregroundStyle(theme.colors.ink3)
+                Text("No hub yet? Start HandOver on a laptop on the same Wi-Fi, then tap Enter Address.")
+                    .font(theme.fonts.footnote)
+                    .foregroundStyle(theme.colors.ink2)
                     .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
                     .padding(.top, HOSpace.xs)
             }
             .padding(.horizontal, HOSpace.l)
@@ -202,9 +197,9 @@ struct RolePage: View {
                     HStack {
                         Text("Both").font(theme.fonts.bodyMedium)
                         Spacer()
-                        if choice == .both {
-                            Image(systemName: "checkmark.circle.fill").foregroundStyle(theme.colors.accentInk)
-                        }
+                        Image(systemName: choice == .both ? "checkmark.circle.fill" : "circle")
+                            .font(.title3)
+                            .foregroundStyle(choice == .both ? theme.colors.accentInk : theme.colors.ink3)
                     }
                     .foregroundStyle(choice == .both ? theme.colors.accentInk : theme.colors.ink)
                     .padding(.horizontal, HOSpace.l)

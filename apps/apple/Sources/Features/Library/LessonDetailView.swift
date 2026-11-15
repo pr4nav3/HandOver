@@ -225,7 +225,17 @@ private struct LessonDetailScreen: View {
         .raisedCard()
     }
 
-    @ViewBuilder private var startButtons: some View {
+    private var startButtons: some View {
+        VStack(alignment: .leading, spacing: HOSpace.s) {
+            startButtonRow
+            CameraChoiceRow()
+            Text("Follow each clip. HandOver watches your hands and moves on when a step is done.")
+                .font(theme.fonts.footnote)
+                .foregroundStyle(theme.colors.ink2)
+        }
+    }
+
+    @ViewBuilder private var startButtonRow: some View {
         if let resume = model.resumeStep {
             HStack(spacing: HOSpace.m) {
                 Button { launcher.start(model.lessonId, at: resume, model: app) } label: {
