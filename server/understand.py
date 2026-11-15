@@ -648,8 +648,8 @@ def live_request(model: str, content: list[dict], schema: dict, secs: float) -> 
 def parse_understanding(text: str, entry: dict) -> dict:
     """Validate the JSON answer with check.py's guards, then the new fields.
 
-    check._parse_answer: lowercase done, confidence clamped, and yes with a differs other than "nothing" becomes
-    unsure. Here: stage outside -1..len(stages)-1 becomes -1, progress and mistake_confidence are clamped, the
+    check._parse_answer: lowercase done, confidence clamped, and a yes below HANDOVER_MIN_CONF becomes unsure
+    (a confident yes stays yes even when differs names something). Here: stage outside -1..len(stages)-1 becomes -1, progress and mistake_confidence are clamped, the
     mistake label is matched case-insensitively to the rubric (anything else is no mistake), a mistake at stage
     -1 is dropped (the model sometimes names "not started yet" as a mistake), and yes together
     with a named mistake becomes unsure: never advance on a contradiction."""

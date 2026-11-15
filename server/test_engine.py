@@ -1727,7 +1727,7 @@ def test_end_lesson_unloads_and_stops_run() -> None:
 
 
 def test_hub_info_pairing_fields() -> None:
-    with hub() as c, patched(main, lan_ip=lambda: "192.168.1.20"):
+    with hub() as c, patched(main, lan_ip=lambda: "192.168.1.20", has_certs=lambda: False):
         info = c.get("/api/hub-info").json()
         port = info["http_port"]
         assert info["hub_url"] == f"http://192.168.1.20:{port}"

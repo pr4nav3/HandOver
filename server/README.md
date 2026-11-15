@@ -21,6 +21,8 @@ scripts/certs.sh                          # once; HTTPS so iPhone Safari can use
 scripts/run_server.sh                     # http :8000, https :8443 when certs exist
 ```
 
+Windows (PowerShell): `.venv\Scripts\pip install -r server\requirements.lock`, make certs with mkcert (see the repo README, Run (Windows)), then `scripts\run_server.ps1` or `scripts\run_server.cmd`.
+
 No key, or working offline:
 
 ```sh

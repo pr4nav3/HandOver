@@ -348,7 +348,11 @@ def _one(text, **kw):
 def test_guards():
     u = _one(_answer(done="Yes", mistake="none"))
     assert (u.done, u.stage, u.progress, u.mistake) == ("yes", 2, 1.0, None) and u.reason is None
+    # check._parse_answer (b4014b6): a confident yes stays yes even when differs names something;
+    # only a yes below HANDOVER_MIN_CONF (0.8) becomes unsure. The reason is kept either way.
     u = _one(_answer(done="yes", differs="one flap still open"))
+    assert u.done == "yes" and u.reason == "one flap still open"
+    u = _one(_answer(done="yes", differs="one flap still open", confidence=0.6))
     assert u.done == "unsure" and u.reason == "one flap still open"
     u = _one(_answer(done="yes", mistake="Short Of Center", mistake_confidence=0.9))
     assert u.done == "unsure" and u.mistake == "short of center" and u.mistake_confidence == 0.9
