@@ -20,7 +20,7 @@ export const STATUS_WORD: Record<string, string> = { draft: "Draft", published: 
 export function cover(url: string | null | undefined, cls = "cover"): Raw {
   const src = hubFileUrl(url);
   return src
-    ? html`<span class="${cls}"><img src="${src}" alt="" loading="lazy" /></span>`
+    ? html`<span class="${cls}"><img src="${src}" alt="" /></span>`
     : html`<span class="${cls} empty-cover">${icons.film}</span>`;
 }
 

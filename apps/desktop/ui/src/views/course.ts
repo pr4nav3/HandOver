@@ -60,7 +60,7 @@ export function stepStatus(how: string | null | undefined, current: boolean): Ra
 export function stepRow(lessonId: string, s: Step, i: number, rev: number | undefined, how: string | null | undefined, current: boolean, yours?: number | null, act = "course-step"): Raw {
   return html`<button class="step-row ${current ? "current" : ""}" data-act="${act}" data-step="${i}">
     ${stepStatus(how, current)}
-    <span class="step-thumb"><img src="${lessonUrl(lessonId, s.ref_frame, rev)}" alt="" loading="lazy" /></span>
+    <span class="step-thumb"><img src="${lessonUrl(lessonId, s.ref_frame, rev)}" alt="" /></span>
     <span class="step-text">
       <span class="step-name"><span class="step-num">${i + 1}</span>${s.title}</span>
       <span class="step-meta">Expert ${mmss(expert(s))}${yours ? html` <span class="dot-sep"></span> You ${mmss(yours)}` : ""}</span>

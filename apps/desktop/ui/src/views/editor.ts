@@ -111,7 +111,7 @@ export function renderEditor(el: HTMLElement, id: string) {
             ${steps.map(
               (st, i) => html`<button class="ed-step ${i === ed.sel ? "on" : ""}" data-act="ed-select" data-step="${i}">
                 <span class="ed-hue" style="background:${i === ed.sel ? "var(--accent)" : "var(--border-strong)"}"></span>
-                <img src="${lessonUrl(id, st.ref_frame, ed.stamp)}" alt="" loading="lazy" />
+                <img src="${lessonUrl(id, st.ref_frame, ed.stamp)}" alt="" />
                 <span class="ed-step-text"><span class="ed-step-title">${i + 1}. ${st.title || "Untitled step"}</span>
                   <span class="ed-step-meta">${fmt(secs(st.start))} to ${fmt(secs(st.end))}${st.check_type === "manual" ? ", manual" : ""}</span></span>
               </button>`,
