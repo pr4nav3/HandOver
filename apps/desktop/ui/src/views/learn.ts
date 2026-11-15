@@ -176,6 +176,7 @@ export class LearnView {
   private interrupted = false;
   private summary: RunSummary | null = null;
   private lastListKey = "";
+  private mistakeKey = "";
   private layout: LearnLayout = readLearnLayout();
   private draggingLayout = false;
 
@@ -668,7 +669,20 @@ export class LearnView {
 
     // Mistake card, directly above the list (section 7.2).
     const card = this.q<HTMLElement>(".mistake-card");
-    card.hidden = !activeMistake;
+    livePane.classList.toggle("verdict-caution", !!activeMistake);
+    const mistakeKey = activeMistake ? JSON.stringify(activeMistake) : "";
+    if (mistakeKey !== this.mistakeKey) {
+      this.mistakeKey = mistakeKey;
+      card.getAnimations().forEach((animation) => animation.cancel());
+      if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) card.hidden = !activeMistake;
+      else if (activeMistake) {
+        card.hidden = false;
+        card.animate([{ opacity: 0, transform: "translateY(8px)" }, { opacity: 1, transform: "translateY(0)" }], { duration: 280, easing: "ease-out" });
+      } else if (!card.hidden) {
+        const exit = card.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 200, easing: "ease-out" });
+        void exit.finished.then(() => { if (!this.mistakeKey) card.hidden = true; }).catch(() => {});
+      }
+    } else if (!activeMistake && !card.getAnimations().length) card.hidden = true;
     if (activeMistake)
       paint(
         card,
@@ -730,6 +744,7 @@ export class LearnView {
       );
       list.querySelector<HTMLElement>(".step-row.current")?.scrollIntoView({ block: "nearest" });
     }
+    this.q<HTMLElement>(".course-list .step-row.current")?.classList.toggle("caution", !!activeMistake);
 
     // The verdict belongs to the learner's picture; evidence stays beside the current instruction.
     const feedback = learnFeedback(s, step, this.flashVerified);

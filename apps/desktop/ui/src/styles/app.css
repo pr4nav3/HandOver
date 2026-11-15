@@ -2557,6 +2557,14 @@ button.option-card:hover {
   border-color: var(--green);
 }
 
+.live.verdict-caution::after { border-color: var(--amber); }
+
+.course-list .step-row.current.caution {
+  background: color-mix(in srgb, var(--amber) 12%, var(--panel));
+}
+
+.course-list .step-row.current.caution .st { color: var(--amber); }
+
 .camera-verdict {
   position: absolute;
   top: 14px;
@@ -2975,7 +2983,8 @@ video::cue {
   border-radius: 12px;
   background: color-mix(in srgb, var(--amber) 14%, var(--panel));
   border: 1px solid color-mix(in srgb, var(--amber) 45%, transparent);
-  color: var(--amber);
+  border-left: 3px solid var(--amber);
+  color: var(--text);
 }
 
 .mistake-text {
