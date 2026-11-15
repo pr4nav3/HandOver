@@ -153,6 +153,8 @@ export class LearnView {
   private stale = false;
   private liveAspect = 16 / 9;
   private mistake: Mistake | null = null;
+  /** The last mistake said aloud. */
+  private spoken = "";
   private flashVerified = false;
   private flashTimer = 0;
   private resultTimer = 0;
@@ -257,7 +259,9 @@ export class LearnView {
     }
     if (s) {
       if (s.mistake !== undefined) this.mistake = s.mistake;
+      // Camera lost keeps the last frame, dimmed, until the hub says a camera is back.
       if (!s.camera_connected && prev?.camera_connected) this.stale = true;
+      if (s.camera_connected) this.stale = false;
       const pos = s.status === "done" ? s.total : s.step;
       if (this.runStart && pos !== this.pos) {
         if (this.pos < s.total) this.run(this.pos).ms += now - this.posAt;
@@ -296,11 +300,9 @@ export class LearnView {
     const first = !this.hasFrame;
     this.hasFrame = true;
     if (first) this.fit();
-    // Only a change of state needs a render; plain new frames are already on the canvas.
-    if (first || this.stale) {
-      this.stale = false;
-      this.render();
-    }
+    // Only a change of state needs a render; plain new frames are already on the canvas. A frame
+    // still on its way when the camera went does not clear the camera lost state.
+    if (first) this.render();
   }
 
   /** Sizes the live frame to its own aspect. A wide frame leaves room under it, which the
@@ -376,7 +378,18 @@ export class LearnView {
   onMistake(m: Mistake) {
     this.mistake = m;
     if (this.active && m.step < (this.model.lesson?.steps.length ?? 0)) this.run(m.step).mistakes += 1;
+    if (this.active) this.speak(m);
     this.render();
+  }
+
+  /** Says the mistake once, when the system has a voice. A repeat of the same note stays quiet. */
+  private speak(m: Mistake) {
+    const key = `${this.model.state?.rev ?? 0}:${m.step}:${m.kind}:${m.message}`;
+    const tts = typeof window !== "undefined" ? window.speechSynthesis : undefined;
+    if (!tts || !m.message || key === this.spoken) return;
+    this.spoken = key;
+    tts.cancel();
+    tts.speak(new SpeechSynthesisUtterance(m.message));
   }
 
   dismissMistake() {

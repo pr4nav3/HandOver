@@ -130,6 +130,10 @@ export interface HubState {
   check_offline_reason: string | null;
   /** Absent from older hubs; only an explicit value replaces the one on screen. */
   mistake?: Mistake | null;
+  /** Seconds between frames offered to the vision model (Revision 6). Absent from older hubs. */
+  check_interval_s?: number;
+  /** Live frames per second the hub forwards, at most (Revision 6). Absent from older hubs. */
+  ui_fps?: number;
   /** Derived by the core. */
   position: number;
   offline_label: string | null;

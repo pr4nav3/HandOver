@@ -3697,6 +3697,19 @@ button.back:disabled {
   padding: 8px 0;
 }
 
+.interval-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 8px 0;
+}
+
+.interval-row .segmented {
+  flex: none;
+  margin-bottom: 0;
+}
+
 .toggle-text {
   display: flex;
   flex-direction: column;
