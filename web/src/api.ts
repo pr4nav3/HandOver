@@ -176,18 +176,6 @@ export function withDefaults(raw: Lesson): Lesson {
   }
 }
 
-export async function uploadLesson(file: File, title: string): Promise<{ job: string; id: string }> {
-  const body = new FormData()
-  body.append('file', file)
-  body.append('title', title)
-  const res = await fetch('/api/lesson', { method: 'POST', body })
-  if (!res.ok) {
-    const detail = await errorDetail(res)
-    throw new HttpError(res.status, res.statusText, detail ? `Upload failed: ${detail}` : `Upload failed (${res.status})`)
-  }
-  return res.json()
-}
-
 /** URL of a file inside a lesson folder. `rev` busts the cache after a recut. */
 export const lessonUrl = (id: string, rel: string, rev?: number) =>
   `/lessons/${encodeURIComponent(id)}/${rel.replace(/^\/+/, '')}${rev ? `?v=${rev}` : ''}`
