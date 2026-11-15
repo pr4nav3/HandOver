@@ -27,6 +27,7 @@ await page.waitForFunction(() => document.getElementById('conn').textContent ===
 await page.waitForTimeout(800)
 
 const stats = await hook('/mock/camera_stats')
+await page.screenshot({ path: new URL('../screenshots/18-capture-sending.png', import.meta.url).pathname })
 check(stats.hello?.name === 'iPhone Safari' && stats.hello?.source === 'browser', `hello name from the device (${stats.hello?.name})`)
 const sub = await page.locator('#step').innerText()
 check(/^Step 2 of \d+ · Watching$/.test(sub), `status in words, not raw (${sub})`)

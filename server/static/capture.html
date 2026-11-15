@@ -10,6 +10,8 @@
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  /* Classes below set display, which would otherwise beat the hidden attribute. */
+  [hidden] { display: none !important; }
   html, body { margin: 0; height: 100%; background: #000; color: #f5f5f7;
     font: 17px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif; }
   body { display: flex; flex-direction: column;
@@ -51,11 +53,6 @@
   .nav button:active { opacity: 0.8; }
   .nav button:disabled { opacity: 0.35; }
   .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-  .seg { display: inline-flex; background: #1c1c1e; border-radius: 10px; padding: 2px; }
-  .seg button { appearance: none; border: 0; background: transparent; color: #f5f5f7; font: inherit;
-    font-size: 15px; padding: 7px 14px; border-radius: 8px; }
-  .seg button.sel { background: #3a3a3c; font-weight: 600; }
-  .label { color: #a1a1a6; font-size: 15px; }
   .stats { color: #a1a1a6; font-size: 15px; font-variant-numeric: tabular-nums; }
   .note { color: #8e8e93; font-size: 13px; margin: 0; }
   .err { color: #ff453a; font-size: 15px; margin: 0; }
@@ -86,14 +83,6 @@
   <p id="mistake" class="mistake" role="alert" hidden></p>
   <p id="idle" class="idle" hidden>Not sending. Check the hub address and network.</p>
   <div class="row">
-    <span class="label">Send a frame every</span>
-    <div class="seg" id="seg">
-      <button data-ms="500" class="sel">0.5 s</button>
-      <button data-ms="1000">1 s</button>
-      <button data-ms="2000">2 s</button>
-    </div>
-  </div>
-  <div class="row">
     <span class="stats" id="stats">0 frames sent</span>
     <span class="stats" id="wake"></span>
   </div>
@@ -114,9 +103,10 @@
   const rec = $("rec"), idleEl = $("idle"), camEl = $("cam"), stepEl = $("step"), stage = $("stage");
   const nextBtn = $("next"), backBtn = $("back"), mistakeEl = $("mistake");
   const wsUrl = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws/camera`;
-  // Frames are scaled so the long side is at most MAX_SIDE before JPEG encoding:
-  // fewer bytes to upload and less for the hub to decode.
-  const MAX_SIDE = 960, JPEG_QUALITY = 0.7;
+  // About 15 small frames a second: smooth on the learn screen, light on the network.
+  // The long side is at most MAX_SIDE before JPEG encoding: fewer bytes to upload
+  // and less for the hub to decode.
+  const FPS = 15, MAX_SIDE = 640, JPEG_QUALITY = 0.5;
   const bitmapPath = typeof createImageBitmap === "function" && typeof OffscreenCanvas === "function"
     && typeof OffscreenCanvas.prototype.convertToBlob === "function";
   let offscreen = null;
@@ -152,7 +142,7 @@
   const STATUS_WORDS = { watching: "Watching", checking: "Watching", verified: "Verified", manual: "Manual step", done: "Done" };
 
   let stream = null, ws = null, timer = null, reconnectTimer = null, wakeLock = null, flashTimer = null;
-  let running = false, sent = 0, skipped = 0, sentBytes = 0, intervalMs = 500, encoding = false;
+  let running = false, sent = 0, skipped = 0, sentBytes = 0, encoding = false, sentTimes = [];
   let backoff = BACKOFF_MIN, lastSentAt = 0, helloSent = false, hubState = null;
 
   function setConn(state, text) {
@@ -161,7 +151,10 @@
   }
   function showError(text) { err.textContent = text; err.hidden = !text; }
   function updateStats() {
-    stats.textContent = `${sent} frame${sent === 1 ? "" : "s"} sent` + (skipped ? `, ${skipped} skipped` : "")
+    const now = Date.now();
+    while (sentTimes.length && now - sentTimes[0] > 1000) sentTimes.shift();
+    const fps = running && sent ? `${sentTimes.length} fps, ` : "";
+    stats.textContent = fps + `${sent} frame${sent === 1 ? "" : "s"} sent` + (skipped ? `, ${skipped} skipped` : "")
       + (sent ? `, ${Math.round(sentBytes / sent / 1024)} KB each` : "");
   }
   function setCam(active) {
@@ -177,7 +170,7 @@
     rec.classList.toggle("live", !!(fresh && socketOpen()));
     idleEl.hidden = !(running && Date.now() - lastSentAt >= IDLE_MS);
   }
-  setInterval(updateSending, 1000);
+  setInterval(() => { updateSending(); updateStats(); }, 1000);
 
   function updateNav() {
     const ok = running && helloSent && socketOpen() && !!hubState && hubState.total > 0;
@@ -303,13 +296,13 @@
     encoding = false;
     if (!blob || !socketOpen() || !helloSent || ws.bufferedAmount > 0) return;
     ws.send(blob);
-    sent++; sentBytes += blob.size; lastSentAt = Date.now();
+    sent++; sentBytes += blob.size; lastSentAt = Date.now(); sentTimes.push(lastSentAt);
     updateStats(); updateSending();
   }
 
   function restartTimer() {
     clearInterval(timer);
-    if (running) timer = setInterval(sendFrame, intervalMs);
+    if (running) timer = setInterval(sendFrame, Math.round(1000 / FPS));
   }
 
   async function requestWakeLock() {
@@ -400,7 +393,7 @@
     running = false;
     clearInterval(timer); clearTimeout(reconnectTimer);
     if (ws) { const s = ws; ws = null; try { s.close(); } catch (_) {} }
-    helloSent = false; hubState = null; lastSentAt = 0;
+    helloSent = false; hubState = null; lastSentAt = 0; sentTimes = [];
     if (stream) { stream.getTracks().forEach((t) => t.stop()); stream = null; }
     clearTimeout(muteTimer);
     video.srcObject = null;
@@ -423,14 +416,6 @@
   backBtn.addEventListener("click", () => {
     if (backBtn.disabled || !hubState) return;
     sendJson({ type: "back", from: hubState.step });
-  });
-
-  $("seg").addEventListener("click", (e) => {
-    const b = e.target.closest("button[data-ms]");
-    if (!b) return;
-    intervalMs = Number(b.dataset.ms);
-    for (const x of $("seg").querySelectorAll("button")) x.classList.toggle("sel", x === b);
-    restartTimer();
   });
 
   // Wake locks drop when the page is hidden; take it again on return.
