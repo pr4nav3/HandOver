@@ -165,11 +165,7 @@ private struct RecordScreen: View {
 
     @ViewBuilder private var preview: some View {
         if source == .glasses, let glasses {
-            if let frame = glasses.frame {
-                Image(decorative: frame, scale: 1).resizable().aspectRatio(contentMode: .fit)
-            } else {
-                theme.colors.stage
-            }
+            RecordGlassesFrame(glasses: glasses)
         } else if let previewLayer {
             RecordCameraPreview(layer: previewLayer)
         } else {
@@ -646,6 +642,21 @@ final class RecordPreviewEngine: RecordCaptureEngine {
     func resumeRecording() {}
     func audioLevel() -> Float? { level }
     func cameras() -> [RecordCamera] { [RecordCamera(id: "back", name: "Back Camera", kind: .back)] }
+}
+
+/// The glasses' newest frame behind the controls. The only view that reads the frame, so each one redraws just this
+/// picture, not the controls over it.
+private struct RecordGlassesFrame: View {
+    var glasses: GlassesController
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        if let frame = glasses.frame {
+            Image(decorative: frame, scale: 1).resizable().aspectRatio(contentMode: .fit)
+        } else {
+            theme.colors.stage
+        }
+    }
 }
 
 #Preview("Record, idle") {

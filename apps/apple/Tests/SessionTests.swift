@@ -155,6 +155,6 @@ struct PreviewHubTests {
         let jpeg = try #require(Data(base64Encoded: "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q=="))
         let model = AppModel.preview()
         model.ingest(.frame(jpeg))
-        #expect(model.frame?.size == CGSize(width: 1, height: 1))
+        #expect(model.live.frame?.size == CGSize(width: 1, height: 1))
     }
 }

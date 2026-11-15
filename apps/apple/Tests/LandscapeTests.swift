@@ -3,6 +3,7 @@ import Testing
 @testable import HandOver
 
 /// The pure pieces behind landscape: camera angles and the layout picks.
+@MainActor
 struct LandscapeTests {
     // MARK: - Camera angles
 
@@ -60,14 +61,14 @@ struct LandscapeTests {
 
     @Test func liveTileTakesThePictureShape() {
         // Frames from another device keep their own shape.
-        #expect(Self.near(LearnLayout.liveAspect(frame: CGSize(width: 960, height: 540), ownCamera: false, landscape: true), 960.0 / 540.0))
-        #expect(Self.near(LearnLayout.liveAspect(frame: CGSize(width: 540, height: 960), ownCamera: false, landscape: true), 540.0 / 960.0))
+        #expect(abs(LearnLayout.liveAspect(frame: CGSize(width: 960, height: 540), ownCamera: false, landscape: true) - 960.0 / 540.0) < 1e-9)
+        #expect(abs(LearnLayout.liveAspect(frame: CGSize(width: 540, height: 960), ownCamera: false, landscape: true) - 540.0 / 960.0) < 1e-9)
         // This phone's camera turns with the phone.
-        #expect(Self.near(LearnLayout.liveAspect(frame: nil, ownCamera: true, landscape: true), 16.0 / 9.0))
-        #expect(Self.near(LearnLayout.liveAspect(frame: nil, ownCamera: true, landscape: false), 9.0 / 16.0))
+        #expect(abs(LearnLayout.liveAspect(frame: nil, ownCamera: true, landscape: true) - 16.0 / 9.0) < 1e-9)
+        #expect(abs(LearnLayout.liveAspect(frame: nil, ownCamera: true, landscape: false) - 9.0 / 16.0) < 1e-9)
         // Nothing yet, or an empty size.
-        #expect(Self.near(LearnLayout.liveAspect(frame: nil, ownCamera: false, landscape: true), 4.0 / 3.0))
-        #expect(Self.near(LearnLayout.liveAspect(frame: .zero, ownCamera: false, landscape: true), 4.0 / 3.0))
+        #expect(abs(LearnLayout.liveAspect(frame: nil, ownCamera: false, landscape: true) - 4.0 / 3.0) < 1e-9)
+        #expect(abs(LearnLayout.liveAspect(frame: .zero, ownCamera: false, landscape: true) - 4.0 / 3.0) < 1e-9)
     }
 
     // MARK: - Onboarding

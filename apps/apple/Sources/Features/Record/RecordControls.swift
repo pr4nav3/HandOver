@@ -242,7 +242,11 @@ struct RecordCameraPreview: UIViewRepresentable {
 
         override func layoutSubviews() {
             super.layoutSubviews()
+            // No implicit animation: the layer follows the view's size at once when the phone turns.
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
             previewLayer?.frame = bounds
+            CATransaction.commit()
         }
     }
 }

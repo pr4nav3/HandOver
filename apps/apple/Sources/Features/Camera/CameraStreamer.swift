@@ -97,6 +97,7 @@ final class CameraStreamer {
         self.capture = capture
         self.socket = socket
         self.slot = slot
+        _ = capture.previewView()
         guard await capture.start(deviceID: deviceID) else {
             phase = .noCamera
             return
