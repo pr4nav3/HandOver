@@ -46,9 +46,9 @@ HandOver has two sides.
 
 **Screens.** React, TypeScript and Vite. Learn draws the live feed on a canvas (newest frame each time), preloads the next clip, and shows honest states: camera lost, reconnecting, Recording for replays, checks off. A phone capture page streams the camera over the local network. Playwright end-to-end tests drive a real hub with a replayed camera.
 
-**Data layer** (Databricks, never in the live loop). The hub writes every learn event to a local JSON lines file. With credentials, it batches them into Unity Catalog every 60 s and at run end, with MERGE on event id so retries never duplicate rows. One setup script creates the schema, four tables (`lessons`, `steps`, `runs`, `events`), a Volume for lesson files and 13 dashboard views, each with a `_real` twin that drops mock, replay and self-test runs. The AI/BI dashboard reads the `_real` views, and a Genie space over the four tables has tested example queries. If Databricks is slow or down, the learn loop doesn't notice; a test runs the loop against a hung warehouse.
+**Data layer** (Databricks, never in the live loop). The hub writes every learn event to a local JSON lines file. With credentials, it batches them into four Unity Catalog tables (`lessons`, `steps`, `runs`, `events`) every 60 s and at run end, with MERGE on event id so retries never duplicate rows. The setup SQL also creates a Volume for lesson files and includes six dashboard query templates for step time, manual advances, likely false passes, camera readiness, check health and run outcomes. Mock runs remain local; replay runs are tagged by source/attempt kind so a dashboard can include or exclude them explicitly. If Databricks is slow or down, the learn loop doesn't notice; a test runs the loop against a hung warehouse.
 
-**Native apps:** a SwiftUI app for iPhone, iPad and Mac, an Android app in Kotlin and Jetpack Compose, and a Tauri desktop app for Windows, Linux and Mac with a Rust core, each with its own test suite. Each one is a viewer of the hub and can be its camera. The iPhone and Android apps include the Meta Wearables Device Access Toolkit 1.0.1 for glasses streaming; streaming from the iPhone needs a paid Apple Developer team. The hub also has accounts, courses, organizations and an editor with undo and redo (`HANDOVER_AUTH=optional` by default).
+**Native apps:** a SwiftUI app for iPhone, iPad and Mac, an Android app in Kotlin and Jetpack Compose, and a Tauri desktop app for Windows, Linux and Mac with a Rust core, each with its own test suite. Each one is a viewer of the hub and can be its camera. The iPhone and Android apps include the Meta Wearables Device Access Toolkit 1.0.1 for glasses streaming. The iOS Developer Mode path has been signed with a Personal Team and exercised with a Ray-Ban Meta Gen 2; distribution remains subject to Meta's preview and Apple signing rules. The hub also has accounts, courses, organizations and an editor with undo and redo (`HANDOVER_AUTH=optional` by default).
 
 Optional and off by default: understanding mode (a per-step rubric as a second vote), and skipping ahead two steps on an "ahead" verdict (a wrong skip is worse than a missed catch).
 
@@ -61,8 +61,8 @@ Optional and off by default: understanding mode (a per-step rubric as a second v
 - **Silent takes.** Cutting by narration fails when the expert works quietly. Vision boundaries fix that: a stronger model finds the earliest moment each step's end state is visible, then refines the cut on frames a quarter second apart. On a real take it gave eight coherent steps for about 3 cents.
 - **Windows.** The hub was written on a Mac and runs on Windows too: file locks while swapping voiced clips, font lookup for produced videos, ffmpeg paths, a spend ledger safe across processes, and a clear error when a port is already taken. The end-to-end test passes on Windows.
 - **Stale controls.** A phone pressing End after the laptop had started a new lesson would end the wrong run. End now carries the lesson and run ids, and stale ones are ignored.
-- **Databricks Free Edition.** One small warehouse and a daily compute quota. The hub flushes every 60 s instead of every few seconds, uses MERGE so retries don't duplicate, keeps tests from ever reaching the warehouse, and filters mock and replay runs out of the charts.
-- **Glasses streaming.** The toolkit streams over a Wi-Fi link that needs entitlements a free Apple team can't get, so the glasses are the expert's recorder.
+- **Databricks Free Edition.** One small warehouse and a daily compute quota. The hub flushes every 60 s instead of every few seconds, uses MERGE so retries don't duplicate, keeps tests and mock runs from reaching the warehouse, and tags replays so queries can filter them.
+- **Glasses streaming.** The toolkit's live camera path is Bluetooth Classic. The phone forwards selected JPEG frames to the local hub with newest-only backpressure. Developer Mode registration and a Gen 2 live flow have worked on a signed iPhone build; broader device/firmware endurance is still release evidence to collect.
 
 ## What we learned
 
@@ -76,7 +76,7 @@ Optional and off by default: understanding mode (a per-step rubric as a second v
 ## What's next
 
 - Accuracy numbers from people new to a task, then from a real workplace task with a real expert.
-- Glasses as the learner's camera, on a paid Apple Developer team.
+- Repeatable sustained glasses-as-learner-camera runs across the supported phone, firmware and glasses matrix.
 - Checks on a no-retention tier or on device.
 - Translated captions and a voice "next" for loud rooms.
 - A hosted hub so a whole team of learners can use the same lessons.
@@ -84,6 +84,6 @@ Optional and off by default: understanding mode (a per-step rubric as a second v
 
 ## Privacy
 
-See `docs/privacy.md`. In short: the hub never saves camera frames, the event log holds numbers and no images, and the expert's take is the lesson content.
+See `docs/privacy.md`. In short: the hub never saves learner camera frames. The private event log contains compact run metadata (including lesson/run IDs and a signed-in learner ID), but no images, audio, stable device IDs, camera names, IP addresses or auth tokens. The expert's take, clips and reference frames are lesson content and are stored separately.
 
 Sources: Manufacturing Institute and Deloitte, April 3, 2024, themanufacturinginstitute.org/manufacturers-need-as-many-as-3-8-million-new-employees-by-2033/; dozuki.com/creatorpro; retrocausal.ai. Latency: `server/docs/checks.md`. Synthetic accuracy: `server/docs/understanding.md` and `server/docs/checks.md`.
