@@ -1,240 +1,111 @@
 # Databricks runbook (HandOver)
 
-Owner: Prayush. Scope (TEAM_RULES.md): data layer only, never in the live loop. Unity Catalog tables, one Volume, one AI/BI dashboard, one Genie space. The hub writes through `server/databricks.py` (Pranav); this folder is everything done in the Databricks UI.
+Owner: Prayush. Databricks is the data layer only, never in the live loop. The hub writes every learn event to `logs/events.jsonl` first. With credentials, `server/databricks.py` also sends them to the warehouse in batches. If Databricks is down, the demo does not change.
+
+Everything below runs on the demo laptop: Pranav's Windows laptop, repo at `C:\Users\karth\Projects\HandOver-soham`. Commands are PowerShell from the repo root.
+
+## Links
+
+| What | Where |
+|---|---|
+| Dashboard (published, show this one) | https://dbc-a03072b4-3eeb.cloud.databricks.com/dashboardsv3/01f1e086926f1ffc9624630fda6e58c3/published |
+| Dashboard (editor) | https://dbc-a03072b4-3eeb.cloud.databricks.com/dashboardsv3/01f1e086926f1ffc9624630fda6e58c3 |
+| Genie space | https://dbc-a03072b4-3eeb.cloud.databricks.com/genie/rooms/01f1e086eb621d8d990021c7016818de |
+| Catalog | `workspace.handover` (tables `lessons`, `steps`, `runs`, `events`; Volume `lessons`) |
+
+## What is live
+
+- Tables: `lessons`, `steps`, `runs`, `events` in `workspace.handover`. Volume `workspace.handover.lessons` holds lesson files (expert video, frames, captions), never learner camera frames.
+- Views, all made by `scripts/databricks_setup.py`:
+  - `runs_excluded`: runs with any replay (`source` file) or mock event.
+  - `events_real`, `runs_real`: events and runs without those runs and without `selftest` rows. In `events_real`, advance reasons `ahead_confirm` and `understand_override` count as `camera`; the original is in `reason_detail`.
+  - `ds_<name>`: the 13 datasets of `02_dashboard_datasets.sql`, unfiltered.
+  - `ds_<name>_real`: the same over `events_real` and `runs_real`, plus the review fixes: checks-off rows need a reason, latency leaves out mock and errored checks, timed out means `error_kind = 'timeout'`.
+- Dashboard "HandOver: learner runs": 15 datasets. 13 are `SELECT * FROM workspace.handover.ds_<name>_real`, 2 are small queries over `events_real`. Layout in `dashboard.md`.
+- Genie space "HandOver learner runs": `events_real`, `runs_real`, `lessons`, `steps`, 8 tested examples. Details in `genie.md`.
+
+Test data. `synthetic-fortune-teller-v1` is a rendered test lesson, not learners. Its runs pass the `_real` filter, so pick the real lesson in the dashboard's Lesson filter. Genie leaves lesson ids starting `synthetic-`, `test-`, `TEST-` or `e2e-` out unless asked. `synthetic-fortune-teller-v1` has no `steps` rows, so its per-step charts stay empty. The real lessons for the demo: `fortune-teller-v2` (origami) and `front-wheel-v1` (bike).
+
+## Files
 
 | File | What it is |
 |---|---|
-| `README.md` | This runbook, in timeline order |
-| `CHECKLIST.md` | One-page tick list for the night |
-| `01_setup.sql` | Schema, four tables, Volume. Identical to Pranav's DDL. Idempotent |
-| `02_dashboard_datasets.sql` | The 13 dashboard datasets, one named query each |
-| `03_test_data.sql` | Optional synthetic rows for building before real runs exist. **Delete before judging** |
-| `04_cleanup_test_data.sql` | Deletes exactly the synthetic and `--selftest` rows |
-| `05_load_lesson_from_volume.sql` | Fallback: fills `lessons` and `steps` from `lesson.json` files in the Volume |
-| `dashboard.md` | Dashboard layout, widgets, colors, headline, publish |
-| `handover.lvdash.json` | The same dashboard as an importable file (format unverified, see dashboard.md) |
-| `genie.md` | Genie space: instructions, joins, 8 tested example queries, the demo question, rehearsal |
-| `NOTES_FOR_PRANAV.md` | Issues found in his module and SQL; not fixed here (his folder) |
+| `README.md` | This runbook |
+| `CHECKLIST.md` | One-page tick list for demo day |
+| `01_setup.sql` | Schema, four tables, Volume. Read by the setup script. Idempotent |
+| `02_dashboard_datasets.sql` | The 13 dataset queries. The setup script turns each into `ds_<name>` and `ds_<name>_real` |
+| `03_test_data.sql` | Synthetic rows for local layout work. Not loaded in the workspace. Do not run |
+| `04_cleanup_test_data.sql` | Deletes `03` rows and `selftest` rows. Run by `--teardown-test-data` |
+| `05_load_lesson_from_volume.sql` | Fallback: fills `lessons` and `steps` from a `lesson.json` already in the Volume |
+| `dashboard.md` | What each dashboard page and widget shows, colors, publish |
+| `handover.lvdash.json` | The live dashboard, as saved in the workspace (exported through the API) |
+| `genie.md` | The live Genie space: data, joins, instructions, examples, rehearsal answers |
+| `NOTES_FOR_PRANAV.md` | Review items on the uploader, with their status |
 
-All SQL in `02`–`05` and `genie.md` was run on local Apache Spark (PySpark 4.3) with the synthetic data in `03` (MERGE, DELETE and `read_files` excepted: Databricks-only). It was not run on a Databricks warehouse yet, so do the verify steps below.
+## 1. Credentials on the demo laptop
 
-## Names (fixed; the module and every query depend on them)
+The token is handed over in person or as a direct message to the person at the laptop. Never in the group chat, a commit, a screenshot, Devpost, or `.env.example` (that file keeps empty values).
 
-| Thing | Name |
-|---|---|
-| Catalog | `workspace` (Free Edition default) |
-| Schema | `workspace.handover` |
-| Tables | `lessons`, `steps`, `runs`, `events` |
-| Volume | `workspace.handover.lessons`, path `/Volumes/workspace/handover/lessons/<lesson_id>/` |
-| Warehouse | `Serverless Starter Warehouse` (unverified name; Free Edition has one 2X-Small warehouse) |
-| Dashboard | `HandOver learner runs` |
-| Genie space | `HandOver learner runs` |
-
-## Timing conflict, and the call
-
-- docs/PLAN.md section 6 puts "Databricks tables" in Prayush's 3:30–6:30 PM slot.
-- TEAM_RULES.md: "Nobody starts it until the live fold works end to end", and SCOPE.md: Databricks is SHOULD, after the 6:30 PM gate.
-
-Recommendation: before 6:30, do only steps 1–4 (account, warehouse id, token, `.env`). PLAN.md's humans-only checklist asks for exactly that, and it touches nothing in the repo. Run `01_setup.sql` after the 6:30 gate passes, unless the team says otherwise in the group. Everything else in this folder is ready to paste, so waiting costs about 5 minutes.
-
-## Free Edition facts that shape the plan
-
-Source: [Free Edition limitations](https://docs.databricks.com/aws/en/getting-started/free-edition-limitations).
-
-- Serverless only. **One SQL warehouse, 2X-Small at most.**
-- **Daily compute quota.** Going over shuts down workspace compute for the rest of the day, in extreme cases the month. Data is kept, but nothing will query. This is the main demo risk. Keep usage low: the module batches writes (one statement per table every 5 s at most, nothing when idle); never set a dashboard refresh schedule; do not leave Genie or the SQL editor running loops; close the dashboard editor tabs you are not using.
-- One workspace, one metastore, no account console.
-- Serverless warehouse auto-stop defaults to 10 minutes ([SQL warehouse settings](https://docs.databricks.com/aws/en/compute/sql-warehouse/create)). After 10 idle minutes the first query starts it again (cold start). Hence the warm-up steps.
-- Personal access tokens: documented as "legacy" but supported; up to 600 per user, revoked after 90 days unused ([PAT docs](https://docs.databricks.com/aws/en/dev-tools/auth/pat)). Whether a Free Edition workspace has PATs enabled by default is unverified; check in step 3.
-- Genie is included in Free Edition ([Free Edition](https://docs.databricks.com/aws/en/getting-started/free-edition)). Dashboards are listed there as "interactive dashboards".
-
----
-
-## Saturday 3:30 PM: account, warehouse, token (15 min)
-
-### 1. Sign up
-
-1. Open [Databricks Free Edition](https://docs.databricks.com/aws/en/getting-started/free-edition) > sign up (`https://login.databricks.com/?intent=CE_SIGN_UP`). Use the team email that will still be checked on Sunday. Sign-in is email one-time code, Google or Microsoft.
-2. Databricks creates a workspace. Note its URL, e.g. `https://dbc-xxxxxxxx-xxxx.cloud.databricks.com`. That is `DATABRICKS_HOST` (with `https://`, no trailing slash, no `?o=` part).
-
-Verify: sidebar shows **SQL Editor**, **Dashboards**, **Genie** (or **Genie Agents**), **Catalog**. In **Catalog**, a catalog named `workspace` exists. If the catalog has another name, stop and tell Pranav: set `DATABRICKS_CATALOG` in `.env` and find/replace `workspace.handover` in these files.
-
-### 2. Warehouse id
-
-1. Sidebar > **SQL Warehouses** > click the one warehouse (expected `Serverless Starter Warehouse`).
-2. **Connection details** tab > **HTTP path**, e.g. `/sql/1.0/warehouses/1a2b3c4d5e6f7a8b`. The part after `/warehouses/` is `DATABRICKS_WAREHOUSE_ID` ([compute details](https://docs.databricks.com/aws/en/integrations/compute-details)). The same id is in the browser URL of the warehouse page.
-3. Leave auto-stop at the default.
-
-Verify: SQL Editor, pick that warehouse top right, run `SELECT current_catalog(), current_user();`. Expect `workspace` and your email.
-
-### 3. Personal access token
-
-Steps from [PAT docs](https://docs.databricks.com/aws/en/dev-tools/auth/pat):
-
-1. Click your username (top right) > **Settings** > **Developer** > **Access tokens** > **Manage** > **Generate new token**.
-2. Comment: `handover-hub`. Lifetime: `7` days.
-3. If the dialog asks for a scope type: choose **Other APIs** and add the scopes `sql` and `files` ([API scopes](https://docs.databricks.com/api/workspace/scopes); the module runs SQL statements and uploads files to the Volume). If you cannot find `files`, leave scopes for full access instead.
-4. **Generate**, copy the token (starts with `dapi`), **Done**. It is shown once.
-
-Rules: the token goes only into `.env` on the Mac. Never into chat, a commit, a screenshot, Devpost, or this folder. If it leaks, revoke it on the same page and generate a new one.
-
-### 4. `.env` on the Mac
-
-Sit at the Mac (or hand the values to Pranav in person there). In the repo root `.env` (already gitignored), add:
+In the repo-root `.env` (gitignored):
 
 ```
-DATABRICKS_HOST=https://dbc-xxxxxxxx-xxxx.cloud.databricks.com
-DATABRICKS_TOKEN=dapi...
-DATABRICKS_WAREHOUSE_ID=1a2b3c4d5e6f7a8b
+DATABRICKS_HOST=https://dbc-a03072b4-3eeb.cloud.databricks.com
+DATABRICKS_TOKEN=<personal access token, starts with dapi>
+DATABRICKS_WAREHOUSE_ID=<from the warehouse page, Connection details>
 ```
 
 `DATABRICKS_CATALOG` and `DATABRICKS_SCHEMA` default to `workspace` and `handover`; leave them out.
 
-Verify: `git status` on the Mac does not list `.env`. `server/databricks.py` is on main (ddcfd29), but until the hub calls it (NOTES_FOR_PRANAV.md, item 1) nothing sends events, and the hub runs exactly as before.
-
-Then stop Databricks work until the 6:30 gate. Devpost and poster.
-
----
-
-## Saturday 6:30–8:00 PM (after the gate): tables, Volume, dashboard skeleton
-
-### 5. Tables and Volume (5 min)
-
-1. SQL Editor > new query > warehouse selected > paste all of `01_setup.sql` > **Run all**.
-   (Equivalent, now that it is on main: `python -m server.databricks --init` on the Mac. Running both is harmless.)
-2. Verify, with the queries at the bottom of `01_setup.sql`:
-   - `SHOW TABLES IN workspace.handover;` returns `events`, `lessons`, `runs`, `steps`.
-   - `SHOW VOLUMES IN workspace.handover;` returns `lessons`.
-   - The counts query returns four zeros.
-3. **Catalog** > `workspace` > `handover`: the four tables show column comments. Genie reads these.
-
-If `CREATE SCHEMA` fails with a permission error: unverified on Free Edition, but you should own `workspace`. Run `SHOW GRANTS ON CATALOG workspace;` and tell the group. Do not switch to a different schema without telling Pranav (his module uses `DATABRICKS_SCHEMA`).
-
-### 6. Lesson files and steps rows
-
-The per-step charts need a `steps` row for every lesson (events join to steps on `n = step + 1`). Normal path: the hub calls `upload_lesson_files()`, which uploads the lesson folder to the Volume and writes `lessons` and `steps`. Nothing calls it yet (NOTES_FOR_PRANAV.md, item 2). Until it does, load by hand once a lesson is cut and committed:
-
-1. **Catalog** > `workspace` > `handover` > **Volumes** > `lessons` > **Create directory** named exactly the lesson id (e.g. `fortune-teller-v1`) > open it > **Upload to this volume** > the repo's `lessons/<id>/lesson.json`. (UI labels unverified; the Volume page has an upload button.)
-2. Run `05_load_lesson_from_volume.sql`: preview, then the two MERGEs, then the verify query.
-3. Verify: one row per lesson with the right step count and one `manual` step (step 1).
-
-Redo after Soham recuts a lesson. It is an upsert, so it is safe to repeat.
-
-### 7. Dashboard skeleton (45 min)
-
-1. Optional, only if there are no real runs yet: run `03_test_data.sql` (synthetic lesson `test-fortune-teller`, 14 runs). Verify: its last query returns `1, 8, 14, 919`. Write "TEST DATA LOADED" on a sticky note on the Mac until step 13 removes it.
-2. Build the dashboard per `dashboard.md`: import `handover.lvdash.json`, then the fix list; or build by hand.
-3. Verify: every dataset runs; with the Lesson filter on `test-fortune-teller`, Time per step shows step 5 (Flip it over) with the largest learner/expert gap, and How each step was passed shows step 5 with the most grey.
-4. Do not publish yet.
-
----
-
-## Saturday 8:00 PM–midnight: real data, Genie
-
-### 8. Module merged, first real rows
-
-Needs: `server/databricks.py` is on main (done, ddcfd29); the hub still has to call it (NOTES_FOR_PRANAV.md, item 1). Then on the Mac:
+Check with no network:
 
 ```
-.venv/bin/python -m server.databricks --init       # prints DDL, runs it; every line "ok"
-.venv/bin/python -m server.databricks --selftest   # ends with "SELFTEST OK"
-.venv/bin/python -m server.databricks --warm       # "warm: ok in N s"
+.venv\Scripts\python scripts\databricks_setup.py --check
 ```
 
-Verify in the SQL editor:
+It says exactly what is missing and never prints the token. `git status` must not list `.env`.
 
-```sql
--- The selftest run arrived (lesson 'selftest'). Remove later with 04_cleanup_test_data.sql.
-SELECT kind, count(*) FROM workspace.handover.events WHERE lesson_id = 'selftest' GROUP BY kind;
+## 2. One command: setup
 
--- After one real fold on the hub: one run, its events in order, steps joined.
-SELECT e.ts, e.kind, e.step + 1 AS step_n, s.title, e.done, e.reason, e.from_step, e.to_step
-FROM workspace.handover.events e
-LEFT JOIN workspace.handover.steps s ON s.lesson_id = e.lesson_id AND s.n = e.step + 1
-WHERE e.run_id = (SELECT run_id FROM workspace.handover.runs ORDER BY started_at DESC LIMIT 1)
-ORDER BY e.ts;
+```
+.venv\Scripts\python scripts\databricks_setup.py --with-history
 ```
 
-Expect `run_start`, then `check` and `advance` rows per step, `to_step` of the last advance equal to the step count, and a title on every row. A NULL title means the steps rows are missing (step 6).
+It starts the warehouse, runs `01_setup.sql`, makes the views, uploads real events from `logs/events.jsonl` (MERGE on `event_id`, so a rerun adds nothing twice), uploads the real lessons (`lessons/<id>/lesson.json`, not `demo-v1` or test ids) and prints counts. Free Edition has a daily compute quota: run it once, not in a loop. Without `--with-history` it skips the old events.
 
-### 9. Genie space (30 min, by midnight)
+Other flags: `--check` (above), `--teardown-test-data` (runs `04_cleanup_test_data.sql`; the first check row must be all zeros), `--skip-lessons`, `--warehouse-timeout 300`.
 
-Follow `genie.md`: create, joins, general instructions, 8 example queries, common questions, rehearse. Verify: the common question "Which step do people get stuck on?" returns the Q1 SQL and a three-row table.
+After a new lesson is cut or recut, the hub uploads it by itself. By hand: `.venv\Scripts\python -m server.databricks --upload front-wheel-v1`.
 
-### 10. Midnight full run
+## 3. Confirm rows arrive
 
-During the team's full run on real Gemini, watch the latest run with the step 8 query. Every advance should be there within about 10 s of happening. Note anything missing for Pranav.
+```
+.venv\Scripts\python -m server.databricks --selftest --remote
+```
 
----
+Expect `SELFTEST OK` and a flush. This writes one `selftest` run; the `_real` views and Genie ignore it, and `--teardown-test-data` deletes it. Without `--remote` the selftest stays local.
 
-## Sunday 8:00 AM: real data only, warm, rehearse
+Then do one real run on the hub and look at the dashboard: Runs goes up by one after the run ends (the uploader flushes at run end, otherwise at most every 60 s).
 
-### 11. Remove test rows
+## 4. Before judges
 
-Run `04_cleanup_test_data.sql`. Its check query must return `0, 0, 0, 0`. Remove the sticky note. From now on the dashboard shows real events only (PLAN.md: done screen and data from real events).
+1. Warm the warehouse: open the published dashboard once, or run `.venv\Scripts\python -m server.databricks --warm` (expect `warm: ok`). The warehouse stops after about 10 idle minutes; warm again if judges are more than 10 minutes apart.
+2. Dashboard: open the published link, pick the real lesson in the Lesson filter (`fortune-teller-v2` or `front-wheel-v1`).
+3. Genie: open the space, start a new chat, click "Which step do people get stuck on?". Screenshot the answer as a fallback.
+4. Do not edit the dashboard, Genie or the views during judging. Never set a refresh schedule.
 
-### 12. Warm the warehouse
+Say only what the data supports. Read numbers off the screen. With fewer than about 5 runs, say "in our runs today", not "learners".
 
-`.venv/bin/python -m server.databricks --warm` on the Mac, or run `SELECT 1;` in the SQL editor. Expect `warm: ok`.
+## 5. If Databricks fails
 
-### 13. Rehearse
-
-1. Dashboard: refresh, filter to the fortune teller lesson, check every widget against what the team saw in the 20 rehearsal folds. Numbers that look wrong are a data or wiring bug: tell Pranav, do not change queries to look better.
-2. Publish (dashboard.md, Before judging).
-3. Genie: rehearse per genie.md section 5.
-4. Screenshot page 1 and the Genie answer (PNG, on the Mac). This is the fallback if the quota trips or the venue network fails. If used, say "this is from this morning's runs".
-
-### 14. Before judging (12:00–1:00 PM)
-
-1. 12:40: `--warm` again. Auto-stop is 10 minutes, so warm again if judges have not arrived by 12:55, and between judge visits that are more than 10 minutes apart.
-2. Tabs on the Mac, in order: learn screen, published dashboard (page 1, fortune teller selected), Genie space (new chat, no question asked yet), screenshots folder.
-3. Do not edit anything in Databricks during judging.
-
----
-
-## Demo beat: 2:40–3:10 (PLAN.md section 7)
-
-Thirty seconds. Fallback per PLAN.md: skip to the close.
-
-| Time | Screen | Who does what | Say |
-|---|---|---|---|
-| ~2:30 (judge on the last fold) | Genie tab, in the background | Click the common question "Which step do people get stuck on?" so the answer is ready in 20 s | |
-| 2:40 | Learn screen, done screen | Driver stays on the done screen | (done screen line, owned by the pitch) |
-| 2:50 | Dashboard, page 1 | Switch tab; click refresh (top right) so the judge's run is in | "Every run lands in Databricks. Grey is the learners' median per step, light grey is the expert's own time. Green is a step the camera verified." Point at the tallest learner bar |
-| 3:00 | Genie tab | Show the answer | "And anyone can ask it: which step do people get stuck on? Genie says step N, [title]: N seconds against the expert's M, and the camera caught K mistakes there." Read the real numbers from the screen |
-| 3:10 | | Move to the close | |
-
-Rules for the beat:
-
-- Read numbers off the screen. Never quote a number from rehearsal or from memory.
-- If the refresh is still spinning at 2:55, talk over it and move to Genie.
-- If Genie is slow or wrong, say "Genie answers from the same tables" and show the dashboard's Step by step table instead.
-- If compute is down (quota): show the 8 AM screenshots, say they are from this morning, move on.
-
-## Troubleshooting
+The demo is unaffected: the hub keeps every event in `logs/events.jsonl` and the UI never waits on Databricks (tested with a hung warehouse). Show the screenshot, say "Databricks holds the same numbers; here is this morning's view", and move on. Later, `--with-history` uploads the JSONL without duplicates.
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `--selftest` prints `HTTP 403` | Token scope or token revoked | New token with `sql` and `files` scopes (step 3); update `.env`; restart the hub |
-| `HTTP 401` | Wrong host or token | Host must be the workspace URL with `https://`, no `?o=`; token copied whole |
-| `HTTP 404` on `/api/2.0/sql/statements` | Host has a path, or wrong workspace | Use only the scheme and host |
-| `warehouse ... not found` | Wrong `DATABRICKS_WAREHOUSE_ID` | Copy the id from the HTTP path again (step 2) |
-| `TABLE_OR_VIEW_NOT_FOUND` in the module log | Tables not created | Step 5, then restart the hub (failed batches retry 3 times, then stay only in `logs/events.jsonl`) |
-| Queries hang 10–60 s then work | Warehouse was stopped (auto-stop 10 min) | Expected once; warm before demos |
-| Every query fails, compute "quota exceeded" | Daily Free Edition quota | Nothing to fix today. Use screenshots. Data is kept |
-| Charts empty but `events` has rows | No `steps` rows for that lesson, or lesson ids differ | Step 6; compare `SELECT DISTINCT lesson_id FROM workspace.handover.events` with `steps` |
-| Step titles one off | A query joined `n = step` | Always `n = step + 1` |
-| Times six hours off | Stored UTC, shown raw | Datasets convert with `from_utc_timestamp(..., 'America/Chicago')`; check the widget uses `ts_local` / `started_local` |
-| Runs counter includes odd runs | `--selftest` or synthetic rows | `04_cleanup_test_data.sql` |
-| Dashboard numbers differ from the done screen | Done screen computes in the browser for one run; dashboard aggregates all runs | Say "across all runs" for the dashboard |
-| Genie answers with wrong step numbers | It used `step` (0-based) as the step number | Check the general instructions and joins are saved; ask via the Q1 common question |
-| Import of `handover.lvdash.json` fails | Format guessed, not exported | Build by hand per dashboard.md; datasets from `02` |
-
-## Unverified items
-
-- Exact current name of the Free Edition warehouse ("Serverless Starter Warehouse") and whether PATs are enabled by default on Free Edition.
-- PAT dialog scope names in the UI (`sql`, `files` are the documented API scope names).
-- `handover.lvdash.json` import on Free Edition, the `mark.layout: group` key for grouped bars, hex colors in value mappings, and the `MEDIAN` widget aggregation.
-- Volume UI labels "Create directory" and "Upload to this volume".
-- `read_files` with a `*` glob over Volume paths in `05` (documented for `read_files`; not run here).
-- Genie UI labels after the rename to "Genie Agents" may differ from the docs by release.
+| `--check` says a value is missing | `.env` not in the repo root, or a typo in the name | Fix `.env`, run `--check` again |
+| HTTP 401, "token rejected" | Wrong or expired token | New personal access token (Settings > Developer > Access tokens), update `.env`, restart the hub |
+| HTTP 403 on uploads, inserts work | Token scope lacks `files` | New token with `sql` and `files` scopes, or full access |
+| First query takes 10 to 60 s | Warehouse was stopped | Expected once; warm before judges |
+| Every query fails, quota exceeded | Free Edition daily quota | Nothing to fix today. Use screenshots; data is kept |
+| Per-step charts empty, Runs counter not | No `steps` rows for that lesson | `python -m server.databricks --upload <id>`, or `05_load_lesson_from_volume.sql` |
+| Odd runs in the counters | Lesson filter on all lessons | Pick the real lesson in the filter |
+| Step titles off by one | A query joined `n = step` | Always `n = step + 1` |

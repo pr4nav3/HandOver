@@ -1,56 +1,34 @@
-# Databricks checklist (Prayush)
+# Databricks checklist (demo day, Sunday Nov 15)
 
-Details for every line: README.md, under the step number in brackets.
+On the demo laptop (Pranav's Windows laptop, `C:\Users\karth\Projects\HandOver-soham`), PowerShell, repo root. Details: README.md, section in brackets.
 
-## Sat 3:30 PM: account (15 min)
-- [ ] Free Edition account created; workspace URL noted [1]
-- [ ] Catalog `workspace` exists [1]
-- [ ] Warehouse id copied from Connection details > HTTP path [2]
-- [ ] `SELECT current_catalog(), current_user();` returns `workspace` [2]
-- [ ] PAT generated (name `handover-hub`, 7 days, scopes `sql` + `files`) [3]
-- [ ] HOST, TOKEN, WAREHOUSE_ID typed into `.env` **on the Mac only**; `git status` does not show `.env` [4]
-- [ ] Token not in chat, commits, screenshots or this folder
-- [ ] Stop. Devpost and poster until the 6:30 gate
+## Done already (live in the workspace)
+- [x] Schema `workspace.handover`, four tables, Volume `lessons`
+- [x] 29 views: `events_real`, `runs_real`, `runs_excluded`, 13 `ds_<name>`, 13 `ds_<name>_real`
+- [x] Dashboard "HandOver: learner runs" on the `_real` views, two pages, published with embedded credentials
+- [x] Genie space "HandOver learner runs" on `events_real`, `runs_real`, `lessons`, `steps`; 8 examples tested; demo question rehearsed
 
-## Sat 6:30 PM: only after the live fold passes
-- [ ] Group agrees Databricks can start (TEAM_RULES: nothing before the live fold works)
-- [ ] `01_setup.sql` run; 4 tables + 1 Volume; counts are zeros [5]
-- [ ] Each lesson's `lesson.json` in the Volume, `05_load_lesson_from_volume.sql` run, steps counts correct [6]
-- [ ] Optional: `03_test_data.sql` loaded; sticky note "TEST DATA LOADED" on the Mac [7]
-- [ ] Dashboard imported or built per dashboard.md; all 13 datasets run; fix list done [7]
+## Credentials [1]
+- [ ] Token handed over in person or by direct message, never in the group chat
+- [ ] `.env` on the demo laptop has HOST, TOKEN, WAREHOUSE_ID; `.env.example` still has empty values
+- [ ] `.venv\Scripts\python scripts\databricks_setup.py --check` reports nothing missing
+- [ ] `git status` does not list `.env`
 
-## Sat 8 PM to midnight
-- [x] Pranav: `server/databricks.py` merged to main (ddcfd29)
-- [ ] Soham and Pranav: hub calls `start_run`, `emit(advance/check/mistake/check_offline)`, `end_run` (NOTES_FOR_PRANAV.md 1)
-- [ ] Pranav: lessons uploaded by `upload_lesson_files`, or I keep using `05` after every recut (NOTES 2)
-- [ ] On the Mac: `--init` all ok, `--selftest` SELFTEST OK, `--warm` ok [8]
-- [ ] One real fold shows up in the latest-run query with step titles [8]
-- [ ] Genie space built: joins, instructions, Q1 to Q8, common questions [9]
-- [ ] Genie rehearsal: Q1 plus two rephrasings reuse the Q1 SQL [9]
-- [ ] Midnight full run arrives in `events` within about 10 s [10]
-- [ ] Anything missing reported to Pranav
+## Setup, once [2, 3]
+- [ ] `.venv\Scripts\python scripts\databricks_setup.py --with-history` ends with every step ok
+- [ ] Counts show the real lessons (`fortune-teller-v2`, `front-wheel-v1`) with their steps
+- [ ] `.venv\Scripts\python -m server.databricks --selftest --remote` says `SELFTEST OK`
+- [ ] One real run on the hub, then the dashboard's Runs counter goes up for that lesson
+- [ ] Optional: `--teardown-test-data`, first check row all zeros
 
-## Sun 8 AM
-- [ ] `04_cleanup_test_data.sql` run; check query is `0, 0, 0, 0`; sticky note removed [11]
-- [ ] `--warm` ok [12]
-- [ ] Dashboard refreshed, fortune teller selected, numbers match the 20 rehearsal folds [13]
-- [ ] Dashboard published (Share with data permissions) [13]
-- [ ] Genie: new chat, demo question answered from real data [13]
-- [ ] Screenshots of dashboard page 1 and the Genie answer saved on the Mac [13]
+## Before judges, 12:40 PM [4]
+- [ ] Warm: open the published dashboard, or `.venv\Scripts\python -m server.databricks --warm` says `warm: ok`
+- [ ] Dashboard tab open on the published link, Lesson filter on the real lesson
+- [ ] Genie tab open, new chat, "Which step do people get stuck on?" answered from real runs
+- [ ] Screenshots of dashboard page 1 and the Genie answer saved on the laptop
+- [ ] Warm again if judges are more than 10 minutes apart
+- [ ] No edits to the dashboard, Genie or views during judging; no refresh schedule
 
-## Sun 12:00 to 1:00 PM
-- [ ] Devpost mentions only what shipped (tables, Volume, dashboard, Genie, if each works)
-- [ ] 12:40 `--warm`; again whenever 10 minutes pass without a query [14]
-- [ ] Tabs: learn screen, published dashboard, Genie new chat, screenshots [14]
-- [ ] Team knows the 2:40 to 3:10 beat and the fallback: skip to close [Demo beat]
-- [ ] Hands off Databricks settings during judging
-
-## Needed from teammates
-| From | What | By |
-|---|---|---|
-| Pranav | `server/databricks.py` merged to main | done (ddcfd29) |
-| Soham + Pranav | Hub calls the module (`server/main.py` is Soham's) | 10 PM |
-| Pranav | `--upload` CLI or `upload_lesson_files` called after each cut/recut, else tell me so I use `05` | 10 PM |
-| Pranav | Replay runs tagged (`learner` or `source` in `extra`) so they can be filtered | midnight, if time |
-| Soham | Final lesson ids and committed `lesson.json` files, and a message after any recut | each cut |
-| Whoever drives the Mac | `--init`, `--selftest`, `--warm` runs with me at the Mac | 8 PM, 8 AM, 12:40 PM |
+## If Databricks fails [5]
+- [ ] Demo goes on: events stay in `logs\events.jsonl`, the UI never waits on Databricks
+- [ ] Show the screenshots, say they are from this morning, move on
