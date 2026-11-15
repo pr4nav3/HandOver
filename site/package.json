@@ -1,0 +1,13 @@
+{
+  "name": "handover-public-site",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node --test tests/site.test.mjs",
+    "check": "npm run build && npm test"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
