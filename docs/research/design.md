@@ -1,4 +1,6 @@
-HandOver cross-platform design (Design role). I edited no files.
+# HandOver cross-platform design
+
+Notes on how the hub, phones and native shells fit together on each platform.
 
 **1. The model in one line**
 - The laptop (Mac or Windows desktop app, or the browser at localhost:8000) is the hub. It holds the lessons, runs the checks and shows the learn screen.
@@ -8,7 +10,7 @@ HandOver cross-platform design (Design role). I edited no files.
 **2. Screens per platform**
 - Desktop, Mac and Windows (one shared web UI inside a native shell): Welcome, Gemini key, Connect a camera (QR), Lessons (library), New lesson, Making lesson (progress), Lesson editor, Learn (full screen), Done, Settings.
   - macOS: sidebar for Lessons and Settings, traffic lights inset in a unified toolbar, Learn enters native full screen.
-  - Windows 11: Mica only as the window backdrop, never on controls. Caption buttons on the right, custom title bar showing the backdrop. Mica turns into a solid color when transparency is off or on battery saver, so the layout must not depend on it. Source: https://learn.microsoft.com/en-us/windows/apps/design/style/mica (verified, fetched today).
+  - Windows 11: Mica only as the window backdrop, never on controls. Caption buttons on the right, custom title bar showing the backdrop. Mica turns into a solid color when transparency is off or on battery saver, so the layout must not depend on it. Source: https://learn.microsoft.com/en-us/windows/apps/design/style/mica (verified).
   - Font: `system-ui` gives SF on Mac and Segoe UI Variable on Windows 11. MDN says `system-ui` is "the default user interface font on a given platform": https://developer.mozilla.org/en-US/docs/Web/CSS/font-family (verified). The Segoe UI Variable mapping is inferred.
 - Web: the same screens as desktop, plus `/capture` for phones.
 - iPhone app: Connect (scan QR), Camera (preview, status, step title, Next), Source (This iPhone or Ray-Ban Meta), Settings.

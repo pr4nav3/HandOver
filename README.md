@@ -4,66 +4,40 @@
 
 # HandOver
 
-**A course that moves when you do.**
-
-Turn one expert recording into a step-by-step course. HandOver shows the expert's motion beside the learner's hands, watches for visible progress, and advances when the step is complete.
+A how-to video that waits for you.
 
 [Website](https://handover.sohamaggarwal.com) ·
 [Install](docs/install.md) ·
-[Documentation](docs/README.md) ·
+[Docs](docs/README.md) ·
 [Privacy](docs/privacy.md)
 
-![macOS 14+](https://img.shields.io/badge/macOS-14%2B-black)
-![iOS 18+](https://img.shields.io/badge/iOS-18%2B-black)
-![Android 10+](https://img.shields.io/badge/Android-10%2B-black)
-![License: MIT](https://img.shields.io/badge/license-MIT-blue)
-
-<img src="apps/apple/screenshots/landscape-learn-mistake.png" width="920" alt="HandOver Learn showing the expert tutorial, current learner view, step status, and a corrective prompt">
-
-<sub>The learner sees the expert motion, the camera's current state, and one clear correction without leaving the step.</sub>
+<img src="apps/apple/screenshots/landscape-learn-mistake.png" width="920" alt="HandOver Learn: the expert's clip on the left, the learner's camera on the right, and a correction for the current step">
 
 </div>
 
-> [!IMPORTANT]
-> HandOver is an active research prototype, not a safety system. Phone, laptop, browser, and replay paths have automated coverage. A signed development build has registered a Ray-Ban Meta Gen 2 through Meta AI Developer Mode and carried its live camera into HandOver. That is evidence for this specific setup, not a production hardware matrix or store-ready integration.
+An expert does a task once on camera, for example wearing Meta glasses. HandOver cuts the take into steps, each with its own clip, captions and voiceover. A learner then points a phone or laptop camera at their hands, watches the expert's clip for the current step, and the lesson moves on when the camera shows the step is done.
 
-## What it does
+Everything runs on one laptop on the local network. Learner frames stay in memory and are never saved.
 
-| | What HandOver provides |
-| --- | --- |
-| **Teach** | Upload or record an expert take. The pipeline finds steps, cuts replayable clips, writes captions, selects reference frames, drafts camera-checkable questions, and can add local voiceover. |
-| **Learn** | Keep the expert clip large while the learner's phone, computer, replay, or supported glasses camera supplies a live view. Pause, replay, scrub, go back, or advance manually at any time. |
-| **Check** | Wait for the hands to settle, compare the latest frame with the step's references, and advance only on a confident visible result. A concise correction appears when the learner still matches the previous state. |
-| **Author** | Adjust cuts, titles, questions, manual steps, safety notes, and course metadata in the editor, with revision-aware clients and undo/redo. |
-| **Review** | Show pace, camera-verified steps, manual advances, caught mistakes, and a step-by-step completion review. Events stay local unless optional Databricks export is configured. |
+## How it works
 
-Camera judgment is deliberately limited to what a frame can show: shape, position, seams, counts, and visible completion. A step that cannot be judged honestly remains manual.
+**Teach.** Record or upload a take. The pipeline finds the step boundaries, cuts a clip per step, writes timed captions, picks a reference frame that shows what "done" looks like, drafts a yes/no question a camera can answer, and speaks a short voiceover with a local TTS model. An editor lets you fix cuts, titles, questions and safety notes afterwards, with undo.
 
-## The course loop
+**Learn.** The screen shows the expert's clip beside the learner's live camera. When the hands settle, the hub compares the newest frame with the step's reference and asks a vision model whether the step is done. Two confident yeses on different frames advance the lesson, with a chime and a spoken cue. A guess never moves it forward, and Next always works. If the learner is still on the previous step after a few seconds, the screen names it and says the common mistake out loud.
 
-| Build the course | Learn with live feedback | Review and practice |
+**Review.** The done screen shows the learner's time per step against the expert's and which steps the camera verified. Events are written to a local file. Export to Databricks is optional and off unless credentials are set.
+
+Camera checks are limited to what a frame can show: shape, position, seams, counts. Steps that can't be judged from a photo are marked manual rather than passed by accident.
+
+| Build the course | Learn with the camera | Review |
 | :---: | :---: | :---: |
-| <img src="apps/apple/screenshots/editor-mac.png" width="290" alt="Course editor with the step list, timeline, and camera-check settings"> | <img src="apps/apple/screenshots/landscape-learn-mistake.png" width="290" alt="Learn workspace with tutorial, learner view, and correction"> | <img src="apps/apple/screenshots/done-mac.png" width="290" alt="Completion review with score, timing, and per-step results"> |
-| Refine the cuts and checks. | Follow the motion; HandOver watches the result. | See what passed, what took time, and what to retry. |
+| <img src="apps/apple/screenshots/editor-mac.png" width="290" alt="Course editor with the step list, timeline and check settings"> | <img src="apps/apple/screenshots/landscape-learn-mistake.png" width="290" alt="Learn with the expert clip, learner view and a correction"> | <img src="apps/apple/screenshots/done-mac.png" width="290" alt="Done screen with timing and per-step results"> |
 
-These are repository-owned application snapshots rendered from a bundled synthetic origami fixture. Names, timing, scores, and learner results are demo data; screenshots do not establish a physical-device or model-accuracy claim.
-
-## Install the apps
-
-HandOver is a local system: one Mac or PC runs the hub, and any connected screen can follow the same lesson.
-
-| Platform | Current path | What it does |
-| --- | --- | --- |
-| **Mac** | [Download page](https://handover.sohamaggarwal.com/install) or build the desktop/Apple target | Runs the workspace and local hub; can also use its camera. |
-| **iPhone / iPad** | Build the Apple app with Xcode and your own signing team | Follows the course, streams the phone camera, and bridges the Meta Wearables toolkit. |
-| **Android** | APK on the download page or build with Gradle | Follows the course and streams the phone camera; the wearable path remains a developer build. |
-| **Browser** | Open the hub on the local network | Full learner view; phone camera capture requires trusted local HTTPS. |
-
-The exact source-build, signing, pairing, and Meta Developer Mode steps are in [docs/install.md](docs/install.md). The iPhone app is not on the App Store or TestFlight; Xcode is the honest install path today.
+Screenshots use the bundled origami demo lesson.
 
 ## Quickstart
 
-For deterministic local development, install Python 3.12, [uv](https://docs.astral.sh/uv/), Node.js 20+, npm, and ffmpeg. Then run:
+You need Python 3.12, [uv](https://docs.astral.sh/uv/), Node.js 20+ and ffmpeg.
 
 ```sh
 uv venv --python 3.12 .venv
@@ -71,71 +45,56 @@ uv pip install --python .venv/bin/python -r server/requirements.lock
 npm --prefix web ci
 npm --prefix web run build
 
-# No model key, network call, or paid inference.
+# Mock checks: no model key, no network.
 HANDOVER_CHECK=mock HANDOVER_NO_NETWORK=1 scripts/run_server.sh
 ```
 
-Open <http://localhost:8000> and choose a bundled lesson. To drive a complete session without camera hardware:
+Open <http://localhost:8000> and pick a bundled lesson. To run a whole session without a camera, replay a take as the learner:
 
 ```sh
-.venv/bin/python -m server.replay lessons/fortune-teller-v2/norm.mp4 \
-  --select fortune-teller-v2
+.venv/bin/python -m server.replay lessons/fortune-teller-v2/norm.mp4 --select fortune-teller-v2
 ```
 
-Mock mode advances camera-checkable steps on a timer. For real checks, copy `.env.example` to `.env`, add either `ANTHROPIC_API_KEY` or `GEMINI_API_KEY`, and restart without `HANDOVER_CHECK=mock`. Keys stay in `.env` and are never returned by the API.
+For real checks, copy `.env.example` to `.env`, add `ANTHROPIC_API_KEY` or `GEMINI_API_KEY`, and start the hub without `HANDOVER_CHECK=mock`. Keys stay in `.env`; the API never returns them.
 
-Phone browsers need HTTPS for camera access. On macOS, run `scripts/certs.sh` once and follow its trust instructions. Native phone apps connect directly to the hub over the local network. Windows setup and the contributor workflow are in [CONTRIBUTING.md](CONTRIBUTING.md).
+Phone browsers need HTTPS to open the camera. On macOS, `scripts/certs.sh` makes a local certificate and tells you how to trust it. Windows setup is in [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Apps
+
+The hub is the source of truth. Every app is a viewer of it and can be its camera.
+
+- **Mac and Windows:** the desktop app (Tauri, Rust core) runs the workspace and the hub. [Download](https://handover.sohamaggarwal.com/install) or build from `apps/desktop`.
+- **iPhone and iPad:** SwiftUI app, built with Xcode and your own signing team. Streams the phone camera and bridges the Meta Wearables Device Access Toolkit for glasses. Not on the App Store or TestFlight.
+- **Android:** Kotlin and Compose. APK on the download page, or build with Gradle.
+- **Browser:** the full learner view at the hub's address, plus a capture page for phones.
+
+Glasses streaming is a developer build. A signed iPhone build has registered a Ray-Ban Meta Gen 2 through Meta's Developer Mode and carried its camera into the hub; it has not been tested across phones or firmware. Build, signing and pairing steps are in [docs/install.md](docs/install.md).
 
 ## Architecture
 
-```mermaid
-flowchart LR
-  video["Expert recording"] --> teach["Teach pipeline<br/>ffmpeg + model extraction + local voice"]
-  teach --> lesson["Portable lesson<br/>JSON, clips, captions, references"]
-  lesson --> hub["Local FastAPI hub<br/>session, files, checks, accounts"]
-  camera["Phone, computer,<br/>replay, or glasses"] -->|"newest frame only"| hub
-  hub <-->|"REST + WebSockets"| clients["Web, SwiftUI,<br/>Android, Tauri"]
-  hub -->|"reference + selected live frame"| vision["Configured vision provider"]
-  hub -. "metadata only" .-> jsonl["Local JSONL"]
-  jsonl -. "optional async batch" .-> db["Databricks"]
-```
+One Python process (FastAPI, uvicorn, websockets) serves the lesson files, the web app, a camera socket and a UI socket. Cameras send JPEG frames; the hub keeps only the newest one per camera, in memory. A motion gate lets a frame through once the picture has settled, and a check runs against the configured vision provider with the step's reference frame and the live frame. Clients get the lesson state over WebSockets. Analytics write to a local JSON lines file and never sit in the live path.
 
-The laptop hub is the source of truth for the active course, step, check result, and connected cameras. Learner frames are newest-only in memory. Clients receive synchronized state over WebSockets, while optional analytics run outside the live path and cannot block a lesson. The additive wire contract is documented in [CONTRACT.md](CONTRACT.md); the complete system narrative is [docs/project.md](docs/project.md).
+The wire format is in [CONTRACT.md](CONTRACT.md). The full write-up of how the teach pipeline, the learn loop and the data layer work, with the numbers behind the design choices, is [docs/project.md](docs/project.md).
 
 ## Privacy
 
-- **Learner frames are transient.** The hub keeps only the latest frame in memory and never adds frames or audio to analytics.
-- **Checks are explicit network use.** The configured vision provider receives the reference material and selected live frame needed for a check. Expert recordings and derived course media are stored as course content.
-- **Analytics are metadata only.** Local events exclude raw images, audio, IP addresses, auth tokens, camera names, and stable device identifiers.
-- **Databricks is optional.** Export is asynchronous, retry-safe, and disabled when credentials are absent.
+The hub never saves learner camera frames. A check sends the step's reference frame and one live frame to the vision provider you configured, and nothing else leaves the laptop unless you turn Databricks export on. The local event log holds run metadata only: no images, audio, IP addresses, tokens or device identifiers. The expert's take and clips are lesson content and are stored as such.
 
-Read [docs/privacy.md](docs/privacy.md) before using real learner data and [docs/analytics.md](docs/analytics.md) before enabling an external sink.
+Details in [docs/privacy.md](docs/privacy.md) and [docs/analytics.md](docs/analytics.md).
 
-## Validation
+## Tests
 
-| Surface | Evidence in this repository | Still manual |
-| --- | --- | --- |
-| Hub and protocol | Engine, contract, library, privacy, source, ordering, and failure-path suites | Provider behavior and latency on the intended network and course |
-| Web | TypeScript build and Playwright hub/replay flow | Target browser, camera, and certificate matrix |
-| Apple, Android, desktop | Unit/UI tests, snapshots, protocol fixtures, and platform builds | Release signing, installers, and physical-device matrix |
-| Meta camera | Toolkit lifecycle/source tests plus one signed Ray-Ban Meta Gen 2 live-flow run | Sustained repeatable sessions across claimed phones, firmware, and glasses |
-| Analytics | Redaction, local sink, schema adapter, aggregation, and failure-isolation tests | Workspace permissions, dashboards, and production retention policy |
+The hub, protocol, library, privacy and failure paths have pytest suites. The web app has a TypeScript build and a Playwright flow that drives a real hub with a replayed camera. The Apple, Android and desktop apps each have unit and snapshot tests. What is covered automatically and what still needs a person is listed in [docs/validation.md](docs/validation.md). Anything that is a mock, replay or synthetic fixture is labelled as one.
 
-[docs/validation.md](docs/validation.md) lists the exact commands, evidence levels, and release checklist. A mock, replay, snapshot, or synthetic fixture is always labeled as such.
-
-## Documentation
+## More
 
 - [Documentation index](docs/README.md)
 - [Install and connect](docs/install.md)
 - [Troubleshooting](docs/troubleshooting.md)
-- [System narrative](docs/project.md)
 - [Hub setup and internals](server/README.md)
-- [Protocol contract](CONTRACT.md)
-- [Contributor guide](CONTRIBUTING.md)
 - [Desktop app](apps/desktop/README.md)
 - [Databricks runbook](databricks/README.md)
-
-Contributions are welcome. Keep changes offline-testable, preserve the learner-frame privacy boundary, and update the contract and relevant guides when a wire shape changes.
+- [Contributing](CONTRIBUTING.md)
 
 ## License
 
