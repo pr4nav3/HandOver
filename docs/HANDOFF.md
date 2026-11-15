@@ -5,7 +5,7 @@ Three people, three lanes, about 2.5 hours to a demo that runs on its own. Softw
 | Lane | Who | Output |
 |---|---|---|
 | A. Bike lesson, highlights, app voice cues | Pranav + Claude | `lessons/front-wheel-v1` narrated and rendered, cues in the app |
-| B. Origami lesson | GPT Pro person | step times, titles and narration lines for the new take, as two small files (below) |
+| B. Origami lesson | Soham | step times, titles and narration lines for the new take, as two small files (below) |
 | C. Databricks | Prayush | credentials on the demo laptop, tables and dashboard live, one Genie question |
 | D. Test | everyone, Pranav drives | the checklist at the end, all green on the demo laptop |
 
@@ -20,7 +20,7 @@ Take: front wheel off, rim checked, wheel back on, spin, front brake. Template w
 4. Highlights and zoom: `python -m server.produce lessons/front-wheel-v1 --theme ivory --accent #1F49D6` writes `clips_produced/NN.mp4` with a slow push-in toward the hands, a highlight ring at the key moment, a step label and a progress bar. Review them, then point each step's `clip` at the produced file so Learn plays the rendered version. The hub never touches these; a recut rebuilds the plain clips and the render is rerun.
 5. Planted mistake for the demo: close the quick release pointing forward. The step's `common_mistake` is the spoken line.
 
-## B. Origami lesson (GPT Pro person)
+## B. Origami lesson (Soham)
 
 You do not need the repo running. Deliver two small files and we run the pipeline.
 
@@ -52,3 +52,7 @@ Data layer only, never in the live loop. The hub writes every learn event to `lo
 6. Replay fallback: `python -m server.replay lessons\front-wheel-v1\norm.mp4 --loop` shows the Recording tag. Record a 20 s skipped-step clip for the catch fallback.
 7. Backup video of a full clean run, phone screen recording plus laptop screen.
 8. Freeze. Only fixes after this, each run once on the laptop.
+
+## E. Privacy (for the pitch and the Devpost)
+
+`docs/PRIVACY.md` is the source: frames stay in memory, a test proves they never touch disk, the model sees one frame per check, the event log and Databricks hold numbers only, no accounts. The spoken demo line is at the bottom of that file.

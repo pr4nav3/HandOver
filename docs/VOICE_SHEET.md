@@ -1,26 +1,33 @@
 # Voice sheet
 
-One voice for everything the product says: lesson narration and the app's own cues. Kokoro (local, open source), voice `af_heart` unless we change it here. Alternatives to audition with `python -m server.voice lessons/demo-v1 --voice <name> --dry-run` then for real: `af_bella` (warmer), `af_nicole` (softer), `am_adam`, `am_michael` (male), `bf_emma`, `bm_george` (British). Decide once, write the name in `HANDOVER_VOICE` in `.env`, and re-voice both lessons and the cues.
+One voice for everything the product says: lesson narration and the app's own cues. It must sound like a calm person coaching you, not a screen reader.
+
+## How we lock the voice (Sunday morning, 15 minutes)
+
+1. Audition: `python -m server.voice --audition "That's it. Next step. Fold the top corner down to meet the bottom one, and press the crease flat." --voices af_heart,af_bella,af_nicole,am_adam,bm_george --out audition` renders the same line in five Kokoro voices. Pranav listens and picks one. Speed is 0.95 and sentences get a short breath between them.
+2. If none sounds human enough, flip `HANDOVER_TTS_PROVIDER=elevenlabs` with an `ELEVENLABS_API_KEY` in `.env` (free tier, about 10k characters a month, enough for both lessons and the cues several times over). Default ElevenLabs voice is Sarah; set `HANDOVER_ELEVEN_VOICE` to another voice id to change it. Everything downstream (mixing, caption timing, cues) is identical; Kokoro is the automatic fallback if the key or the network is missing, so the demo never depends on it.
+3. Write the choice into `.env` (`HANDOVER_VOICE=<kokoro voice>` or the ElevenLabs pair), then re-voice both lessons (`make_lesson.ps1 -Id <id> -Recut` or `python -m server.voice lessons/<id> --script ... --mode replace`) and regenerate the cues (`python -m server.voice --cues web/public/voice`). One run, both lessons, same voice.
 
 ## Rules for every line
 
 - Second person, present tense, one action per sentence. "Fold the top corner down to the bottom one."
+- Sounds like a person next to you: contractions are fine ("that's it", "you're"), short pauses between sentences, calm, never hyped.
 - One or two sentences, at most 22 words, about 2.5 words per second of clip.
 - Name shapes and counts, never colors. Never read the check question aloud.
-- No "please", no "simply", no exclamation marks, no "great job".
+- No "please", no "simply", no exclamation marks, no "great job" or other praise words. Acknowledge with a plain "that's it".
 - The first word is the verb when possible.
 
 ## App cues (spoken by the Learn screen, pre-rendered in the same voice)
 
 | Event | Line | When |
 |---|---|---|
-| Camera verified a step | "Done. Moving on." | on `advance` with reason camera, before the next clip starts |
+| Camera verified a step | "That's it. Next step." | on `advance` with reason camera, right after the chime |
 | Learner pressed Next | nothing | the click is the acknowledgment |
-| Mistake, behind | the step's `common_mistake`, else "Still step N. Check the clip." | once per mistake |
-| Mistake, ahead | "You are ahead. Back to step N." | once |
-| Lesson complete | "Lesson complete." | on done |
-| Checks off | "Checks are off. Use Next to move on." | once when the breaker opens |
-| Camera lost | "Camera lost. Keep going with Next." | once |
+| Mistake, behind | the step's `common_mistake`, else "Not quite yet. Take another look at the clip." | once per mistake |
+| Mistake, ahead | "You're ahead of me. Let's go back one step." | once |
+| Lesson complete | "That's the whole thing. Nicely done." | on done |
+| Checks off | "I can't see well right now. Tap Next when you're done." | once when the breaker opens |
+| Camera lost | "I lost the camera. Keep going with Next." | once |
 
 Cue files live in `web/public/voice/` and are served by the hub; the browser falls back to its own speech only if a file is missing. A toggle in the Learn ⋯ popover turns cues off.
 
