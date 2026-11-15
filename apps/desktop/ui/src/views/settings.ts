@@ -61,9 +61,9 @@ export function nearestInterval(v: number): number {
   return CHECK_INTERVALS.reduce((best, x) => (Math.abs(x - v) < Math.abs(best - v) ? x : best), CHECK_INTERVALS[0]);
 }
 
-const toggle = (key: string, label: string, on: boolean, detail: string) =>
+const toggle = (key: string, label: string, on: boolean, _detail: string) =>
   html`<label class="toggle-row">
-    <span class="toggle-text"><span>${label}</span><span class="toggle-detail">${detail}</span></span>
+    <span class="toggle-text"><span>${label}</span></span>
     <input type="checkbox" role="switch" data-setting="${key}" ${on ? "checked" : ""} />
   </label>`;
 
@@ -92,8 +92,8 @@ function card(t: Theme, selected: boolean): Raw {
 function interval(v: number): Raw {
   const on = nearestInterval(v);
   return html`<div class="interval-row">
-    <span class="toggle-text"><span>Model sees every</span><span class="toggle-detail">A shorter gap catches steps sooner and makes more checks. Applies to everyone on this hub.</span></span>
-    <div class="segmented" role="radiogroup" aria-label="Model sees every">
+    <span class="toggle-text"><span>Check Every</span></span>
+    <div class="segmented" role="radiogroup" aria-label="Check Every">
       ${CHECK_INTERVALS.map(
         (x) => html`<button role="radio" aria-checked="${x === on}" class="${x === on ? "on" : ""}" data-interval="${x}">${x} s</button>`,
       )}
@@ -137,15 +137,16 @@ export function renderSettings(el: HTMLElement, m: SettingsModel) {
         </header>
         <div class="sheet-body">
           <section>
-            <h3>Connection</h3>
+            <h3>Hub</h3>
             <dl class="hub-details">
-              <div><dt>Mac</dt><dd><span class="dot ${m.link.link === "connected" ? "ok" : "warn"}"></span>${m.link.link === "connected" ? `Ready · ${m.link.label || m.link.hub}` : connected ? "Reconnecting" : "Not paired"}</dd></div>
+              <div><dt>${m.link.label || m.link.hub || "Hub"}</dt><dd><span class="dot ${m.link.link === "connected" ? "ok" : "warn"}"></span>${m.link.link === "connected" ? "Connected" : connected ? "Reconnecting" : "Not paired"}</dd></div>
               ${m.account ? html`<div><dt>Account</dt><dd>${m.account}</dd></div>` : ""}
-              <div><dt>Camera</dt><dd>${m.camera}<button class="quiet small" data-camera>Change</button></dd></div>
             </dl>
             ${connected
-              ? html`<div class="hub-actions"><button class="primary" data-pair>${icons.qr}<span>Pair iPhone</span></button></div>`
-              : html`<div class="hub-actions"><button class="primary" data-other-hub>Connect to a Hub</button></div>`}
+              ? html`<div class="hub-actions"><button class="secondary" data-pair>${icons.qr}<span>Pair a Phone</span></button>
+                <button class="quiet" data-other-hub>Change Hub</button><button class="quiet danger-text" data-disconnect>Remove This Hub</button></div>`
+              : html`<div class="hub-actions"><button class="secondary" data-other-hub>Connect to a Hub</button></div>`}
+            ${toggle("reopenLastHub", "Reconnect to the Last Hub at Launch", s.reopen_last_hub, "")}
           </section>
           <section>
             <h3>Appearance</h3>
@@ -155,9 +156,6 @@ export function renderSettings(el: HTMLElement, m: SettingsModel) {
                   data-appearance="${a}">${a[0].toUpperCase() + a.slice(1)}</button>`,
               )}
             </div>
-            <p class="hint">Themes with one look keep it.</p>
-          </section>
-          <section>
             <div class="theme-head">
               <h3>Theme</h3>
               <input class="theme-search" id="theme-search" type="search" placeholder="Search ${m.catalog.themes.length} themes"
@@ -173,33 +171,26 @@ export function renderSettings(el: HTMLElement, m: SettingsModel) {
               : html`<p class="hint">No theme matches.</p>`}
           </section>
           <section>
-            <h3>Lesson</h3>
-            ${toggle("chime", "Chime when the camera confirms a step", s.chime, "A soft two note sound.")}
+            <h3>Learn</h3>
+            ${toggle("chime", "Chime When the Camera Confirms a Step", s.chime, "")}
             ${toggle(
               "notifications",
-              "Notify me in the background",
+              "Notify Me in the Background",
               s.notifications,
               "When a lesson finishes or checks go off while the window is hidden.",
             )}
           </section>
           <section>
-            <details class="settings-advanced">
-              <summary>Advanced hub settings</summary>
-              ${connected
-                ? html`<dl class="hub-details">
-                  <div><dt>Address</dt><dd><code>${m.link.hub}</code><button class="quiet small" data-copy="${m.link.hub}">Copy</button></dd></div>
-                  <div><dt>Status</dt><dd><span class="dot ${m.link.link === "connected" ? "ok" : "warn"}"></span>${m.link.link === "connected" ? "Connected" : "Reconnecting"}</dd></div>
-                  <div><dt>Checks</dt><dd>${m.checks}</dd></div>
-                </dl>
-                ${m.checkInterval !== null ? interval(m.checkInterval) : ""}
-                <div class="hub-actions"><button class="secondary" data-other-hub>Connect to Another Hub</button>
-                  <button class="quiet danger-text" data-disconnect>Disconnect</button></div>`
-                : html`<p class="muted">Not connected.</p>`}
-              ${toggle("reopenLastHub", "Reconnect to the last hub at launch", s.reopen_last_hub, "Skips the connect screen.")}
-            </details>
+            <h3>Camera</h3>
+            <dl class="hub-details">
+              <div><dt>Source</dt><dd>${m.camera}<button class="quiet small" data-camera>Change</button></dd></div>
+              <div><dt>Checks</dt><dd>${m.checks}</dd></div>
+            </dl>
+            ${m.checkInterval !== null ? interval(m.checkInterval) : ""}
           </section>
           <section>
-            <h3>Keyboard</h3>
+            <h3>About</h3>
+            <details><summary>Keyboard Shortcuts</summary>
             <dl class="keys">
               <div><dt>Next step</dt><dd>Right arrow or Space</dd></div>
               <div><dt>Previous step</dt><dd>Left arrow</dd></div>
@@ -208,6 +199,7 @@ export function renderSettings(el: HTMLElement, m: SettingsModel) {
               <div><dt>Connect to another hub</dt><dd>${modLabel}K</dd></div>
               <div><dt>Settings</dt><dd>${modLabel},</dd></div>
             </dl>
+            </details>
             <div class="hub-actions"><span class="hint">HandOver ${m.version}</span><button class="quiet small" data-welcome>Show Welcome Again</button></div>
             <p class="hint">The hub never saves your camera frames. Checks send frames to the hub's check service and nothing is kept.</p>
           </section>
