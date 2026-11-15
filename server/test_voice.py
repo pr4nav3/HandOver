@@ -168,12 +168,12 @@ def test_should_voiceover_setting():
 def test_settings_defaults_and_bounds():
     with env(HANDOVER_VOICE=None, HANDOVER_VOICE_SPEED=None, HANDOVER_VOICE_SCRIPT_MODEL=None):
         assert voice.default_voice() == "af_heart"
-        assert voice.default_speed() == 1.0
+        assert voice.default_speed() == 0.95
         assert voice.script_model() == "claude-haiku-5-5"
     with env(HANDOVER_VOICE="af_bella", HANDOVER_VOICE_SPEED="1.1"):
         assert voice.default_voice() == "af_bella" and voice.default_speed() == 1.1
     with env(HANDOVER_VOICE_SPEED="3"):
-        assert voice.default_speed() == 1.0
+        assert voice.default_speed() == 0.95
 
 
 # ---------------------------------------------------------------- text
@@ -313,7 +313,7 @@ def test_speak_kokoro_path_and_unknown_voice():
     fk = FakeKokoro()
     with patched(voice, _kokoro=fk, _kokoro_failed=None):
         out = TMP / "k.wav"
-        assert abs(voice.speak("Fold it in half.", out, "af_bella") - 0.5) < 0.01
+        assert abs(voice.speak("Fold it in half.", out, "af_bella") - 0.5 / voice.default_speed()) < 0.01
         assert fk.voice == "af_bella" and voice.wav_seconds(out) > 0.49
         seconds, engine, used = voice.synthesize("Fold it.", out, "zz_nobody")
         assert engine == "kokoro" and used == "af_heart" and fk.voice == "af_heart"
@@ -353,32 +353,34 @@ def test_kokoro_files_are_pinned():
 # ---------------------------------------------------------------- narration and mixing
 
 def test_narrate_fits_and_times_cues():
-    synth = fake_synth(per_word=0.3)
-    work = TMP / "nar1"
-    work.mkdir()
-    nar = voice.narrate(["Fold it in half.", "Press the edge down."], 8.0, work, synth=synth)
-    assert abs(voice.wav_seconds(nar.wav) - 8.0) < 0.001
-    (a1, b1, t1), (a2, b2, t2) = nar.cues
-    assert a1 == voice.LEAD_S and abs((b1 - a1) - 1.2) < 0.01
-    assert abs(a2 - (b1 + voice.GAP_S)) < 0.001 and b2 <= 8.0 - voice.TAIL_S
-    assert {s for _, s in synth.calls} == {1.0}  # fits at normal speed
+    with env(HANDOVER_VOICE_SPEED="1.0"):  # the speed steps below are relative to 1.0
+        synth = fake_synth(per_word=0.3)
+        work = TMP / "nar1"
+        work.mkdir()
+        nar = voice.narrate(["Fold it in half.", "Press the edge down."], 8.0, work, synth=synth)
+        assert abs(voice.wav_seconds(nar.wav) - 8.0) < 0.001
+        (a1, b1, t1), (a2, b2, t2) = nar.cues
+        assert a1 == voice.LEAD_S and abs((b1 - a1) - 1.2) < 0.01
+        assert abs(a2 - (b1 + voice.GAP_S)) < 0.001 and b2 <= 8.0 - voice.TAIL_S
+        assert {s for _, s in synth.calls} == {1.0}  # fits at normal speed
 
 
 def test_narrate_speeds_up_then_drops_sentences():
-    synth = fake_synth(per_word=0.5)
-    work = TMP / "nar2"
-    work.mkdir()
-    # 6 words = 3.0 s at 1.0, too long for 3 s of room; 2.73 s at 1.1 fits
-    nar = voice.narrate(["One two three.", "Four five six."], 3.7, work, synth=synth)
-    assert len(nar.cues) == 2 and max(s for _, s in synth.calls) == 1.1
-    synth = fake_synth(per_word=0.5)
-    work = TMP / "nar3"
-    work.mkdir()
-    nar = voice.narrate(["One two three four.", "Five six seven eight."], 3.0, work, synth=synth)
-    assert len(nar.cues) == 1 and max(s for _, s in synth.calls) == 1.2
-    work = TMP / "nar4"
-    work.mkdir()
-    assert voice.narrate(["Fold."], 3.0, work, synth=fake_synth(fail=True)) is None
+    with env(HANDOVER_VOICE_SPEED="1.0"):  # the speed steps below are relative to 1.0
+        synth = fake_synth(per_word=0.5)
+        work = TMP / "nar2"
+        work.mkdir()
+        # 6 words = 3.0 s at 1.0 plus the gap, too long for 3.1 s of room; 2.73 s at 1.1 plus the gap fits
+        nar = voice.narrate(["One two three.", "Four five six."], 3.8, work, synth=synth)
+        assert len(nar.cues) == 2 and max(s for _, s in synth.calls) == 1.1
+        synth = fake_synth(per_word=0.5)
+        work = TMP / "nar3"
+        work.mkdir()
+        nar = voice.narrate(["One two three four.", "Five six seven eight."], 3.0, work, synth=synth)
+        assert len(nar.cues) == 1 and max(s for _, s in synth.calls) == 1.2
+        work = TMP / "nar4"
+        work.mkdir()
+        assert voice.narrate(["Fold."], 3.0, work, synth=fake_synth(fail=True)) is None
 
 
 def _scripts(lesson: Path) -> list:
@@ -477,6 +479,118 @@ def test_cli_dry_run_without_key_uses_titles():
     assert "using the step titles instead" in text and "Pattern 1." in text
     assert "voiceover" not in json.loads((lesson / "lesson.json").read_text())
     assert sha(lesson / "clips" / "01.mp4") == before
+
+
+def test_script_file_lines_win_and_overflow_is_kept():
+    lesson = demo_copy("script-file")
+    steps = json.loads((lesson / "lesson.json").read_text(encoding="utf-8"))["steps"]
+    long_line = " ".join(["fold"] * 40) + "."
+    path = TMP / "voice-script.json"
+    path.write_text(json.dumps({"steps": {"1": "Lay the sheet flat — printed side down", "2": long_line}}),
+                    encoding="utf-8")
+    lines = voice.load_script_file(path)
+    assert set(lines) == {1, 2}
+    warnings: list[str] = []
+    got = voice.file_scripts(steps, lines, [8.0] * len(steps), warn=warnings.append)
+    assert got[0].sentences == ["Lay the sheet flat, printed side down."] and got[0].source == "file"
+    assert _words_of(got[1]) == 40, "an over-long line is kept whole"
+    assert len(warnings) == 1 and "step 2" in warnings[0] and "Over by: fold" in warnings[0]
+    assert all(sc is None for sc in got[2:])
+    for bad in ('{"steps": ["a"]}', '{"steps": {"x": "a"}}', '{"steps": {"0": "a"}}', "not json"):
+        path.write_text(bad, encoding="utf-8")
+        try:
+            voice.load_script_file(path)
+            raise AssertionError(bad)
+        except ValueError:
+            pass
+
+    # applied: lesson.json records where each voiced step's lines came from
+    scripts = [got[0], voice.StepScript(2, "t", 8.0, ["Fold it in half."], "title")]
+    result = voice.apply_voiceover(lesson, scripts, "duck", synth=fake_synth())
+    assert result["voiced"] == [1, 2]
+    field = json.loads((lesson / "lesson.json").read_text())["voiceover"]
+    assert field["steps"] == {"1": {"script_source": "file"}, "2": {"script_source": "title"}}
+
+
+def _words_of(sc) -> int:
+    return len(sc.narration.split())
+
+
+def test_cli_script_dry_run_offline_mixes_file_and_titles():
+    lesson = demo_copy("cli-script")
+    path = TMP / "voice-cli.json"
+    path.write_text(json.dumps({"steps": {"1": "Lay the sheet flat.", "2": "Fold it edge to edge."}}),
+                    encoding="utf-8")
+    calls = []
+    out = io.StringIO()
+    with env(HANDOVER_NO_NETWORK="1"), patched(voice, write_script=lambda *a, **k: calls.append(1)),             contextlib.redirect_stdout(out):
+        code = voice.main([str(lesson), "--script", str(path), "--dry-run"])
+    text = out.getvalue()
+    assert code == 0, text
+    assert not calls, "offline: no Claude call"
+    assert "Lay the sheet flat." in text and "Fold it edge to edge." in text and "file)" in text
+    assert "title)" in text and "2 of" in text
+    assert "voiceover" not in json.loads((lesson / "lesson.json").read_text())
+
+
+def test_render_cues_writes_small_mp3s():
+    out = TMP / "cues"
+    code = voice.render_cues(out, cues={"a": "Done. Moving on.", "b": "Lesson complete."}, synth=fake_synth())
+    assert code == 0
+    for name in ("a", "b"):
+        f = out / f"{name}.mp3"
+        assert f.is_file() and 0 < f.stat().st_size < 60_000
+        assert ffprobe(f, "-show_entries", "stream=codec_name,channels", "-of", "csv=p=0") == "mp3,1"
+    # sentences are spoken one by one with a breathing pause between them
+    two = voice.render_line("Not quite yet. Take another look.", out / "two.mp3", synth=fake_synth())
+    one = voice.render_line("Not quite yet take another look.", out / "one.mp3", synth=fake_synth())
+    assert two[0] - one[0] > voice.GAP_S - 0.05
+    assert set(voice.APP_CUES) >= {"done-moving-on", "lesson-complete", "checks-off", "camera-lost", "ahead",
+                                   "still-step"}
+
+
+def test_elevenlabs_provider_faked_and_fallback():
+    calls = []
+    mp3 = TMP / "eleven-src.mp3"
+    subprocess.run([voice.ffmpeg_bin(), "-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=330:duration=1.2",
+                    "-ac", "1", "-c:a", "libmp3lame", "-b:a", "64k", str(mp3)], check=True)
+
+    def post(url, body, key):
+        calls.append((url, body, key))
+        return mp3.read_bytes()
+
+    wav = TMP / "eleven.wav"
+    with env(HANDOVER_TTS_PROVIDER="elevenlabs", ELEVENLABS_API_KEY="test-key-not-real", HANDOVER_NO_NETWORK=None,
+             HANDOVER_ELEVEN_VOICE=None, HANDOVER_ELEVEN_MODEL=None), patched(voice, _eleven_post=post):
+        seconds, engine, used = voice.synthesize("Fold it in half.", wav)
+        assert engine == "elevenlabs" and used == "EXAVITQu4vr4xnSDxMaL" and 1.0 < seconds < 1.5
+        url, body, key = calls[0]
+        assert url == voice.ELEVEN_URL + "EXAVITQu4vr4xnSDxMaL?output_format=mp3_44100_128"
+        assert key == "test-key-not-real" and body["model_id"] == "eleven_multilingual_v2"
+        assert body["voice_settings"] == {"stability": 0.5, "similarity_boost": 0.75, "style": 0.3, "speed": 0.95}
+        with wave.open(str(wav), "rb") as w:
+            assert w.getframerate() == voice.SAMPLE_RATE and w.getnchannels() == 1
+
+        # the lesson field names the provider and voice
+        lesson = demo_copy("eleven")
+        result = voice.apply_voiceover(lesson, _scripts(lesson)[:1], "replace")
+        assert result["voiceover"]["tts"] == "elevenlabs:EXAVITQu4vr4xnSDxMaL", result
+        assert result["voiceover"]["model"] == "eleven_multilingual_v2"
+
+    def broken(url, body, key):
+        raise OSError("down")
+
+    fake = SimpleNamespace(get_voices=lambda: ["af_heart"], create=lambda *a, **k: ([0.1] * 4800, 24000))
+    with env(HANDOVER_TTS_PROVIDER="elevenlabs", ELEVENLABS_API_KEY="test-key-not-real", HANDOVER_NO_NETWORK=None), \
+            patched(voice, _eleven_post=broken, _kokoro=fake, _kokoro_failed=None):
+        assert voice.synthesize("Fold it in half.", wav)[1] == "kokoro"
+    calls.clear()
+    with env(HANDOVER_TTS_PROVIDER="elevenlabs", ELEVENLABS_API_KEY=None, HANDOVER_NO_NETWORK=None), \
+            patched(voice, _eleven_post=post, _kokoro=fake, _kokoro_failed=None, _eleven_key=lambda: None):
+        assert voice.synthesize("Fold it in half.", wav)[1] == "kokoro" and not calls
+    with env(HANDOVER_TTS_PROVIDER="elevenlabs", ELEVENLABS_API_KEY="k", HANDOVER_NO_NETWORK="1"), \
+            patched(voice, _eleven_post=post, _kokoro=fake, _kokoro_failed=None):
+        assert voice.synthesize("Fold it in half.", wav)[1] == "kokoro" and not calls
 
 
 def test_cli_undo_and_missing_lesson():
