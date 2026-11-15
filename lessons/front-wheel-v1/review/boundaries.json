@@ -1,0 +1,361 @@
+{
+  "video_s": 198.57,
+  "sample_s": 1.0,
+  "pass1": {
+    "model": "claude-sonnet-5-5",
+    "usage": {
+      "input_tokens": 14103,
+      "output_tokens": 1124,
+      "usd": 0.03945,
+      "seconds": 8.8
+    },
+    "steps": [
+      {
+        "n": 1,
+        "title": "Squeeze the front brake and check pads",
+        "done_s": 7.0,
+        "reason": "Hand is on the handlebar and brake lever, checking the brake before the bike is moved.",
+        "quick_flip": false
+      },
+      {
+        "n": 2,
+        "title": "Flip quick release open and unwind nut",
+        "done_s": 15.0,
+        "reason": "The bike is turned upside down and the wheel is loosened and free at the fork.",
+        "quick_flip": false
+      },
+      {
+        "n": 3,
+        "title": "Lift the bike and drop the wheel out",
+        "done_s": 19.0,
+        "reason": "The wheel has dropped out of the fork and lies off to the side of the frame.",
+        "quick_flip": false
+      },
+      {
+        "n": 4,
+        "title": "Pull the skewer out of the hub",
+        "done_s": 72.0,
+        "reason": "The skewer and springs are pulled out and held apart from the hub.",
+        "quick_flip": false
+      },
+      {
+        "n": 5,
+        "title": "Spin the wheel and inspect the tire",
+        "done_s": 90.0,
+        "reason": "The wheel has been turned and checked around its full circle, with the bare hub in view.",
+        "quick_flip": false
+      },
+      {
+        "n": 6,
+        "title": "Slide the skewer back through the hub",
+        "done_s": 154.0,
+        "reason": "The skewer is threaded back through the hub with the springs on and held at the wheel.",
+        "quick_flip": false
+      },
+      {
+        "n": 7,
+        "title": "Lower the fork onto the axle",
+        "done_s": 160.0,
+        "reason": "The wheel is seated in the fork ends and the bike is about to be tightened.",
+        "quick_flip": false
+      },
+      {
+        "n": 8,
+        "title": "Snug the nut and close the lever",
+        "done_s": 183.0,
+        "reason": "The lever is closed and the hand is pressing it flat along the fork.",
+        "quick_flip": false
+      },
+      {
+        "n": 9,
+        "title": "Squeeze the brake and spin the wheel",
+        "done_s": 198.0,
+        "reason": "The bike is upright with the wheel in the fork and the wheel spinning clear of the brake.",
+        "quick_flip": false
+      }
+    ]
+  },
+  "pass2": {
+    "model": "claude-sonnet-5-5",
+    "usage": {
+      "input_tokens": 12484,
+      "output_tokens": 372,
+      "usd": 0.02869,
+      "seconds": 4.8
+    },
+    "boundaries": [
+      {
+        "boundary": 1,
+        "coarse_s": 7.0,
+        "done_s": 7.0,
+        "window_s": [
+          5.0,
+          8.75
+        ],
+        "reason": "Hand is on the handlebar and brake lever after the bike is moved into view, checking the brake.",
+        "frames": [
+          5.0,
+          5.25,
+          5.5,
+          5.75,
+          6.0,
+          6.25,
+          6.5,
+          6.75,
+          7.0,
+          7.25,
+          7.5,
+          7.75,
+          8.0,
+          8.25,
+          8.5,
+          8.75
+        ]
+      },
+      {
+        "boundary": 2,
+        "coarse_s": 19.0,
+        "done_s": 18.5,
+        "window_s": [
+          17.0,
+          20.75
+        ],
+        "reason": "Wheel has dropped out and the fork ends appear empty, with the wheel lying separately.",
+        "frames": [
+          17.0,
+          17.25,
+          17.5,
+          17.75,
+          18.0,
+          18.25,
+          18.5,
+          18.75,
+          19.0,
+          19.25,
+          19.5,
+          19.75,
+          20.0,
+          20.25,
+          20.5,
+          20.75
+        ]
+      },
+      {
+        "boundary": 3,
+        "coarse_s": 72.0,
+        "done_s": 72.25,
+        "window_s": [
+          70.0,
+          73.75
+        ],
+        "reason": "Skewer is clearly out of the hub and held apart in the hands.",
+        "frames": [
+          70.0,
+          70.25,
+          70.5,
+          70.75,
+          71.0,
+          71.25,
+          71.5,
+          71.75,
+          72.0,
+          72.25,
+          72.5,
+          72.75,
+          73.0,
+          73.25,
+          73.5,
+          73.75
+        ]
+      },
+      {
+        "boundary": 4,
+        "coarse_s": 90.0,
+        "done_s": 90.0,
+        "window_s": [
+          88.0,
+          91.75
+        ],
+        "reason": "Wheel has been spun and checked, with the bare hub in view.",
+        "frames": [
+          88.0,
+          88.25,
+          88.5,
+          88.75,
+          89.0,
+          89.25,
+          89.5,
+          89.75,
+          90.0,
+          90.25,
+          90.5,
+          90.75,
+          91.0,
+          91.25,
+          91.5,
+          91.75
+        ]
+      },
+      {
+        "boundary": 5,
+        "coarse_s": 154.0,
+        "done_s": 155.75,
+        "window_s": [
+          152.0,
+          155.75
+        ],
+        "reason": "Skewer is through the hub with its lever on one side and the nut on the other, at the end of the window.",
+        "frames": [
+          152.0,
+          152.25,
+          152.5,
+          152.75,
+          153.0,
+          153.25,
+          153.5,
+          153.75,
+          154.0,
+          154.25,
+          154.5,
+          154.75,
+          155.0,
+          155.25,
+          155.5,
+          155.75
+        ]
+      },
+      {
+        "boundary": 6,
+        "coarse_s": 160.0,
+        "done_s": 158.0,
+        "window_s": [
+          158.0,
+          161.75
+        ],
+        "reason": "Axle already appears seated in the fork with the wheel centered in the first frame.",
+        "frames": [
+          158.0,
+          158.25,
+          158.5,
+          158.75,
+          159.0,
+          159.25,
+          159.5,
+          159.75,
+          160.0,
+          160.25,
+          160.5,
+          160.75,
+          161.0,
+          161.25,
+          161.5,
+          161.75
+        ]
+      },
+      {
+        "boundary": 7,
+        "coarse_s": 183.0,
+        "done_s": 183.0,
+        "window_s": [
+          181.0,
+          184.75
+        ],
+        "reason": "Lever is closed and flat along the fork blade, with a hand pressing it.",
+        "frames": [
+          181.0,
+          181.25,
+          181.5,
+          181.75,
+          182.0,
+          182.25,
+          182.5,
+          182.75,
+          183.0,
+          183.25,
+          183.5,
+          183.75,
+          184.0,
+          184.25,
+          184.5,
+          184.75
+        ]
+      }
+    ]
+  },
+  "notes": [
+    "'Lift the bike and drop the wheel out' is 4.0 s; the step before it is merged into it",
+    "'Lower the fork onto the axle' is 2.2 s; the step before it is merged into it"
+  ],
+  "cuts": [
+    {
+      "n": 1,
+      "title": "Squeeze the front brake and check pads",
+      "start": "00:00",
+      "end": "00:07.1",
+      "done_s": 7.0,
+      "ref_time": "00:07",
+      "reason": "Hand is on the handlebar and brake lever, checking the brake before the bike is moved.",
+      "quick_flip": false
+    },
+    {
+      "n": 2,
+      "title": "Lift the bike and drop the wheel out",
+      "start": "00:07.1",
+      "end": "00:18.6",
+      "done_s": 18.5,
+      "ref_time": "00:18.5",
+      "reason": "The wheel has dropped out of the fork and lies off to the side of the frame.",
+      "quick_flip": false
+    },
+    {
+      "n": 3,
+      "title": "Pull the skewer out of the hub",
+      "start": "00:18.6",
+      "end": "01:12.4",
+      "done_s": 72.25,
+      "ref_time": "01:12.2",
+      "reason": "The skewer and springs are pulled out and held apart from the hub.",
+      "quick_flip": false
+    },
+    {
+      "n": 4,
+      "title": "Spin the wheel and inspect the tire",
+      "start": "01:12.4",
+      "end": "01:30.1",
+      "done_s": 90.0,
+      "ref_time": "01:30",
+      "reason": "The wheel has been turned and checked around its full circle, with the bare hub in view.",
+      "quick_flip": false
+    },
+    {
+      "n": 5,
+      "title": "Lower the fork onto the axle",
+      "start": "01:30.1",
+      "end": "02:38.1",
+      "done_s": 158.0,
+      "ref_time": "02:38",
+      "reason": "The wheel is seated in the fork ends and the bike is about to be tightened.",
+      "quick_flip": false
+    },
+    {
+      "n": 6,
+      "title": "Snug the nut and close the lever",
+      "start": "02:38.1",
+      "end": "03:03.1",
+      "done_s": 183.0,
+      "ref_time": "03:03",
+      "reason": "The lever is closed and the hand is pressing it flat along the fork.",
+      "quick_flip": false
+    },
+    {
+      "n": 7,
+      "title": "Squeeze the brake and spin the wheel",
+      "start": "03:03.1",
+      "end": "03:18.6",
+      "done_s": 198.0,
+      "ref_time": "03:18",
+      "reason": "The bike is upright with the wheel in the fork and the wheel spinning clear of the brake.",
+      "quick_flip": false
+    }
+  ]
+}
