@@ -17,6 +17,10 @@ New lesson (from the repo root):
      mixed over it. Skipped with -NoVoice.
   4. scripts\lesson_lint.py, then the step table.
 
+-Boundaries vision|legacy: vision cuts each step right after the model sees it DONE (pass 1 on contact sheets of
+the whole take, pass 2 at 0.25 s around each cut; log in review/boundaries.json, cut strips on the sheet). It is the
+default with -NoSpeech; with -Recut it only re-picks reference frames at the human-edited cuts.
+
 Add -NoSpeech for a silent or near-silent take: Whisper is skipped (on room noise it invents lines that would
 steer the steps and fill the captions), so Claude sees the frames only.
 
@@ -38,6 +42,7 @@ param(
     [string]$Template,
     [switch]$NoVoice,
     [switch]$NoSpeech,
+    [ValidateSet('', 'vision', 'legacy')][string]$Boundaries = '',
     [switch]$Recut,
     [switch]$Retitle,
     [switch]$KeepRefTimes
@@ -74,13 +79,21 @@ if (-not $env:HANDOVER_TEACH_PROVIDER) { $env:HANDOVER_TEACH_PROVIDER = 'claude'
 # -NoSpeech: the take is silent. Skips Whisper, which turns room noise into made-up lines ("it's like triangle")
 # that would steer the step boundaries and end up in the captions.
 if ($NoSpeech) { $env:HANDOVER_TRANSCRIBE = 'off' }
+# Boundaries: vision (the model finds when each step is DONE, two calls, HANDOVER_TEACH_BOUNDARY_MODEL) is the
+# default for -NoSpeech takes and for a -Recut of a lesson built that way; legacy is the one-call extraction.
+if (-not $Boundaries) {
+    if ($Recut) { $Boundaries = if (Test-Path (Join-Path $Dir 'review/boundaries.json')) { 'vision' } else { 'legacy' } }
+    else { $Boundaries = if ($NoSpeech) { 'vision' } else { 'legacy' } }
+}
+Write-Host "boundaries: $Boundaries"
+
 $t0 = Get-Date
 
 if ($Recut) {
     if (-not (Test-Path (Join-Path $Dir 'lesson.json'))) { Fail "no lesson.json in $Dir; build it first without -Recut" 2 }
     if ($Video -or $Template) { Write-Host 'note: -Recut uses the times in lesson.json; -Video and -Template are ignored' }
     Step "Recut $Dir from lesson.json"
-    $recutArgs = @('-m', 'server.teach', '--recut', $Dir, '--strict-self-test')
+    $recutArgs = @('-m', 'server.teach', '--recut', $Dir, '--strict-self-test', '--boundaries', $Boundaries)
     if (-not $KeepRefTimes) { $recutArgs += '--repick' }
     if ($Retitle) { $recutArgs += '--retitle' }
     Run 'recut' @recutArgs
@@ -93,7 +106,11 @@ else {
     if (-not $Title) { $Title = $Clean }
     $VideoPath = (Resolve-Path $Video).Path
     Step "Build $Clean `"$Title`" from $VideoPath"
-    $buildArgs = @('-m', 'server.teach', $VideoPath, '--id', $Clean, '--title', $Title, '--retitle', '--strict-self-test')
+    $buildArgs = @('-m', 'server.teach', $VideoPath, '--id', $Clean, '--title', $Title, '--strict-self-test',
+                   '--boundaries', $Boundaries)
+    # legacy: titles and questions are rewritten from each step's frames (Haiku). vision: the boundary model already
+    # wrote title, question and tip from the done frame, so only the questions are checked against the references.
+    if ($Boundaries -eq 'legacy' -or $Retitle) { $buildArgs += '--retitle' }
     if ($Template) { $buildArgs += @('--prior', (Resolve-Path $Template).Path) }
     Run 'teach' @buildArgs
 }

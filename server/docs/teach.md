@@ -44,6 +44,16 @@ scripts\make_lesson.ps1 -Video takes\fold2.mov -Id fortune-teller-v2 -Title "Fol
 scripts\make_lesson.ps1 -Id fortune-teller-v2 -Recut
 ```
 
+## Cuts from done moments (vision boundaries)
+
+For a silent take add `-NoSpeech` (Whisper would turn room noise into invented lines) and the cuts come from the model seeing when each step is DONE, not from pauses or stillness:
+
+1. Pass 1: frames every `HANDOVER_TEACH_SAMPLE_S` (1.0 s) across the whole take, tiled into contact sheets, one call to `HANDOVER_TEACH_BOUNDARY_MODEL` (claude-sonnet-5-5, Haiku if it fails) with the template's step list as the prior. For each step it returns the first time its end state is clearly visible, with one reason.
+2. Pass 2: frames every 0.25 s in a 2 s window around each coarse time; the model picks the first frame where the end state is reached. That frame is the cut and, unless a frame in the last second shows less hand on the paper, the reference frame.
+3. Both passes, with model, token use and reasons, are written to `lessons/<id>/review/boundaries.json`; `review/sheet.jpg` draws each step's first, middle, reference and last frame plus the pass 2 window with the chosen cut outlined.
+
+`--boundaries vision` on `python -m server.teach` (the default for `make_lesson.ps1 -NoSpeech`); `legacy` is the one-call extraction. A human-edited lesson.json always wins on `-Recut`. About 3 cents per take.
+
 `-Recut` recuts from the edited lesson.json, chooses every reference frame again (`-KeepRefTimes` keeps hand-set `ref_time` values that still fall inside their step), rewrites the questions from the new frames (`-Retitle` also the titles), self-tests, redraws the sheet and voices again. `-NoVoice` skips the voiceover. A new build refuses an existing id.
 
 | Argument | Meaning |

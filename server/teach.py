@@ -1388,7 +1388,7 @@ def _spans(extraction: Extraction, duration: float) -> list[tuple[float, float]]
 
 
 def cut(lesson_dir: Path, extraction: Extraction, lesson_id: str | None = None, title: str | None = None,
-        *, keep: dict | None = None, progress: Progress = noop) -> dict:
+        *, keep: dict | None = None, progress: Progress = noop, exact_refs: bool = False) -> dict:
     """Cuts clips, captions and reference frames per step and writes lesson.json and extraction.json.
 
     Every timestamp is checked before anything is cut, and the new files are built in .recut_tmp/ and swapped
@@ -1415,7 +1415,7 @@ def cut(lesson_dir: Path, extraction: Extraction, lesson_id: str | None = None, 
         (tmp / sub).mkdir(parents=True, exist_ok=True)
 
     try:
-        steps_out = _cut_steps(norm, tmp, extraction, spans, keep, progress, duration)
+        steps_out = _cut_steps(norm, tmp, extraction, spans, keep, progress, duration, exact_refs)
     except BaseException:
         _rmtree(tmp)
         raise
@@ -1517,7 +1517,8 @@ def _is_manual(question: str) -> bool:
 
 
 def _cut_steps(norm: Path, out_dir: Path, extraction: Extraction, spans: list[tuple[float, float]],
-               keep: dict | None = None, progress: Progress = noop, duration: float | None = None) -> list[dict]:
+               keep: dict | None = None, progress: Progress = noop, duration: float | None = None,
+               exact_refs: bool = False) -> list[dict]:
     old_steps = (keep or {}).get("steps") or []
     steps_out = []
     total = len(spans)
@@ -1531,7 +1532,7 @@ def _cut_steps(norm: Path, out_dir: Path, extraction: Extraction, spans: list[tu
         length = probe_duration(clip)
         _write_vtt(out_dir / "captions" / f"{nn}.vtt", extraction.transcript, a, length)
         ref_time, ref_note = _ref_frame_info(norm, clip, out_dir / "frames" / f"{nn}.jpg", a, b, st.ref_time,
-                                             keep is not None, duration)
+                                             keep is not None or exact_refs, duration)
         manual = _is_manual(st.check_question)
         progress("cutting", f"step {n} of {total}  {fmt_mmss(a)} to {fmt_mmss(b)}  "
                             f"reference {ref_note}  [{'manual' if manual else 'camera'}]")
@@ -1590,7 +1591,7 @@ def _lesson_extraction(lesson_dir: Path, lesson: dict) -> Extraction:
 
 
 def recut(lesson_dir: Path, progress: Progress = noop, *, auto: bool = True, retitle: bool = False,
-          strict: bool = False, repick: bool = False) -> dict:
+          strict: bool = False, repick: bool = False, boundaries: str = "legacy") -> dict:
     """Rebuilds clips, captions and frames from lesson.json (possibly hand-edited) and the saved transcript.
 
     Follows the Recut rule: every field recut does not own is kept, step 1 is never forced to manual, and a
@@ -1607,6 +1608,8 @@ def recut(lesson_dir: Path, progress: Progress = noop, *, auto: bool = True, ret
         for st in lesson.get("steps") or []:
             if isinstance(st, dict):
                 st["ref_time"] = None
+        if boundaries == "vision":  # the human's start and end win; the reference is the done frame at each cut
+            ref_times_at_cuts(lesson_dir, lesson)
     if lesson.pop("voiceover", None) is not None:
         progress("cutting", "the voiceover is dropped by the recut; run python -m server.voice again")
     extraction = _lesson_extraction(lesson_dir, lesson)
@@ -2185,6 +2188,441 @@ def _after_cut(lesson_dir: Path, lesson: dict, provider: str, progress: Progress
     return _auto_self_test(lesson_dir, lesson, progress, strict=strict)
 
 
+# ---------------------------------------------------------------- 5d. vision boundaries: cut when each step is DONE
+
+# Frames-only takes (no speech, hands never leave the frame) have no narration and no pauses to cut on. Here the
+# model itself says when each step's end state is first visible. Pass 1 sees the whole take as contact sheets (one
+# frame per HANDOVER_TEACH_SAMPLE_S) and returns, per step, the first time its end state is clearly visible. Pass 2
+# looks at every boundary again at 4 fps in a +-2 s window and picks the first frame where the end state is reached:
+# that frame is the cut. Stillness never decides a boundary; it only breaks ties for the reference frame.
+
+BOUNDARY_FALLBACK_MODEL = "claude-haiku-5-5"
+BOUNDARY_TOKENS = 16000
+SHEET_COLS, SHEET_ROWS = 8, 5      # 40 frames per sheet image in pass 1
+SHEET_TILE_H = 240                 # pass 1 frame height in pixels
+REFINE_HALF_S = 2.0                # pass 2 window: coarse time +- this
+REFINE_STEP_S = 0.25
+REFINE_COLS = 6
+REFINE_TILE_H = 300
+REF_WINDOW_BEFORE_CUT = 1.0        # reference frame: the done frame, or a less covered one this far before the cut
+REF_SAME_SHAPE = 4.0               # a reference candidate must look this close to the done frame
+QUICK_FLIP_MIN_S = 0.8             # a flagged quick flip may be this short; every other step needs HANDOVER_MIN_STEP_S
+
+
+def teach_sample_s() -> float:
+    """HANDOVER_TEACH_SAMPLE_S: seconds between the frames pass 1 sees (default 1.0)."""
+    return float(config.get("HANDOVER_TEACH_SAMPLE_S"))
+
+
+def boundary_model() -> str:
+    """HANDOVER_TEACH_BOUNDARY_MODEL: the model that finds when each step is done (default claude-sonnet-5-5)."""
+    return str(config.get("HANDOVER_TEACH_BOUNDARY_MODEL"))
+
+
+def _label_font(size: int):
+    from PIL import ImageFont
+
+    for name in ("arialbd.ttf", "DejaVuSans-Bold.ttf", "Arial Bold.ttf", "Helvetica.ttc"):
+        try:
+            return ImageFont.truetype(name, size)
+        except OSError:
+            continue
+    try:
+        return ImageFont.load_default(size=size)
+    except TypeError:
+        return ImageFont.load_default()
+
+
+def _frames_at_rate(video: Path, t0: float, t1: float, every: float, height: int, out_dir: Path) -> list:
+    """(time, PIL RGB image) every `every` seconds from t0 to t1, scaled to `height`. One ffmpeg call."""
+    from PIL import Image
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    if t1 - t0 <= 0:
+        return []
+    _run([_bin("ffmpeg"), "-y", "-v", "error", "-ss", f"{t0:.3f}", "-i", str(video), "-t", f"{t1 - t0:.3f}",
+          "-vf", f"fps={1 / every:.6f},scale=-2:{height}", "-q:v", "4", str(out_dir / "f%05d.jpg")])
+    out = []
+    for k, f in enumerate(sorted(out_dir.glob("f*.jpg"))):
+        with Image.open(f) as im:
+            out.append((round(t0 + k * every, 3), im.convert("RGB")))
+    return out
+
+
+def _tile(frames: list, cols: int, outline: int | None = None, font_size: int = 22) -> bytes:
+    """Frames in reading order with each time burned in (MM:SS.s, top left, white on black); `outline` (an index)
+    gets a thick red border. Returns JPEG bytes."""
+    from PIL import Image, ImageDraw
+
+    w, h = frames[0][1].size
+    gap = 4
+    rows = (len(frames) + cols - 1) // cols
+    sheet = Image.new("RGB", (cols * (w + gap) + gap, rows * (h + gap) + gap), (255, 255, 255))
+    draw = ImageDraw.Draw(sheet)
+    font = _label_font(font_size)
+    for i, (t, img) in enumerate(frames):
+        r, c = divmod(i, cols)
+        x, y = gap + c * (w + gap), gap + r * (h + gap)
+        sheet.paste(img, (x, y))
+        m, sec = divmod(max(0.0, t), 60)
+        label = f"{int(m):02d}:{sec:05.2f}"
+        box = draw.textbbox((0, 0), label, font=font)
+        draw.rectangle((x, y, x + box[2] - box[0] + 10, y + box[3] - box[1] + 10), fill=(0, 0, 0))
+        draw.text((x + 5, y + 5 - box[1]), label, font=font, fill=(255, 255, 255))
+        if outline == i:
+            draw.rectangle((x - 2, y - 2, x + w + 1, y + h + 1), outline=(220, 30, 30), width=6)
+    buf = io.BytesIO()
+    sheet.save(buf, "JPEG", quality=82)
+    return buf.getvalue()
+
+
+class _DoneStep(BaseModel):
+    title: str
+    check_question: str
+    common_mistake: str
+    done_s: float
+    reason: str
+    quick_flip: bool
+
+
+class _DoneWire(BaseModel):
+    """What the model writes: the time as printed on the frame ("MM:SS.ss"), never a bare number of seconds,
+    because a model reading "01:33.00" once answered 33."""
+    title: str
+    check_question: str
+    common_mistake: str
+    done_at: str
+    reason: str
+    quick_flip: bool
+
+
+class _DoneAnswer(BaseModel):
+    steps: list[_DoneWire]
+    safety: list[str]
+    tools: list[str]
+
+
+class _Refined(BaseModel):
+    boundary: int
+    done_s: float
+    reason: str
+
+
+class _RefinedWire(BaseModel):
+    boundary: int
+    done_at: str
+    reason: str
+
+
+class _RefineAnswer(BaseModel):
+    boundaries: list[_RefinedWire]
+
+
+def _wire_seconds(value: str) -> float | None:
+    try:
+        return parse_time(str(value).strip())
+    except ValueError:
+        return None
+
+
+def _strict_schema(model: type[BaseModel]) -> dict:
+    schema = model.model_json_schema()
+    for node in [schema, *schema.get("$defs", {}).values()]:
+        if "properties" in node:
+            node["required"] = list(node["properties"])
+            node["additionalProperties"] = False
+    return schema
+
+
+DONE_PROMPT = """The images above are contact sheets of ONE video of an expert doing a hands-on task, with no speech.
+Each sheet shows frames in reading order (left to right, then top to bottom), one every {every:g} s; the time of each
+frame is printed on it as MM:SS.ss. The whole take is {duration:.1f} s long.
+
+Split the take into the ordered steps a beginner follows and find when each step is DONE.
+For each step return:
+- done_at: the time printed on the FIRST frame (copy it exactly, "MM:SS.ss") where that step's END STATE is clearly visible: the fold is
+  completed and lies in its new shape, even if hands are still on the paper. Not when the hands pause, slow down or
+  leave; not when the next action starts. Read the times printed on the frames.
+- reason: one short sentence on what is visible at done_at that was not visible before (the new shape, seam or
+  flap count).
+- title: an instruction of 3 to 8 words for the action of this step. Step 1 is the first thing done with the fresh
+  material, so its title makes sense as a first step.
+- check_question: one yes/no question about the END STATE that a camera can answer from one photo: name the outline
+  shape and a count (corners, creases or seams, flaps or layers). Never color, size, position, hands or background.
+  Write exactly manual when the end state looks the same as the start (a crease made and unfolded).
+- common_mistake: the likely beginner mistake, as a short instruction that prevents it, at most 8 words.
+- quick_flip: true only for a step that just flips or turns the object over (it may be very short), else false.
+Rules: steps in order, done_at strictly increasing; the last step is done when the finished object is complete.
+Prefer 5 to 12 steps of one physical action each. Also give safety warnings you can see (usually []) and the tools
+and materials used.
+"""
+
+DONE_PRIOR = """
+The task is known. Here is a hand-written plan of its steps. Treat it as a strong prior: expect these actions in
+this order and return one entry per plan step, reusing the plan's titles, questions and tips where they match what
+you see. Follow the video only where the expert clearly differs (an extra, skipped, repeated or reordered action).
+Plan:
+"""
+
+REFINE_PROMPT = """Each image above shows the frames around one step boundary of the same video, 0.25 s apart in
+reading order, with the time printed on each frame. For each boundary, pick the FIRST frame where that step's end state
+(given in the text before the image) is reached: the fold completed and lying in its new shape, even with hands on the
+paper. Return its printed time exactly as shown ("MM:SS.ss") as done_at, and one short reason. If the end state is already reached in the
+first frame, return that frame's time; if it is not reached in any frame, return the last frame's time."""
+
+
+def _boundary_call(content: list[dict], schema: dict, label: str, progress: Progress) -> tuple[str, str, dict]:
+    """One structured Claude call with HANDOVER_TEACH_BOUNDARY_MODEL, retried once with Haiku when it fails.
+    Returns (model, JSON text, usage dict). Raises RuntimeError when both fail or the budget is used up."""
+    import anthropic
+
+    key = _anthropic_key()
+    if not key:
+        raise RuntimeError("no Anthropic key")
+    spend = _spend()
+    client = anthropic.Anthropic(api_key=key, timeout=300.0, max_retries=1)
+    errors = []
+    for model in dict.fromkeys([boundary_model(), BOUNDARY_FALLBACK_MODEL]):
+        if not spend.allow():
+            raise RuntimeError("the Claude spending limit is reached; no call was made")
+        t0 = time.time()
+        try:
+            response = client.messages.create(
+                model=model, max_tokens=BOUNDARY_TOKENS,
+                messages=[{"role": "user", "content": content}],
+                output_config={"effort": "medium", "format": {"type": "json_schema", "schema": schema}},
+            )
+        except Exception as e:
+            errors.append(f"{model}: {type(e).__name__}")
+            progress("extracting", f"{label} with {model} failed ({type(e).__name__}); trying the fallback")
+            continue
+        cost = spend.record(model, response.usage)
+        u = response.usage
+        usage = {"input_tokens": getattr(u, "input_tokens", 0), "output_tokens": getattr(u, "output_tokens", 0),
+                 "usd": round(float(cost or 0), 5), "seconds": round(time.time() - t0, 1)}
+        progress("extracting", f"{label}: {model}, {usage['input_tokens']} in / {usage['output_tokens']} out "
+                               f"tokens, ${usage['usd']:.4f}, {usage['seconds']} s")
+        text = next((b.text for b in response.content if getattr(b, "type", "") == "text"), "")
+        if response.stop_reason in ("refusal", "max_tokens") or not text:
+            errors.append(f"{model}: stop {response.stop_reason}")
+            continue
+        return model, text, usage
+    raise RuntimeError(f"{label} failed: {'; '.join(errors)}")
+
+
+def _image_block(data: bytes) -> dict:
+    import base64
+
+    return {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
+                                        "data": base64.standard_b64encode(data).decode()}}
+
+
+def _clean_done_times(steps: list[_DoneStep], duration: float, min_s: float) -> tuple[list[_DoneStep], list[str]]:
+    """Monotonic done times inside the video; a step shorter than min_s (QUICK_FLIP_MIN_S for a flagged quick flip)
+    is merged with its neighbour: into the next step for the first step, else the earlier step is folded into it
+    (its end state, title and question win, because they describe where the merged clip ends)."""
+    notes: list[str] = []
+    out: list[_DoneStep] = []
+    for st in steps:
+        t = min(max(0.0, float(st.done_s)), duration)
+        if out and t <= out[-1].done_s + 0.1:
+            notes.append(f"'{st.title}' done at {t:.1f} s is not after the previous step; merged into it")
+            out[-1] = st.model_copy(update={"done_s": max(out[-1].done_s, t)})
+            continue
+        out.append(st.model_copy(update={"done_s": t}))
+    changed = True
+    while changed and len(out) > 1:
+        changed = False
+        for i, st in enumerate(out):
+            start = out[i - 1].done_s if i else 0.0
+            end = duration if i == len(out) - 1 else st.done_s
+            need = QUICK_FLIP_MIN_S if st.quick_flip else min_s
+            if end - start >= need:
+                continue
+            if i == 0:
+                notes.append(f"step 1 '{st.title}' is {end - start:.1f} s; merged into the next step")
+                del out[0]
+            else:
+                notes.append(f"'{st.title}' is {end - start:.1f} s; the step before it is merged into it")
+                del out[i - 1]
+            changed = True
+            break
+    return out, notes
+
+
+def _ref_near_cut(video: Path, a: float, done: float) -> float:
+    """The reference time for a step that ends at its done frame: the done frame itself (just before the cut),
+    unless a frame in the REF_WINDOW_BEFORE_CUT seconds before it is about as still, looks nearly the same
+    (mean 96x96 gray difference to the done frame at most REF_SAME_SHAPE, so the fold is already in place) and shows
+    3 to 20% more bright, uncovered material (a hand moved off the paper; a much larger bright area would be the
+    sheet before the fold). On the 0.1 s grid, inside [a, done]."""
+    t1 = done
+    t0 = max(a, done - REF_WINDOW_BEFORE_CUT)
+    default = max(quantize(a), _floor_tenth(done))
+    if t1 - t0 < 0.3:
+        return default
+    try:
+        frames = _gray_frames(video, t0, t1 + 0.1, REF_STILL_FPS)
+    except RuntimeError:
+        return default
+    if len(frames) < 3:
+        return default
+    level = REF_BRIGHT * max(_percentile_gray(img, 0.99) for _, img in frames)
+    scored = [(t, _motion(frames, i), sum(img.histogram()[min(255, int(level)):]), _brightness(img))
+              for i, (t, img) in enumerate(frames) if t <= t1 + 1e-6]
+    if not scored:
+        return default
+    from PIL import ImageChops, ImageStat
+
+    base = scored[-1]  # the done frame
+    done_img = [img for t, img in frames if t <= t1 + 1e-6][-1]
+
+    def same_shape(t: float) -> bool:
+        img = next(im for tt, im in frames if tt == t)
+        return ImageStat.Stat(ImageChops.difference(img, done_img)).mean[0] <= REF_SAME_SHAPE
+
+    better = [c for c in scored if c[3] >= DARK and c[1] <= max(base[1] * 1.2, base[1] + 0.3)
+              and base[2] * 1.03 < c[2] <= base[2] * 1.2 and same_shape(c[0])]
+    if not better:
+        return default
+    best = max(better, key=lambda c: (c[2], c[0]))
+    return max(quantize(a), _floor_tenth(best[0]))
+
+
+def extract_vision(norm: Path, lesson_dir: Path, progress: Progress = noop, prior: Path | None = None) -> Extraction:
+    """Steps cut where the model sees each step DONE (frames only, two calls). See the section comment.
+
+    Writes lesson_dir/review/boundaries.json with both passes (times, reasons, model, tokens) and the final cuts.
+    Each step's ref_time is its done frame (see _ref_near_cut); cut() must be called with exact_refs=True so it is
+    kept. Raises RuntimeError on failure (the caller falls back to extract_claude)."""
+    norm, lesson_dir = Path(norm), Path(lesson_dir)
+    duration = probe_duration(norm)
+    every = teach_sample_s()
+    log_out: dict = {"video_s": round(duration, 2), "sample_s": every}
+    with tempfile.TemporaryDirectory(prefix="handover-vision-") as tmp:
+        frames = _frames_at_rate(norm, 0.0, duration, every, SHEET_TILE_H, Path(tmp) / "all")
+        if not frames:
+            raise RuntimeError("no frames could be sampled from the take")
+        per = SHEET_COLS * SHEET_ROWS
+        content: list[dict] = []
+        for k in range(0, len(frames), per):
+            chunk = frames[k:k + per]
+            content.append({"type": "text", "text": f"Sheet {k // per + 1}: {fmt_mmss(chunk[0][0])} to "
+                                                    f"{fmt_mmss(chunk[-1][0])}"})
+            content.append(_image_block(_tile(chunk, SHEET_COLS)))
+        prompt = DONE_PROMPT.format(every=every, duration=duration)
+        if prior:
+            prompt += DONE_PRIOR + prior_text(prior)[len(PRIOR_PROMPT):]
+        content.append({"type": "text", "text": prompt})
+        progress("extracting", f"Pass 1: {len(frames)} frames on {(len(frames) + per - 1) // per} sheets, "
+                               f"finding when each step is done")
+        model1, text, usage1 = _boundary_call(content, _strict_schema(_DoneAnswer), "pass 1", progress)
+        try:
+            answer = _DoneAnswer.model_validate_json(text)
+        except ValidationError as e:
+            raise RuntimeError(f"pass 1 answer did not match the schema: {e}") from None
+        raw = []
+        for w in answer.steps:
+            t = _wire_seconds(w.done_at)
+            if t is not None:
+                raw.append(_DoneStep(title=w.title, check_question=w.check_question, common_mistake=w.common_mistake,
+                                     done_s=t, reason=w.reason, quick_flip=w.quick_flip))
+        if not raw:
+            raise RuntimeError("pass 1 returned no steps with a readable time")
+        log_out["pass1"] = {"model": model1, "usage": usage1,
+                            "steps": [{"n": i + 1, "title": s.title, "done_s": round(s.done_s, 2),
+                                       "reason": s.reason, "quick_flip": s.quick_flip}
+                                      for i, s in enumerate(raw)]}
+        steps, notes = _clean_done_times(raw, duration, min_step_s())
+
+        # pass 2: every boundary between steps (the last step ends at the last frame)
+        refined: list[dict] = []
+        content = []
+        windows = []
+        for k, st in enumerate(steps[:-1], start=1):
+            t = st.done_s
+            w0, w1 = max(0.0, t - REFINE_HALF_S), min(duration - 0.05, t + REFINE_HALF_S)
+            win = _frames_at_rate(norm, w0, w1 + 0.01, REFINE_STEP_S, REFINE_TILE_H, Path(tmp) / f"w{k:02d}")
+            if len(win) < 2:
+                continue
+            windows.append((k, win))
+            end_state = st.check_question if not _is_manual(st.check_question) else st.reason
+            content.append({"type": "text", "text": f"Boundary {k}: end of step {k} '{st.title}'. End state: "
+                                                    f"{end_state} (coarse estimate {t:.2f} s)"})
+            content.append(_image_block(_tile(win, REFINE_COLS)))
+        model2, usage2 = None, None
+        if windows:
+            content.append({"type": "text", "text": REFINE_PROMPT})
+            progress("extracting", f"Pass 2: refining {len(windows)} boundaries at {REFINE_STEP_S:g} s")
+            try:
+                model2, text, usage2 = _boundary_call(content, _strict_schema(_RefineAnswer), "pass 2", progress)
+                got = {}
+                for w in _RefineAnswer.model_validate_json(text).boundaries:
+                    t = _wire_seconds(w.done_at)
+                    if t is not None:
+                        got[w.boundary] = _Refined(boundary=w.boundary, done_s=t, reason=w.reason)
+            except (RuntimeError, ValidationError) as e:
+                progress("extracting", f"Pass 2 failed ({str(e)[:120]}); keeping the pass 1 times")
+                got = {}
+            for k, win in windows:
+                coarse = steps[k - 1].done_s
+                b = got.get(k)
+                t = coarse
+                reason = "pass 2 gave no answer; pass 1 time kept"
+                if b is not None and win[0][0] - 0.01 <= b.done_s <= win[-1][0] + 0.01:
+                    t = min(win, key=lambda f: abs(f[0] - b.done_s))[0]  # snap to a frame the model saw
+                    reason = b.reason
+                elif b is not None:
+                    reason = f"pass 2 time {b.done_s:.2f} s is outside the window; pass 1 time kept"
+                refined.append({"boundary": k, "coarse_s": round(coarse, 2), "done_s": round(t, 2),
+                                "window_s": [win[0][0], win[-1][0]], "reason": reason,
+                                "frames": [f[0] for f in win]})
+                steps[k - 1] = steps[k - 1].model_copy(update={"done_s": t})
+        log_out["pass2"] = {"model": model2, "usage": usage2, "boundaries": refined}
+        steps, notes2 = _clean_done_times(steps, duration, min_step_s())
+        notes += notes2
+
+    out_steps: list[Step] = []
+    cuts = []
+    a = 0.0
+    for i, st in enumerate(steps):
+        last = i == len(steps) - 1
+        done = st.done_s
+        b = duration if last else quantize(done + 0.1)  # the done frame belongs to this step; the next starts there
+        ref = _ref_near_cut(norm, a, min(done, b - 0.1))
+        out_steps.append(Step(start=fmt_mmss(a), end=fmt_mmss(b), title=st.title.strip(),
+                              check_question=st.check_question.strip() or "manual",
+                              prerequisites=[i] if i else [], ref_time=fmt_mmss(ref),
+                              common_mistake=st.common_mistake.strip()))
+        cuts.append({"n": i + 1, "title": st.title.strip(), "start": fmt_mmss(a), "end": fmt_mmss(b),
+                     "done_s": round(done, 2), "ref_time": fmt_mmss(ref), "reason": st.reason,
+                     "quick_flip": st.quick_flip})
+        a = b
+    log_out.update({"notes": notes, "cuts": cuts})
+    review = lesson_dir / "review"
+    review.mkdir(parents=True, exist_ok=True)
+    _write_json(review / "boundaries.json", log_out)
+    for c in cuts:
+        progress("extracting", f"step {c['n']}: {c['start']} to {c['end']}  {c['title']}  ({c['reason']})")
+    for n in notes:
+        progress("extracting", n)
+    return Extraction(transcript=[], steps=out_steps, safety=_clean_list(answer.safety),
+                      tools=_clean_list(answer.tools))
+
+
+def ref_times_at_cuts(lesson_dir: Path, lesson: dict) -> None:
+    """--recut --repick --boundaries vision: each step's ref_time becomes its done frame at the (possibly hand
+    edited) cut, with the same occlusion tie-break as a new vision build (see _ref_near_cut). In place."""
+    video = Path(lesson_dir) / (lesson.get("video") or "norm.mp4")
+    for st in lesson.get("steps") or []:
+        try:
+            a, b = parse_time(st["start"]), parse_time(st["end"])
+        except (KeyError, ValueError, TypeError):
+            continue
+        if b - a >= 0.3:
+            st["ref_time"] = fmt_mmss(_ref_near_cut(video, a, b - 0.1))
+
+
 # ---------------------------------------------------------------- 6. full pipeline
 
 def _sources_duration(srcs: list[Path]) -> float:
@@ -2214,10 +2652,11 @@ def _gemini_transcript_mode(ex: Extraction, norm: Path, progress: Progress) -> E
 
 def build(srcs: list[Path], lesson_id: str, title: str, progress: Progress = noop,
           steps_json: Path | None = None, *, prior: Path | None = None, retitle: bool = False,
-          strict: bool = False) -> dict:
+          strict: bool = False, boundaries: str = "legacy") -> dict:
     """normalize, extract, clean, cut, then questions (or titles, retitle) from the reference frames and the
     automatic self-test. prior: a steps template used as a strong prior by the Claude extraction (known task);
-    retitle and strict: see _after_cut."""
+    retitle and strict: see _after_cut. boundaries "vision" (Claude only): cut where the model sees each step done
+    (extract_vision); on failure it falls back to the legacy extraction."""
     lesson_id = sanitize_id(lesson_id)
     lesson_dir = lessons_root() / lesson_id
     lesson_dir.mkdir(parents=True, exist_ok=True)
@@ -2236,6 +2675,7 @@ def build(srcs: list[Path], lesson_id: str, title: str, progress: Progress = noo
                 parts.append(part)
             concat(parts, norm)
     duration = probe_duration(norm)
+    vision = False
 
     if steps_json:
         progress("extracting", f"Using steps from {Path(steps_json).name}")
@@ -2246,6 +2686,14 @@ def build(srcs: list[Path], lesson_id: str, title: str, progress: Progress = noo
             why = "HANDOVER_TEACH_MOCK is set" if config.get("HANDOVER_TEACH_MOCK") else "no Gemini or Anthropic key"
             progress("extracting", f"Using three placeholder steps ({why})")
             extraction = mock_extraction(duration, None)
+        elif provider == "claude" and boundaries == "vision":
+            try:
+                extraction = extract_vision(norm, lesson_dir, progress, prior)
+                vision = True
+            except Exception as e:
+                reason = scrub(f"{type(e).__name__}: {e}".splitlines()[0][:160])
+                progress("extracting", f"Vision boundaries failed ({reason}); falling back to the legacy extraction")
+                extraction = extract_claude(norm, progress, prior)
         elif provider == "claude":
             progress("extracting", f"Finding steps with {_claude_model()} from frames")
             extraction = extract_claude(norm, progress, prior)
@@ -2255,8 +2703,11 @@ def build(srcs: list[Path], lesson_id: str, title: str, progress: Progress = noo
             progress("extracting", f"Finding steps with {_model()}")
             extraction = _gemini_transcript_mode(extract(norm, progress), norm, progress)
         extraction = _clean_extraction(extraction, duration)
-        extraction = _crease_steps_manual(_contiguous(_split_flips(extraction)))
-        if provider in ("claude", "gemini"):
+        if vision:  # boundaries are the model's done moments: no flip splitting, no merging here
+            extraction = _crease_steps_manual(_contiguous(extraction))
+        else:
+            extraction = _crease_steps_manual(_contiguous(_split_flips(extraction)))
+        if provider in ("claude", "gemini") and not vision:
             before = len(extraction.steps)
             extraction = _merge_short_steps(extraction)
             if len(extraction.steps) < before:
@@ -2267,7 +2718,7 @@ def build(srcs: list[Path], lesson_id: str, title: str, progress: Progress = noo
             extraction = guard_colors(extraction, provider, progress)
 
     progress("cutting", f"Cutting {len(extraction.steps)} step clips")
-    lesson = cut(lesson_dir, extraction, lesson_id, title, progress=progress)
+    lesson = cut(lesson_dir, extraction, lesson_id, title, progress=progress, exact_refs=vision)
     if not steps_json and provider in ("claude", "gemini"):
         # job statuses are a fixed list in the apps (queued ... cutting, done): report this under "cutting"
         lesson = _after_cut(lesson_dir, lesson, provider, lambda st, msg: progress("cutting", f"{st}: {msg}"),
@@ -2397,7 +2848,8 @@ def _run_cli(args, show: Progress) -> int:
             _print_plan(extraction, spans, explicit=True)
             return 0
         show("cutting", f"Recutting {d}")
-        lesson = recut(d, show, retitle=args.retitle, strict=args.strict_self_test, repick=args.repick)
+        lesson = recut(d, show, retitle=args.retitle, strict=args.strict_self_test, repick=args.repick,
+                       boundaries=args.boundaries)
         print(f"[done] recut {len(lesson['steps'])} steps in {d} ({time.time() - t0:.1f} s)")
         return 0
 
@@ -2422,7 +2874,7 @@ def _run_cli(args, show: Progress) -> int:
     if args.prior and not Path(args.prior).is_file():
         raise UsageError(f"prior steps file not found: {args.prior}")
     lesson = build(srcs, args.lesson_id, args.title or args.lesson_id, show, args.steps_json, prior=args.prior,
-                   retitle=args.retitle, strict=args.strict_self_test)
+                   retitle=args.retitle, strict=args.strict_self_test, boundaries=args.boundaries)
     print(f"[done] {lessons_root() / lesson['id']} ({time.time() - t0:.1f} s)")
     for s in lesson["steps"]:
         print(f"  {s['n']:2d}. {s['start']} to {s['end']}  {s['title']}  [{s['check_type']}]")
@@ -2449,6 +2901,9 @@ def main(argv: list[str] | None = None) -> int:
                     help="every step that fails the automatic self-test becomes manual (default: only those "
                          "whose own reference fails)")
     ap.add_argument("--repick", action="store_true", help="with --recut: choose every reference frame again")
+    ap.add_argument("--boundaries", choices=("legacy", "vision"), default="legacy",
+                    help="vision: cut where the model sees each step done (frames only, Claude, two calls); with "
+                         "--recut --repick: each reference is the done frame at its cut")
     ap.add_argument("--table", type=Path, metavar="LESSON_DIR", help="print the lesson's step table and exit")
     args = ap.parse_args(argv)
     if args.recut and args.self_test:
