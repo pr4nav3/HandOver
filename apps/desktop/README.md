@@ -1,6 +1,8 @@
 # HandOver desktop (Windows and Linux)
 
-The HandOver app for Windows and Linux, buildable on macOS for development. It pairs with a hub on the local network and has every desktop screen in `apps/design/SCREENS.md`: onboarding, Home, Browse All, lesson detail, Learn, Done with score and rating, Teach with honest processing, the course editor, Organizations, Profile and Settings.
+The HandOver app for macOS, Windows and Linux. It runs or pairs with a hub on the local network and has every desktop screen in `apps/design/SCREENS.md`: onboarding, Home, Browse All, lesson detail, Learn, Done with score and rating, Teach with honest processing, the course editor, Organizations, Profile and Settings.
+
+On macOS, **Use This Mac** is the shortest path: the app reuses a hub already running on `localhost:8000`, or starts the checkout's `.venv` hub itself. **Pair a Phone** and the Phone/Meta Glasses camera choices generate purpose-built QR codes. Scanning one connects the iPhone and opens the requested camera automatically.
 
 ## Architecture
 

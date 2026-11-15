@@ -129,13 +129,19 @@ A token that is sent but invalid is always 401, even in optional mode, so the cl
 | `POST /api/auth/setup` | anyone, only while there are no users | `{"name", "passcode"}` | `{"user", "token", "expires"}` (the owner) | 409 `setup is already done`; 400 `name must be 1 to 40 characters`, `passcode must be 4 to 128 characters` |
 | `POST /api/auth/login` | anyone | `{"name", "passcode"}`; name in any letter case | `{"user", "token", "expires"}` | 401 `wrong name or passcode`; 429 `too many login attempts; try again in a minute` with `Retry-After: 60` |
 | `POST /api/auth/logout` | signed in | | `{"ok": true}` | 401 |
+| `POST /api/auth/handoff/start` | anyone displaying a local pairing QR | | `{"claim", "expires"}`; claim expires in two minutes and contains no account token | |
+| `POST /api/auth/handoff/approve` | signed-in phone | `{"claim"}` from the QR | `{"approved": true, "expires"}` | 401; 404 expired/unknown |
+| `POST /api/auth/handoff/redeem` | Mac holding the QR claim | `{"claim"}` | `{"status":"pending"}` or, once only, `{"status":"approved","user","token","expires"}` | 404 expired/already used |
 | `GET /api/users` | hub owner | | `[User]` | 403 `only the hub owner can manage users` |
 | `POST /api/users` | hub owner | `{"name", "role", "passcode"}` | User | 409 `a user with that name already exists`; 400 `role must be owner, teacher or learner` |
 | `PATCH /api/users/{id}` | hub owner | any of `name`, `role`, `passcode` | User. A passcode reset signs the user out everywhere | 404 `user not found`; 409 `the hub needs at least one owner` |
 | `DELETE /api/users/{id}` | hub owner | | `{"deleted": id}`; tokens and org memberships go too; courses keep their owner_id | 404; 409 `the hub needs at least one owner` |
 | `GET /api/users/{id}/public` | anyone | | `{"id", "name", "courses": [...], "orgs": [...]}` | 404 `user not found` |
 
-User: `{"id", "name", "role", "created"}`. Tokens are 256-bit random, stored as SHA-256. Passcodes use scrypt (n 16384, r 8, p 1, 16-byte salt); an unknown name costs the same work as a wrong passcode.
+User: `{"id", "name", "role", "created"}`. Tokens are 256-bit random, stored as SHA-256. QR handoff claims
+are separate 256-bit, memory-only, short-lived values: the phone approves one with its bearer token and the Mac
+redeems it for a new independently revocable token. Passcodes use scrypt (n 16384, r 8, p 1, 16-byte salt); an
+unknown name costs the same work as a wrong passcode.
 
 The public profile lists courses the person owns that the caller may see (never drafts), and only orgs the caller shares with them (the hub owner sees all). No role, dates or passcode data.
 

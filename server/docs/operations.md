@@ -79,7 +79,7 @@ Any of these can be the learner's camera; the hub judges whichever one is active
 
 | Source | How |
 |---|---|
-| Meta glasses through the iPhone app | The app streams the glasses camera with the Meta Wearables toolkit (needs a paid Apple Developer team) |
+| Meta glasses through the iPhone app | The app streams the glasses camera with the Meta Wearables toolkit in Developer Mode. The tested Bluetooth-only development path signs with a free Personal Team; store distribution is a separate, unvalidated release path. |
 | iPhone app, phone camera | The app in `ios/` or `apps/apple/` |
 | Safari `/capture` on a phone | `https://<IP>:8443/capture` |
 | A recording | `server.replay`, shown with the Recording banner |

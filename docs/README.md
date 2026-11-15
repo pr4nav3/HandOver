@@ -6,10 +6,13 @@ The root [README](../README.md) is the product and setup overview. This page rou
 
 | Topic | Document |
 | --- | --- |
+| Install desktop, phone, browser, and glasses paths | [install.md](install.md) |
+| Diagnose pairing, camera, Meta, audio, latency, and hub issues | [troubleshooting.md](troubleshooting.md) |
 | Contributor setup and change rules | [CONTRIBUTING.md](../CONTRIBUTING.md) |
 | Local hub setup, configuration, and tests | [server/README.md](../server/README.md) |
 | Release evidence and validation matrix | [validation.md](validation.md) |
 | Runtime operations and troubleshooting | [server/docs/operations.md](../server/docs/operations.md) |
+| Apple app, signing, Meta bridge, and tests | [apps/apple/README.md](../apps/apple/README.md) |
 | Desktop application | [apps/desktop/README.md](../apps/desktop/README.md) |
 | Databricks setup and failure recovery | [databricks/README.md](../databricks/README.md) |
 
