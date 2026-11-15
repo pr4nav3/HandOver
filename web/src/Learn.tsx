@@ -5,6 +5,7 @@ import { getLesson, lessonUrl, toSeconds } from './api'
 import type { AdvanceMsg, CheckOfflineReason, Lesson, Mistake, MistakeMsg, NextClip, StateMsg, Step } from './api'
 import { go, useRoute } from './App'
 import { playChime, unlockAudio } from './chime'
+import * as cues from './cues'
 import { ConnectCamera } from './ConnectCamera'
 import { Done } from './Done'
 import type { DoneSummary } from './Done'
@@ -45,6 +46,9 @@ const REASON_MIN_CONF = 0.7
 // Choices for how often the vision model is offered a frame (set_check_interval, CONTRACT.md 7).
 const CHECK_INTERVALS = [0.5, 1, 2]
 
+// The chime's two notes last about this long; a spoken cue after it waits this much so they never overlap.
+const CHIME_MS = 700
+
 export function Learn() {
   const { lessonId: routeId } = useRoute()
   const [state, setState] = useState<StateMsg | null>(null)
@@ -75,6 +79,16 @@ export function Learn() {
   const soundBlockedRef = useRef(false)
   // Re-render after run bookkeeping changes (it lives in refs).
   const [, setTick] = useState(0)
+  // Spoken cues (cues.ts), on unless turned off in the popover; remembered in this browser.
+  const [voiceCues, setVoiceCues] = useState(cues.cuesEnabled)
+  const toggleVoiceCues = () => {
+    const on = !voiceCues
+    cues.setCuesEnabled(on)
+    setVoiceCues(on)
+  }
+  // When the chime last played, so a cue right after waits for it to finish.
+  const chimeAt = useRef(-Infinity)
+  const afterChime = () => Math.max(0, CHIME_MS - (performance.now() - chimeAt.current))
 
   const liveRef = useRef<HTMLCanvasElement>(null)
   const hasFrameRef = useRef(false)
@@ -139,6 +153,8 @@ export function Learn() {
   const clips = useClipPair((v) => {
     if (v.videoWidth && v.videoHeight) setAspect(v.videoWidth / v.videoHeight)
   })
+  // A cue turns the expert clip down; both elements, so a swap during the cue stays quiet.
+  cues.setDuckTargets(() => [clips.refA.current, clips.refB.current])
   const lessonRef = useRef<Lesson | null>(null)
   const revRef = useRef(0)
 
@@ -197,6 +213,9 @@ export function Learn() {
     }
     if (msg.reason !== 'camera') return
     playChime()
+    chimeAt.current = performance.now()
+    // The last step's advance ends the lesson: the done cue says so instead.
+    if (!total || msg.to < total) cues.play('done-moving-on', CHIME_MS)
     setFlashVerified(true)
     window.clearTimeout(flashTimer.current)
     flashTimer.current = window.setTimeout(() => setFlashVerified(false), 1800)
@@ -292,10 +311,9 @@ export function Learn() {
     setMistake(m)
     if (!countMistake(m)) return // already shown and spoken
     setTick((t) => t + 1)
-    if ('speechSynthesis' in window) {
-      window.speechSynthesis.cancel()
-      window.speechSynthesis.speak(new SpeechSynthesisUtterance(m.message))
-    }
+    if (m.kind === 'ahead') cues.play('ahead')
+    else if (m.message?.trim()) cues.say(m.message)
+    else cues.play('still-step')
   }, [])
 
   const onOpen = useCallback(() => {
@@ -308,8 +326,11 @@ export function Learn() {
   sendRef.current = send
 
   useEffect(() => {
-    // Any click or key on this page lets the chime play later.
-    const unlock = () => unlockAudio()
+    // Any click or key on this page lets the chime and the spoken cues play later.
+    const unlock = () => {
+      unlockAudio()
+      cues.unlockCues()
+    }
     window.addEventListener('pointerdown', unlock)
     window.addEventListener('keydown', unlock)
     return () => {
@@ -317,6 +338,7 @@ export function Learn() {
       window.clearTimeout(errorTimer.current)
       window.removeEventListener('pointerdown', unlock)
       window.removeEventListener('keydown', unlock)
+      cues.stopCue()
     }
   }, [])
 
@@ -472,6 +494,7 @@ export function Learn() {
     setConfirmEnd(false)
     resumeId.current = null
     clips.active()?.pause()
+    cues.stopCue()
     if ('speechSynthesis' in window) window.speechSynthesis.cancel()
     setMistake(null)
     if (state?.lesson_id) send({ type: 'end_lesson', lesson_id: state.lesson_id, run_id: state.run_id ?? undefined })
@@ -517,6 +540,32 @@ export function Learn() {
       rows,
     })
   }, [isDone])
+
+  // Spoken cues for the lesson finishing, checks going off and the camera dropping, each once per change.
+  // Only a change seen while the lesson is on screen speaks: a page that joins a finished run stays quiet.
+  const wasRunning = useRef(false)
+  useEffect(() => {
+    if (isDone && wasRunning.current) cues.play('lesson-complete', afterChime())
+    wasRunning.current = showing && !isDone
+  }, [isDone, showing])
+  const offlineSpoken = useRef(false)
+  const checkOffline = !!state?.check_offline
+  useEffect(() => {
+    if (!checkOffline) offlineSpoken.current = false
+    else if (showing && !isDone && !offlineSpoken.current) {
+      offlineSpoken.current = true
+      cues.play('checks-off')
+    }
+  }, [checkOffline, showing])
+  const cameraWasOn = useRef(false)
+  const cameraOn = !!state?.camera_connected
+  useEffect(() => {
+    if (cameraOn) cameraWasOn.current = true
+    else if (cameraWasOn.current && state) {
+      cameraWasOn.current = false
+      if (showing && !isDone) cues.play('camera-lost')
+    }
+  }, [cameraOn])
 
   // Mock checks pass on a timer and never look at the camera; say so.
   const mockChecks = state?.check_mode === 'mock'
@@ -619,6 +668,10 @@ export function Learn() {
                     )
                   })}
                 </div>
+                <label className="cue-toggle">
+                  <input type="checkbox" checked={voiceCues} onChange={toggleVoiceCues} />
+                  Voice cues
+                </label>
               </div>
             )}
           </span>

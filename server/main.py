@@ -1686,6 +1686,16 @@ def root() -> FileResponse | dict:
     return {"app": "HandOver", "api": "/api/lessons", "capture": "/capture", "ui": "http://localhost:5173"}
 
 
+@app.get("/voice/{name}")
+def web_voice(name: str) -> FileResponse:
+    """Spoken cues of the Learn screen (web/public/voice, copied into web/dist/voice by the build)."""
+    root = (WEB_DIST / "voice").resolve()
+    file = (root / name).resolve()
+    if root not in file.parents or not file.is_file():
+        raise HTTPException(404, "not found")
+    return FileResponse(file, media_type="audio/mpeg", headers={"Cache-Control": "no-cache"})
+
+
 @app.get("/assets/{path:path}")
 def web_asset(path: str) -> FileResponse:
     """Hashed build files of the web app (Vite names change on every build, so they cache forever)."""
