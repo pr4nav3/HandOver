@@ -21,6 +21,7 @@ struct OnboardingView: View {
         .safeAreaInset(edge: .top, spacing: 0) { topBar(step) }
         .modifier(OnboardingFrame())
         .animation(HOMotion.resolve(HOMotion.panel, reduceMotion: reduceMotion), value: step)
+        .task { await SampleLesson.prewarm() }
     }
 
     private var transition: AnyTransition {

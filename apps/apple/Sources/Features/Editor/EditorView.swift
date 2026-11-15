@@ -96,8 +96,9 @@ private struct EditorScreen: View {
         .lessonLauncher(launcher)
     }
 
-    /// iPhone layout. The Mac reports regular, so it keeps its own layout; snapshots ask for compact.
-    private var isCompact: Bool { sizeClass == .compact }
+    /// iPhone layout, also on a large iPhone on its side (regular width), so rotating never swaps layouts and
+    /// reloads the clip. The Mac reports regular, so it keeps its own layout; snapshots ask for compact.
+    private var isCompact: Bool { sizeClass == .compact || HOLayout.isPhone }
 
     // MARK: - Layouts
 

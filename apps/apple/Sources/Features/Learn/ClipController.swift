@@ -23,6 +23,8 @@ final class ClipController {
         let looper: AVPlayerLooper
         var captions: CaptionCues?
         var captionTask: Task<Void, Never>?
+        /// The layer this player draws into, made when first shown and reused wherever the clip moves.
+        private(set) lazy var surface = PlayerSurface(player: player)
 
         init(url: URL, captionsURL: URL?, muted: Bool) {
             self.url = url
