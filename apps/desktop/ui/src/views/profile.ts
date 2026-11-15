@@ -220,7 +220,7 @@ function localActivity(): Raw {
       ${metric(s.lessons, s.lessons === 1 ? "Lesson done" : "Lessons done")}
       ${metric(s.camera, s.camera === 1 ? "Camera-verified step" : "Camera-verified steps")}
       ${metric(s.mistakes, s.mistakes === 1 ? "Mistake caught" : "Mistakes caught")}
-    </div><p class="profile-privacy">Saved on this Mac</p></div>`;
+    </div><p class="profile-privacy">Saved on this computer</p></div>`;
 }
 
 function localLessonSections(): Raw {

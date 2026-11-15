@@ -88,8 +88,8 @@ document.addEventListener("visibilitychange", () => {
 
 // ---- This computer as the camera ----
 
-const PLATFORM = navigator.userAgent.includes("Mac") ? "macos" : navigator.userAgent.includes("Windows") ? "windows" : "linux";
-const CAMERA_NAME = { macos: "Mac camera", windows: "Windows camera", linux: "Linux camera" }[PLATFORM];
+export const PLATFORM = navigator.userAgent.includes("Mac") ? "macos" : navigator.userAgent.includes("Windows") ? "windows" : "linux";
+export const CAMERA_NAME = { macos: "Mac camera", windows: "Windows camera", linux: "Linux camera" }[PLATFORM];
 const local = new LocalCamera(learn.localVideo, sendCameraFrame);
 local.onChange = () => render();
 

@@ -198,8 +198,8 @@ function connectPage(): Raw {
   return chrome(
     html`<div class="ob-mark">${icons.mark}</div>
       <h1 class="ob-title">Connect to your hub</h1>
-      <p class="ob-line">This Mac can run the hub and keep your lessons here.</p>
-      <button class="primary large ob-primary" data-act="ob-local">Use This Mac</button>
+      <p class="ob-line">This computer can run the hub and keep your lessons here.</p>
+      <button class="primary large ob-primary" data-act="ob-local">Use This Computer</button>
       <p class="hint">Or connect to HandOver running on another computer.</p>
       <form class="ob-form" id="ob-connect" autocomplete="off">
         <label class="field"><span>Hub address</span>
@@ -396,7 +396,7 @@ export async function onboardingAction(act: string, t: HTMLElement) {
 }
 
 async function useThisMac() {
-  ob.connecting = "this Mac";
+  ob.connecting = "this computer";
   ob.fail = null;
   rerender();
   try {
