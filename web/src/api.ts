@@ -81,6 +81,7 @@ export interface MistakeMsg extends Mistake {
 export interface StateMsg {
   type: 'state'
   lesson_id: string | null
+  run_id?: string | null // the run the Done screen scores; sent back with end_lesson
   step: number
   total: number
   status: Status
