@@ -197,6 +197,10 @@ final class LearnFlow {
     /// Ends the lesson and goes back to Home: tells the hub (end_lesson stops the run and unloads the lesson),
     /// and this app stops following it and stops sending camera frames.
     func end(model: AppModel? = nil) {
+        // End can be driven by the hub as well as the close button. Stop process-wide sound here, before the
+        // SwiftUI transition, so speech and a verification chime never outlive the lesson screen.
+        SpokenGuide.shared.endLessonAudio()
+        Chime.shared.stop()
         model?.endLesson(lessonId: runningLessonId)
         isRunning = false
         runningLessonId = nil

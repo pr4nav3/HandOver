@@ -7,6 +7,7 @@ import type {
   Invite,
   LinkStatus,
   Me,
+  ProfileAnalytics,
   OrgSummary,
   Snapshot,
 } from "./api";
@@ -34,6 +35,8 @@ export const app = {
   down: false,
   /** `/api/me`, or null on a hub without the library routes. */
   me: null as Me | null,
+  /** Signed-in learner aggregates. undefined while loading, null when unavailable. */
+  analytics: undefined as ProfileAnalytics | null | undefined,
   /** The hub serves the library, accounts and organizations routes. */
   library: false,
   orgs: [] as OrgSummary[],

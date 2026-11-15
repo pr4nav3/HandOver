@@ -102,7 +102,7 @@ struct ConnectStatusView: View {
         switch phase {
         case .idle: "Connecting"
         case .testing: "Connecting"
-        case .connected: "Connected"
+        case .connected(let hub, _): "Paired with \(hub.host)"
         case .failed(let hub, let result): Self.failure(result).title(hub.host)
         }
     }
@@ -112,9 +112,9 @@ struct ConnectStatusView: View {
         case .idle, .testing: "Checking that a HandOver hub is there."
         case .connected(_, let lessons):
             switch lessons {
-            case 0: "No lessons on this hub yet."
-            case 1: "1 lesson on this hub."
-            default: "\(lessons) lessons on this hub."
+            case 0: "Connected. Ready to choose a camera."
+            case 1: "Connected with 1 lesson. Ready to choose a camera."
+            default: "Connected with \(lessons) lessons. Ready to choose a camera."
             }
         case .failed(_, let result): Self.failure(result).message
         }
@@ -296,8 +296,8 @@ struct HubPairingCover: View {
         ZStack {
             if connector.phase == .idle, !typing {
                 QRScannerScreen(
-                    title: "Scan the hub's code",
-                    hint: "Point the camera at a QR code with the hub's address, like http://192.168.1.20:8000.",
+                    title: "Scan your Mac",
+                    hint: "Point this camera at the pairing code in HandOver.",
                     handle: { text in
                         guard let hub = HubURL(parsing: text) else { return "That code is not a HandOver hub." }
                         Task {

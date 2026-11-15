@@ -151,6 +151,9 @@ pub struct State {
     /// Live frames per second the hub forwards to each viewer, at most (Revision 6).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ui_fps: Option<u32>,
+    /// Camera checks continue, but a verified result does not advance until released. `None` from older hubs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub held: Option<bool>,
 }
 
 /// Keeps "absent" (outer None, from `default`) apart from "null" (Some(None)).
@@ -274,6 +277,9 @@ pub enum ClientMessage {
     },
     Goto {
         step: i64,
+    },
+    Hold {
+        hold: bool,
     },
     DismissMistake,
     /// Seconds between frames offered to the vision model, for the whole session.

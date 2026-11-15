@@ -91,12 +91,15 @@ extension GlassesTransport {
 final class MWDATGlasses: GlassesToolkitBridge {
     private static let log = Logger(subsystem: "com.soham109.handover", category: "MetaGlasses")
     private weak var controller: GlassesController?
+    private var selector: (any DeviceSelector)?
     private var session: DeviceSession?
     private var camera: MWDATCamera.Camera?
     private var stream: MWDATCamera.Stream?
     private var tokens: [any AnyListenerToken] = []
     private var watchTask: Task<Void, Never>?
     private var connectTask: Task<Void, Never>?
+    private var firstFrameTask: Task<Void, Never>?
+    private var streamGeneration = 0
     private let meter = FrameMeter()
     private let writer = GlassesWriter()
     private let ciContext = CIContext()
@@ -108,6 +111,7 @@ final class MWDATGlasses: GlassesToolkitBridge {
             return
         }
         connectTask?.cancel()
+        releasePipeline()
         connectTask = Task { [weak self, weak controller] in
             guard let self, let controller else { return }
             await self.run(controller)
@@ -123,14 +127,28 @@ final class MWDATGlasses: GlassesToolkitBridge {
             do {
                 let status = try await Wearables.shared.requestPermission(.camera)
                 if status == .granted { await self.run(controller) } else { controller.set(state: .permissionNeeded) }
-            } catch let error {
+            } catch let error as PermissionError {
                 controller.set(state: Self.state(for: error))
+            } catch {
+                Self.log.error("Camera permission request failed: \(Self.describe(error), privacy: .public)")
+                controller.set(state: .failed("Camera permission failed. Reopen Meta AI, confirm Developer Mode is on, then try again."))
             }
         }
     }
 
     func stop(_ controller: GlassesController) {
         connectTask?.cancel()
+        connectTask = nil
+        releasePipeline()
+        controller.set(frame: nil)
+        if controller.state.isStreaming || controller.state.isBusy { controller.set(state: .notRegistered) }
+        refreshRegistration(controller)
+    }
+
+    private func releasePipeline() {
+        streamGeneration += 1
+        firstFrameTask?.cancel()
+        firstFrameTask = nil
         let old = tokens
         tokens = []
         Task { for token in old { await token.cancel() } }
@@ -140,9 +158,7 @@ final class MWDATGlasses: GlassesToolkitBridge {
         camera = nil
         session?.stop()
         session = nil
-        controller.set(frame: nil)
-        if controller.state.isStreaming || controller.state.isBusy { controller.set(state: .notRegistered) }
-        refreshRegistration(controller)
+        selector = nil
     }
 
     func startRecording(_ controller: GlassesController, to url: URL) throws {
@@ -200,13 +216,10 @@ final class MWDATGlasses: GlassesToolkitBridge {
                 return
             }
         }
-        guard let device = await waitForDevice(wearables) else {
-            controller.set(state: .noDevice)
-            return
-        }
-        controller.set(device: device.name, battery: device.batteryLevel)
+        // Permission comes before discovery. Meta AI may need to foreground and authorize the camera before
+        // its accessory list or link state settles.
         do {
-            if try await checkCameraPermission(wearables) != MWDATCore.PermissionStatus.granted {
+            if try await wearables.checkPermissionStatus(.camera) != MWDATCore.PermissionStatus.granted {
                 controller.set(state: .permissionNeeded)
                 return
             }
@@ -214,15 +227,27 @@ final class MWDATGlasses: GlassesToolkitBridge {
             controller.set(state: Self.state(for: error))
             return
         }
+        guard let choice = await waitForDeviceChoice(wearables) else {
+            controller.set(state: .noDevice)
+            return
+        }
+        let device = choice.device
+        selector = choice.selector
+        controller.set(device: device.name, battery: device.batteryLevel)
         controller.set(state: .connecting)
         do {
-            let session = try wearables.createSession(deviceSelector: AutoDeviceSelector(wearables: wearables))
+            retainDeviceListeners(device, controller: controller)
+            let session = try wearables.createSession(deviceSelector: choice.selector)
             self.session = session
+            retainSessionListeners(session, controller: controller)
             try session.start()
             guard await waitForStarted(session) else {
                 controller.set(state: session.state == .stopped ? .lost : .failed("The glasses session timed out before it started."))
                 return
             }
+            // A started session can precede a usable camera capability by a few Bluetooth turns.
+            try? await Task.sleep(for: GlassesLifecyclePolicy.connectedSettle)
+            if Task.isCancelled { return }
             try startStream(session: session, controller: controller)
         } catch let error as DeviceSessionError {
             controller.set(state: Self.state(for: error))
@@ -231,30 +256,34 @@ final class MWDATGlasses: GlassesToolkitBridge {
         }
     }
 
-    private func waitForDevice(_ wearables: any WearablesInterface) async -> Device? {
-        for _ in 0..<40 {
-            if let device = wearables.devices.first.flatMap({ wearables.deviceForIdentifier($0) }) { return device }
-            try? await Task.sleep(for: .milliseconds(250))
+    private struct DeviceChoice {
+        let device: Device
+        let selector: any DeviceSelector
+    }
+
+    private func waitForDeviceChoice(_ wearables: any WearablesInterface) async -> DeviceChoice? {
+        let automatic = AutoDeviceSelector(wearables: wearables)
+        for _ in 0..<GlassesLifecyclePolicy.discoveryPollCount {
+            let identifiers = wearables.devices
+            switch GlassesLifecyclePolicy.selectorMode(autoHasDevice: automatic.activeDevice != nil,
+                                                        discoveredDeviceCount: identifiers.count) {
+            case .automatic:
+                if let id = automatic.activeDevice, let device = wearables.deviceForIdentifier(id) {
+                    return DeviceChoice(device: device, selector: automatic)
+                }
+            case .specific:
+                // Probe the one registered device once even if its current link state is disconnected. Starting
+                // a specific session is what asks the toolkit to bring that Bluetooth link up.
+                if let id = identifiers.first, let device = wearables.deviceForIdentifier(id) {
+                    Self.log.info("Auto selector is empty; probing sole device \(device.name, privacy: .public), link=\(String(describing: device.linkState), privacy: .public)")
+                    return DeviceChoice(device: device, selector: SpecificDeviceSelector(device: id))
+                }
+            case .waitForAuto: break
+            }
+            try? await Task.sleep(for: GlassesLifecyclePolicy.discoveryPollInterval)
             if Task.isCancelled { return nil }
         }
         return nil
-    }
-
-    /// Meta AI may return before its accessory connection is ready. Retry the transient permission errors
-    /// briefly instead of turning the SDK's one-frame handoff race into a permanent "Internal error" card.
-    private func checkCameraPermission(_ wearables: any WearablesInterface) async throws(PermissionError) -> MWDATCore.PermissionStatus {
-        var last: PermissionError?
-        for attempt in 0..<8 {
-            do {
-                return try await wearables.checkPermissionStatus(.camera)
-            } catch let error {
-                last = error
-                let transient = error == .noDevice || error == .noDeviceWithConnection || error == .connectionError || error == .internalError
-                guard transient, attempt < 7 else { throw error }
-                try? await Task.sleep(for: .milliseconds(500))
-            }
-        }
-        throw last ?? .internalError
     }
 
     private func waitForStarted(_ session: DeviceSession) async -> Bool {
@@ -265,6 +294,47 @@ final class MWDATGlasses: GlassesToolkitBridge {
             if Task.isCancelled { return false }
         }
         return false
+    }
+
+    private func retainDeviceListeners(_ device: Device, controller: GlassesController) {
+        let stateToken = device.addDeviceStateListener { [weak controller] state in
+            Task { @MainActor in
+                guard let controller else { return }
+                controller.set(device: device.name, battery: state.batteryLevel)
+                switch state.compatibility {
+                case .deviceUpdateRequired:
+                    controller.set(state: .failed("Update your glasses firmware in Meta AI, then try again."))
+                case .sdkUpdateRequired:
+                    controller.set(state: .failed("This glasses firmware needs a newer HandOver build."))
+                case .undefined, .compatible: break
+                @unknown default: break
+                }
+                // A disconnected snapshot is expected while a specific selector probes the sole registered
+                // device. It becomes a failure only after frames had already established a live stream.
+                if state.linkState == .disconnected, controller.state.isStreaming {
+                    controller.set(state: .lost)
+                }
+            }
+        }
+        tokens.append(stateToken)
+    }
+
+    private func retainSessionListeners(_ session: DeviceSession, controller: GlassesController) {
+        let stateToken = session.statePublisher.listen { [weak controller] state in
+            Task { @MainActor in
+                guard let controller else { return }
+                switch state {
+                case .starting: if !controller.state.isStreaming { controller.set(state: .connecting) }
+                case .paused: controller.set(state: .paused)
+                case .stopped: if controller.state.isStreaming { controller.set(state: .lost) }
+                case .idle, .started, .stopping: break
+                }
+            }
+        }
+        let errorToken = session.errorPublisher.listen { [weak controller] error in
+            Task { @MainActor in controller?.set(state: Self.state(for: error)) }
+        }
+        tokens.append(contentsOf: [stateToken, errorToken])
     }
 
     private func startStream(session: DeviceSession, controller: GlassesController) throws {
@@ -279,12 +349,15 @@ final class MWDATGlasses: GlassesToolkitBridge {
         camera = madeCamera
         let stream = madeCamera.stream
         self.stream = stream
+        streamGeneration += 1
+        let generation = streamGeneration
         meter.reset()
         let writer = self.writer
         let meter = self.meter
         let frameToken = stream.videoFramePublisher.listen { [weak self, weak controller] frame in
             let buffer = frame.sampleBuffer
             writer.append(buffer)
+            Task { @MainActor in self?.firstFrameArrived(generation: generation) }
             guard let measured = meter.tick(buffer) else { return }
             let image = frame.makeUIImage()?.cgImage
             Task { @MainActor in
@@ -310,8 +383,26 @@ final class MWDATGlasses: GlassesToolkitBridge {
         let errorToken = stream.errorPublisher.listen { [weak controller] error in
             Task { @MainActor in controller?.set(state: Self.state(for: error)) }
         }
-        tokens = [frameToken, stateToken, errorToken]
+        tokens.append(contentsOf: [frameToken, stateToken, errorToken])
         stream.start()
+        armFirstFrameTimeout(controller, generation: generation)
+    }
+
+    private func armFirstFrameTimeout(_ controller: GlassesController, generation: Int) {
+        firstFrameTask?.cancel()
+        firstFrameTask = Task { [weak self, weak controller] in
+            try? await Task.sleep(for: GlassesLifecyclePolicy.firstFrameTimeout)
+            guard let self, let controller, !Task.isCancelled, self.streamGeneration == generation else { return }
+            self.stream?.stop()
+            self.camera?.stop()
+            controller.set(state: .failed("No video arrived from the glasses. Open their hinges, confirm they are connected in Meta AI, then try again."))
+        }
+    }
+
+    private func firstFrameArrived(generation: Int) {
+        guard generation == streamGeneration else { return }
+        firstFrameTask?.cancel()
+        firstFrameTask = nil
     }
 
     func registrationCallbackFinished(error: String?) {

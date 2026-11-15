@@ -18,7 +18,7 @@ out-of-range value logs one warning and falls back to the default):
     HANDOVER_GATE_STILL            a frame is still below this (default 0.005)
     HANDOVER_GATE_STILL_FRAMES     still frames in a row to count as settled (default 2)
     HANDOVER_GATE_CHANGE           change vs the last checked frame (default 0.018)
-    HANDOVER_GATE_HEARTBEAT_S      seconds between heartbeat checks (default 6.0)
+    HANDOVER_GATE_HEARTBEAT_S      seconds between heartbeat checks (default 2.0)
 """
 
 from __future__ import annotations
@@ -92,7 +92,7 @@ class MotionGate:
             change_thresh if change_thresh is not None else config.env_float("HANDOVER_GATE_CHANGE", 0.018, 0, 1)
         )
         self.heartbeat_s = (
-            heartbeat_s if heartbeat_s is not None else config.env_float("HANDOVER_GATE_HEARTBEAT_S", 6.0, 0.5, 600)
+            heartbeat_s if heartbeat_s is not None else config.env_float("HANDOVER_GATE_HEARTBEAT_S", 2.0, 0.5, 600)
         )
 
         self._prev: Optional[Image.Image] = None  # last decoded frame, for motion

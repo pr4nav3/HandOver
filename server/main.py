@@ -22,7 +22,7 @@ import shutil
 import threading
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional
@@ -31,7 +31,7 @@ from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Upload
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from server import accounts, check, config, gate, mistake, routes_library, understand
+from server import accounts, analytics_privacy, check, config, gate, mistake, routes_library, understand
 
 for _ext, _type in ((".vtt", "text/vtt"), (".mp4", "video/mp4"), (".js", "text/javascript"),
                     (".mjs", "text/javascript"), (".css", "text/css"), (".svg", "image/svg+xml"),
@@ -99,7 +99,8 @@ LESSONS.mkdir(parents=True, exist_ok=True)
 
 ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 UI_FRAME_MAX_SIDE = 960
-GATE_MIN_INTERVAL = 0.25  # the motion gate decodes at most 4 frames per second, however fast the camera sends
+GATE_MIN_INTERVAL = 0.125  # 8 tiny gate decodes/s: two still samples recognize a finished motion in ~250 ms
+FAST_CONFIRM_INTERVAL = 0.25  # after a likely pass, confirm promptly without raising the normal model-call rate
 VERIFIED_HOLD = config.env_float("HANDOVER_VERIFIED_HOLD", 0.8, 0, 10)  # seconds "verified" shows before advancing
 MAX_UPLOAD_BYTES = 2 * 1024**3  # 2 GB
 CHECKING_SHOW_AFTER = 1.5  # seconds a check must be in flight before the UI is told "checking"
@@ -262,8 +263,11 @@ class Camera(UIClient):
         self.device_id: Optional[str] = None
         self.said_hello = False
         self.connected_at = now
+        self.hello_at = 0.0
+        self.first_frame_at = 0.0
         self.active_since = now  # when it last became active; idle counts from here until its first frame
         self.last_frame = 0.0  # 0 = no frame yet
+        self.frame_interval_ema = 0.0  # receive cadence only; frames remain memory-only
         self.announce: Optional[asyncio.TimerHandle] = None  # pending first state broadcast, see add_camera
 
     def push(self, msg: Any) -> None:
@@ -272,6 +276,15 @@ class Camera(UIClient):
 
     def identity(self) -> dict:
         return {"name": self.name, "platform": self.platform, "source": self.source}
+
+    def record_frame(self, now: float) -> None:
+        if self.last_frame:
+            gap = max(0.001, now - self.last_frame)
+            self.frame_interval_ema = gap if not self.frame_interval_ema else self.frame_interval_ema * 0.75 + gap * 0.25
+        self.last_frame = now
+
+    def received_fps(self) -> Optional[float]:
+        return round(1 / self.frame_interval_ema, 1) if self.frame_interval_ema > 0 else None
 
 
 def parse_hello(msg: dict) -> Optional[dict]:
@@ -337,8 +350,7 @@ def databricks_sink(event: dict) -> None:
     fields.update(hub_run_id=event["run_id"], rev=event["rev"], hub_ts=event["ts"])
     if kind == "run_start":
         db.end_run()
-        db_run = call_accepting(db.start_run, event["lesson_id"], learner=event.get("learner"), source=event.get("source"),
-                       check_mode=event.get("check_mode"))
+        db_run = call_accepting(db.start_run, event["lesson_id"], **fields)
         if isinstance(db_run, str) and db_run and event.get("run_id"):
             DB_RUN_IDS.clear()  # only the newest run matters; keeps this from growing
             DB_RUN_IDS[event["run_id"]] = db_run
@@ -499,6 +511,16 @@ def clamp_check_interval(seconds: float) -> float:
     return min(hi, max(lo, float(seconds)))
 
 
+def check_offer_interval(configured: float, urgent: bool) -> float:
+    """Cadence for the next model offer.
+
+    Normal observation stays at the configured budget. Once a pass is being confirmed—or the bounded second
+    pipeline slot is already justified by a settled motion—we use a short lane so the user is not left holding a
+    completed step for the remainder of a long check interval. `max_inflight` and the debounce still cap work.
+    """
+    return min(configured, FAST_CONFIRM_INTERVAL) if urgent else configured
+
+
 _SOF = {0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF}  # start-of-frame markers
 
 
@@ -585,6 +607,21 @@ class FrameDebouncer:
 
 
 @dataclass
+class StepStats:
+    """Small, frame-free aggregates for one step in one run."""
+
+    entries: int = 0
+    checks: int = 0
+    yes: int = 0
+    no: int = 0
+    unsure: int = 0
+    errors: int = 0
+    latency_total_ms: int = 0
+    latency_max_ms: int = 0
+    mistakes: int = 0
+
+
+@dataclass
 class RunStats:
     """One pass through a lesson, from select_lesson to done, for the run events."""
 
@@ -594,6 +631,30 @@ class RunStats:
     manual_steps: int = 0  # forward step moves by button or voice
     mistakes: int = 0
     done_sent: bool = False
+    camera_connections: int = 0
+    camera_disconnects: int = 0
+    camera_sources: set[str] = field(default_factory=set)
+    steps: dict[int, StepStats] = field(default_factory=dict)
+
+    def for_step(self, step: int) -> StepStats:
+        return self.steps.setdefault(step, StepStats())
+
+    def totals(self) -> dict[str, Any]:
+        values = list(self.steps.values())
+        checks = sum(s.checks for s in values)
+        latency = sum(s.latency_total_ms for s in values)
+        return {
+            "checks": checks,
+            "checks_yes": sum(s.yes for s in values),
+            "checks_no": sum(s.no for s in values),
+            "checks_unsure": sum(s.unsure for s in values),
+            "check_errors": sum(s.errors for s in values),
+            "check_latency_avg_ms": round(latency / checks, 1) if checks else None,
+            "check_latency_max_ms": max((s.latency_max_ms for s in values), default=0) or None,
+            "camera_connections": self.camera_connections,
+            "camera_disconnects": self.camera_disconnects,
+            "camera_sources": sorted(self.camera_sources),
+        }
 
 
 @dataclass
@@ -607,6 +668,7 @@ class CheckJob:
     version: int
     prev_ref: Optional[bytes] = None
     seq: int = 0  # frame number, so answers from checks running at once are put back in frame order
+    run_id: Optional[str] = None  # binds a late result to the run that offered its frame
 
 
 class Engine:
@@ -661,6 +723,8 @@ class Engine:
         self.offered_at = -1e9  # when a frame was last offered to the check model (check_interval_s)
         self.offer_wake_booked = False
         self.gate_wake_booked = False
+        self.auto_advance_held = False
+        self.observation_phase_sent: Optional[str] = None
         self.frame_event = asyncio.Event()
         self.ui_frame_event = asyncio.Event()
         self.ref_cache: dict[tuple, bytes] = {}
@@ -716,7 +780,38 @@ class Engine:
             "run_id": self.run_id(),
             "check_interval_s": self.check_interval_s(),
             "ui_fps": int(ui_fps()),
+            "held": self.auto_advance_held,
+            "observation": self.observation(),
         }
+
+    def observation(self) -> dict:
+        """Frame-free feedback explaining what the live checker is doing right now."""
+        if self.lesson is None:
+            phase = "idle"
+        elif self.cameras == 0:
+            phase = "waiting_camera"
+        elif self.active is None or self.frame is None:
+            phase = "waiting_frame"
+        elif self.verified:
+            phase = "verified"
+        elif any(not task.done() for task in self.inflight):
+            phase = "checking"
+        elif not self.gate.settled:
+            phase = "moving"
+        elif self.gate_wake_booked:
+            phase = "settling"
+        else:
+            phase = "watching"
+        cam = self.active
+        age = round(max(0.0, time.monotonic() - cam.last_frame) * 1000) if cam and cam.last_frame else None
+        return {"phase": phase, "frame_age_ms": age, "camera_fps": cam.received_fps() if cam else None}
+
+    def broadcast_observation_if_changed(self) -> None:
+        phase = self.observation()["phase"]
+        if phase == self.observation_phase_sent:
+            return
+        self.observation_phase_sent = phase
+        self.broadcast_state()
 
     def check_interval_s(self) -> float:
         """Seconds between frames offered to the check model, at least: the runtime value from
@@ -764,6 +859,7 @@ class Engine:
     def broadcast_state(self) -> None:
         """Always sends: commands such as select_lesson get their state even when nothing changed."""
         self.last_broadcast = self.state()
+        self.observation_phase_sent = self.last_broadcast["observation"]["phase"]
         self.broadcast(self.last_broadcast)
 
     def broadcast_state_if_changed(self) -> None:
@@ -774,6 +870,7 @@ class Engine:
             metrics["states_unchanged_skipped"] += 1
             return
         self.last_broadcast = st
+        self.observation_phase_sent = st["observation"]["phase"]
         self.broadcast(st)
 
     def sync_offline(self) -> bool:
@@ -797,6 +894,7 @@ class Engine:
         The event type goes out as "kind", so the mistake event carries its own kind as mistake_kind."""
         if not EVENT_SINKS:
             return
+        fields, _ = analytics_privacy.scrub_fields(fields)
         payload = {"event_id": uuid.uuid4().hex,
                  "ts": datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
                  "run_id": self.run.run_id if self.run else None, "lesson_id": self.lesson_id, "rev": self.rev,
@@ -818,7 +916,16 @@ class Engine:
             return
         start, end = parse_seconds(cur.get("start")), parse_seconds(cur.get("end"))
         expert = round(end - start, 3) if start is not None and end is not None else None
-        self.emit("step_enter", step=self.step, check_type=cur.get("check_type", "camera"), expert_seconds=expert)
+        entry = None
+        if self.run is not None:
+            stats = self.run.for_step(self.step)
+            stats.entries += 1
+            entry = stats.entries
+            if self.active is not None and self.active.source != "unknown":
+                self.run.camera_sources.add(self.active.source)
+        self.emit("step_enter", step=self.step, check_type=cur.get("check_type", "camera"), expert_seconds=expert,
+                  entry=entry, camera_source=self.active.source if self.active else None,
+                  camera_connected=self.cameras > 0)
 
     def snapshot(self) -> dict:
         """Health and counters in one dict, for a future /api/health or /api/metrics route."""
@@ -846,6 +953,8 @@ class Engine:
         self.mistake = None
         self.progress = None
         self.stage = None
+        self.auto_advance_held = False
+        self.observation_phase_sent = None
         self.tracker.start_step(self.step, self.understand_entry(self.step))
         self.step_started = time.monotonic()
         self.checked_seq = self.frame_seq  # never judge a new step with a frame taken before it began
@@ -882,7 +991,11 @@ class Engine:
 
     def select(self, lesson_id: str, learner: Optional[str] = None) -> None:
         """Load a lesson at step 0 and start a run. learner: the signed-in user's id, or None (anonymous)."""
-        lesson = read_lesson(lesson_id)
+        previous_lesson = self.lesson_id
+        previous_done = self.done
+        lesson = read_lesson(lesson_id)  # validate before an invalid selection can interrupt the current run
+        if self.run is not None:
+            self.stop_run("restarted" if previous_lesson == lesson_id else "switched")
         self.lesson_id, self.lesson = lesson_id, lesson
         self.refresh_rev()
         self.step, self.done = 0, False
@@ -890,10 +1003,24 @@ class Engine:
         self.load_rubric()
         self._enter_step()
         self.run = RunStats(uuid.uuid4().hex, time.monotonic())
+        if self.active is not None:
+            self.run.camera_connections = 1
+            if self.active.source != "unknown":
+                self.run.camera_sources.add(self.active.source)
         log.info("selected lesson %s (%d steps)", lesson_id, len(self.steps))
         # source and check_mode let dashboards leave out mock and replay runs; learner tags per-user progress
-        self.emit("run_start", total=len(self.steps), learner=learner,
-                  source=self.active.source if self.active else None, check_mode=check_mode())
+        attempt_kind = ("replay" if previous_lesson == lesson_id and previous_done else
+                        "restart" if previous_lesson == lesson_id else "new")
+        now = time.monotonic()
+        self.emit("run_start", total=len(self.steps), learner=learner, attempt_kind=attempt_kind,
+                  source=self.active.source if self.active else None,
+                  platform=self.active.platform if self.active else None,
+                  camera_connect_age_ms=(round((now - self.active.connected_at) * 1000)
+                                         if self.active else None),
+                  camera_ready=self.active.first_frame_at > 0 if self.active else False,
+                  camera_first_frame_age_ms=(round((now - self.active.first_frame_at) * 1000)
+                                             if self.active and self.active.first_frame_at else None),
+                  check_mode=check_mode(), check_interval_s=self.check_interval_s())
         self._emit_step_enter()
         self.broadcast_state()
 
@@ -952,6 +1079,9 @@ class Engine:
         if to == frm:
             return
         step_seconds = round(time.monotonic() - self.step_started, 3)
+        step_stats = self.run.steps.get(frm) if self.run is not None else None
+        check_avg = (round(step_stats.latency_total_ms / step_stats.checks, 1)
+                     if step_stats is not None and step_stats.checks else None)
         if to >= total:
             self.done = True
             self.step = max(0, total - 1)
@@ -963,14 +1093,22 @@ class Engine:
         metrics[f"advances_{reason}"] += 1
         wire = "camera" if reason in CAMERA_REASONS else reason
         self.broadcast({"type": "advance", "from": frm, "to": to, "reason": wire})
-        self.emit("advance", **{"from": frm, "to": to, "reason": reason, "step_seconds": step_seconds})
+        self.emit("advance", **{"from": frm, "to": to, "reason": reason, "step_seconds": step_seconds,
+                  "checks_on_step": step_stats.checks if step_stats else 0,
+                  "check_latency_avg_ms": check_avg,
+                  "check_errors_on_step": step_stats.errors if step_stats else 0,
+                  "mistakes_on_step": step_stats.mistakes if step_stats else 0,
+                  "camera_source": self.active.source if self.active else None})
         self._record_run(frm, to, reason)
         self.broadcast_state()
 
     def stop_run(self, why: str) -> None:
         """End an unfinished run without a run_done (lesson deleted, hub shutting down)."""
         if self.run is not None and not self.run.done_sent:
-            self.emit("run_stop", reason=why)
+            self.emit("run_stop", reason=why, elapsed_seconds=round(time.monotonic() - self.run.started, 3),
+                      current_step=self.position(), total=len(self.steps),
+                      completion_ratio=round(self.position() / max(1, len(self.steps)), 3),
+                      **self.run.totals())
         self.run = None
 
     def _record_run(self, frm: int, to: int, reason: str) -> None:
@@ -986,7 +1124,8 @@ class Engine:
         elif run is not None and not run.done_sent:
             run.done_sent = True
             self.emit("run_done", total_seconds=round(time.monotonic() - run.started, 3),
-                      camera_steps=run.camera_steps, manual_steps=run.manual_steps, mistakes=run.mistakes)
+                      camera_steps=run.camera_steps, manual_steps=run.manual_steps, mistakes=run.mistakes,
+                      total=len(self.steps), completion_ratio=1.0, **run.totals())
 
     def position(self) -> int:
         return len(self.steps) if self.done else self.step
@@ -995,6 +1134,17 @@ class Engine:
         self.tracker.reset()
         if self.mistake is not None:
             self.mistake = None
+            self.broadcast_state()
+
+    def set_hold(self, held: bool) -> None:
+        """Pause camera auto-advance; manual navigation remains available and clears hold on the new step."""
+        if self.lesson is None or held == self.auto_advance_held:
+            return
+        self.auto_advance_held = held
+        self.emit("auto_advance_hold", held=held, step=self.step)
+        if not held and self.verified:
+            self.go(self.position() + 1, "camera")
+        else:
             self.broadcast_state()
 
     # ---- cameras
@@ -1006,6 +1156,9 @@ class Engine:
         self.cams.append(cam)
         self.cameras = len(self.cams)
         self._set_active(cam)
+        if self.run is not None:
+            self.run.camera_connections += 1
+        self.emit("camera_connect", camera_number=cam.number, camera_count=self.cameras)
         log.info("camera connected: %s (%d)", cam.name, self.cameras)
         # The UI hears about the camera once its hello arrives, or after the grace time without one, so the
         # banner does not flicker from "Camera 1" to the real name within a moment.
@@ -1026,13 +1179,15 @@ class Engine:
 
     def remove_camera(self, cam: Camera) -> None:
         """Safe to call twice (a replaced camera is dropped at hello time and again when its socket ends)."""
-        if self._drop(cam):
+        if self._drop(cam, "socket_closed"):
             log.info("camera disconnected: %s (%d)", cam.name, self.cameras)
             self.broadcast_state()
 
-    def _drop(self, cam: Camera) -> bool:
+    def _drop(self, cam: Camera, reason: str = "removed") -> bool:
         if cam not in self.cams:
             return False
+        was_active = self.active is cam
+        connected_s = round(max(0.0, time.monotonic() - cam.connected_at), 3)
         self._cancel_announce(cam)
         self.cams.remove(cam)
         self.cameras = len(self.cams)
@@ -1041,6 +1196,11 @@ class Engine:
             heir = max(self.cams, key=lambda c: (c.last_frame, c.connected_at), default=None)
             if heir is not None:
                 self._set_active(heir)
+        if self.run is not None:
+            self.run.camera_disconnects += 1
+        self.emit("camera_disconnect", camera_number=cam.number, source=cam.source, platform=cam.platform,
+                  reason=reason, active=was_active, connected_seconds=connected_s,
+                  had_frame=cam.first_frame_at > 0, camera_count=self.cameras)
         return True
 
     @staticmethod
@@ -1058,6 +1218,9 @@ class Engine:
         self.active = cam
         cam.active_since = time.monotonic()
         cam.push({"type": "camera_status", "active": True})
+        if cam.said_hello or cam.first_frame_at:
+            self.emit("camera_active", camera_number=cam.number, source=cam.source, platform=cam.platform,
+                      camera_count=self.cameras)
         return True
 
     def on_hello(self, cam: Camera, msg: dict) -> list[Camera]:
@@ -1069,11 +1232,17 @@ class Engine:
         for key, value in fields.items():
             setattr(cam, key, value)
         cam.said_hello = True
+        cam.hello_at = time.monotonic()
         self._cancel_announce(cam)  # this hello's state broadcast below is the announcement
         replaced = [c for c in self.cams if c is not cam and cam.device_id and c.device_id == cam.device_id]
         for old in replaced:
-            self._drop(old)
+            self._drop(old, "replaced")
         self._set_active(cam)
+        if self.run is not None and cam.source != "unknown":
+            self.run.camera_sources.add(cam.source)
+        self.emit("camera_hello", camera_number=cam.number, source=cam.source, platform=cam.platform,
+                  connect_latency_ms=round((cam.hello_at - cam.connected_at) * 1000),
+                  replaced=len(replaced), active=self.active is cam, camera_count=self.cameras)
         log.info("hello: %s (%s, %s)", cam.name, cam.platform, cam.source)
         self.broadcast_state()
         return replaced
@@ -1087,7 +1256,16 @@ class Engine:
         if now - cam.last_frame < config.env_float("HANDOVER_MIN_FRAME_GAP", 0.04, 0, 5):
             metrics["frames_too_fast"] += 1
             return
-        cam.last_frame = now
+        first = cam.first_frame_at == 0
+        cam.record_frame(now)
+        if first:
+            cam.first_frame_at = now
+            if self.run is not None and cam.source != "unknown":
+                self.run.camera_sources.add(cam.source)
+            self.emit("camera_first_frame", camera_number=cam.number, source=cam.source, platform=cam.platform,
+                      connect_latency_ms=round((now - cam.connected_at) * 1000),
+                      hello_to_frame_ms=round((now - cam.hello_at) * 1000) if cam.hello_at else None,
+                      active=self.active is cam)
         metrics["frames_in"] += 1
         if self.active is not cam and (self.active is None or self.idle_for(self.active, now) >= ACTIVE_IDLE_SECONDS):
             self._set_active(cam)
@@ -1142,6 +1320,7 @@ class Engine:
                         job = self._next_job()
                         if job is not None:
                             self.inflight.add(asyncio.create_task(self._check_task(job)))
+                            self.broadcast_observation_if_changed()
                 except Exception:  # one bad frame or lesson must not stop checking for the session
                     log.exception("check loop iteration failed")
         finally:
@@ -1168,6 +1347,7 @@ class Engine:
         frame, seq = self.frame, self.frame_seq
         wanted = await asyncio.to_thread(self.gate.observe, frame, time.monotonic())
         self.gated_frame, self.gated_seq, self.frame_wanted = frame, seq, wanted
+        self.broadcast_observation_if_changed()
 
     def _gate_wake(self) -> None:
         self.gate_wake_booked = False
@@ -1184,6 +1364,7 @@ class Engine:
             log.exception("check task crashed")
         finally:
             self.frame_event.set()  # frames gated meanwhile may be ready for the next check
+            self.broadcast_observation_if_changed()
 
     def _next_job(self) -> Optional[CheckJob]:
         """The check to run now, or None. Order matters: the breaker's trial call is spent last."""
@@ -1212,7 +1393,9 @@ class Engine:
         now = time.monotonic()
         # Check cadence: at most one frame per check_interval_s goes to the model, whatever the camera rate. A
         # wake-up is booked so a frame held back here is looked at again when the interval is over.
-        wait = self.check_interval_s() - (now - self.offered_at)
+        urgent = confirming or pipelined
+        interval = check_offer_interval(self.check_interval_s(), urgent)
+        wait = interval - (now - self.offered_at)
         if wait > 0:
             metrics["checks_held_interval"] += 1
             if not self.offer_wake_booked:
@@ -1231,9 +1414,12 @@ class Engine:
         self.gate.mark_checked(now)
         self.offered_at = now
         self.checked_seq = self.gated_seq
+        if urgent and interval < self.check_interval_s():
+            metrics["checks_fast_confirm"] += 1
         question = cur.get("check_question") or "Is this step finished?"
         prev_ref = self.ref_bytes(self.step - 1) if self.step > 0 else None
-        return CheckJob(self.step, question, ref, frame, self.version, prev_ref, self.gated_seq)
+        return CheckJob(self.step, question, ref, frame, self.version, prev_ref, self.gated_seq,
+                        self.run.run_id if self.run else None)
 
     async def _run_check(self, job: CheckJob) -> None:
         # Checks run back to back, so status stays "watching" unless one is slow; flipping to "checking"
@@ -1357,9 +1543,23 @@ class Engine:
         log.debug("check step %d: %s %.2f %d ms, gate %s", job.index, res.done, res.confidence, res.latency_ms,
                   self.gate.stats)
         model = "mock" if check.is_mock() else check.active_model()
-        self.emit("check", step=job.index, done=res.done, confidence=round(res.confidence, 3),
+        effective_run_id = job.run_id if job.run_id is not None else (self.run.run_id if self.run else None)
+        stale = job.version != self.version or (job.run_id is not None and
+                                                (self.run is None or job.run_id != self.run.run_id))
+        if not stale and self.run is not None:
+            stats = self.run.for_step(job.index)
+            stats.checks += 1
+            if res.done == "yes": stats.yes += 1
+            elif res.done == "no": stats.no += 1
+            else: stats.unsure += 1
+            stats.errors += res.error is not None
+            stats.latency_total_ms += max(0, res.latency_ms)
+            stats.latency_max_ms = max(stats.latency_max_ms, res.latency_ms)
+        self.emit("check", run_id=effective_run_id, step=job.index, done=res.done,
+                  confidence=round(res.confidence, 3),
                   latency_ms=res.latency_ms, reason=res.reason, model=model, gated=self.gate.enabled,
-                  error_kind=res.error)
+                  error_kind=res.error, stale=stale, camera_source=self.active.source if self.active else None,
+                  frame_seq=job.seq)
 
     async def _verify_and_advance(self, version: int, reason: str = "camera") -> None:
         """verified (with next_clip) goes out at once, so the badge and the preload start now; the step moves
@@ -1368,7 +1568,7 @@ class Engine:
         self.checking = False
         self.broadcast_state()
         await asyncio.sleep(VERIFIED_HOLD)
-        if version == self.version:
+        if version == self.version and not self.auto_advance_held:
             self.go(self.position() + 1, reason)
 
     def _show_checking(self, version: int) -> None:
@@ -1549,6 +1749,7 @@ class Engine:
         metrics["mistakes"] += 1
         if self.run is not None:
             self.run.mistakes += 1
+            self.run.for_step(k).mistakes += 1
         self.emit("mistake", step=k, mistake_kind=found["kind"], looks_like=found["looks_like"],
                   confidence=found["confidence"], source=found["source"])
         ahead = mistake.needs_confirmation(found)
@@ -2131,6 +2332,10 @@ def handle_ui_message(client: UIClient, text: str) -> None:
         step = msg.get("step")
         if isinstance(step, int) and not isinstance(step, bool) and 0 <= step < len(engine.steps):
             engine.go(step, "button")
+    elif kind == "hold":
+        held = msg.get("hold")
+        if isinstance(held, bool):
+            engine.set_hold(held)
     elif kind == "dismiss_mistake":
         engine.dismiss_mistake()
 

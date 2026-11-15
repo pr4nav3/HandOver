@@ -158,6 +158,32 @@ struct RecordModelTests {
         #expect(GlassesFeature.experimentalLabel == "Experimental")
         #expect(!GlassesFeature.requirement.contains("Hotspot"))
     }
+
+    @Test func glassesSelectorProbesOnlyTheSoleDiscoveredDevice() {
+        #expect(GlassesLifecyclePolicy.selectorMode(autoHasDevice: true, discoveredDeviceCount: 2) == .automatic)
+        #expect(GlassesLifecyclePolicy.selectorMode(autoHasDevice: false, discoveredDeviceCount: 1) == .specific)
+        #expect(GlassesLifecyclePolicy.selectorMode(autoHasDevice: false, discoveredDeviceCount: 0) == .waitForAuto)
+        #expect(GlassesLifecyclePolicy.selectorMode(autoHasDevice: false, discoveredDeviceCount: 2) == .waitForAuto)
+    }
+
+    @Test func glassesLifecycleUsesBoundedWaits() {
+        #expect(GlassesLifecyclePolicy.discoveryPollCount == 40)
+        #expect(GlassesLifecyclePolicy.discoveryPollInterval == .milliseconds(250))
+        #expect(GlassesLifecyclePolicy.connectedSettle == .milliseconds(350))
+        #expect(GlassesLifecyclePolicy.firstFrameTimeout == .seconds(15))
+    }
+
+    @Test func glassesSetupAlwaysOffersOneClearNextAction() {
+        #expect(GlassesState.notRegistered.setupAction == .connect)
+        #expect(GlassesState.developerModeOff.setupAction == .openMetaAI)
+        #expect(GlassesState.waitingForMetaAI.setupAction == .cancel)
+        #expect(GlassesState.permissionNeeded.setupAction == .allowCamera)
+        #expect(GlassesState.connecting.setupAction == .none)
+        #expect(GlassesState.streaming(width: 504, height: 896, fps: 15).setupAction == .none)
+        #expect(GlassesState.lost.setupAction == .reconnect)
+        #expect(GlassesState.failed("stopped").setupAction == .retry)
+        #expect(GlassesState.permissionNeeded.setupAction.title == "Allow Camera")
+    }
 }
 
 @MainActor

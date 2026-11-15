@@ -43,7 +43,7 @@
     "copyright": "Copyright 2026 Soham Aggarwal. MIT License.",
     "category": "Education",
     "shortDescription": "Learn a hands-on task, one checked step at a time",
-    "longDescription": "Pairs with a HandOver hub on your network: pick a lesson, watch each step's clip with captions, and let the camera confirm each step before the next one plays.",
+    "longDescription": "Runs HandOver on this computer, pairs a phone or Meta glasses with one QR code, and advances each hands-on lesson when the camera confirms the step.",
     "license": "MIT",
     "icon": [
       "icons/32x32.png",

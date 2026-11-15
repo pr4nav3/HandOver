@@ -76,27 +76,23 @@ private struct SettingsList: View {
                     HubRow(hub: hub, status: model.connection.label)
                         .padding(.horizontal, -HOSpace.l).padding(.vertical, -HOSpace.m)
                 }
+                if let user = accounts.user {
+                    LabeledContent("Account") {
+                        Label(user.name, systemImage: "checkmark.circle.fill")
+                            .foregroundStyle(theme.colors.good)
+                    }
+                }
             }
             Button { Haptics.tap(); pairing = true } label: {
-                SettingsLabel(model.hub == nil ? "Connect to a Hub" : "Connect to Another Hub", symbol: "qrcode.viewfinder").fillingRow()
+                SettingsLabel(model.hub == nil ? "Pair with a Mac" : "Pair with Another Mac", symbol: "qrcode.viewfinder").fillingRow()
             }
             .buttonStyle(.plain)
-            ForEach(model.recents.filter { $0 != model.hub }.prefix(5), id: \.self) { hub in
-                Button { Haptics.tap(); connector.test(hub, app: model, accounts: accounts); pairing = true } label: {
-                    HubRow(hub: hub).padding(.horizontal, -HOSpace.l).padding(.vertical, -HOSpace.m)
-                }
-                .buttonStyle(.plain)
-                .contextMenu { Button("Remove", systemImage: "trash", role: .destructive) { forgetting = hub } }
-                #if os(iOS)
-                .swipeActions { Button("Remove", role: .destructive) { forgetting = hub } }
-                #endif
-            }
         } header: {
-            Text("Hub")
+            Text("Connection")
         } footer: {
             Text(model.hub == nil
-                 ? "Connect to get lessons. The hub is the HandOver app running on a laptop near you."
-                 : "The hub is the HandOver app running on a laptop near you. It keeps your lessons and checks your steps.")
+                 ? "Scan the code shown in HandOver on your Mac."
+                 : "This Mac keeps the lesson and receives your camera.")
         }
     }
 

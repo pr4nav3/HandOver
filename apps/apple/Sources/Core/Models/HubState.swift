@@ -72,6 +72,19 @@ struct HubState: Codable, Hashable, Sendable {
         static let budget = OfflineReason(rawValue: "budget")
     }
 
+    /// Frame-free live-check feedback. Unknown future phase strings remain readable.
+    struct Observation: Codable, Hashable, Sendable {
+        var phase: String
+        var frameAgeMs: Int?
+        var cameraFPS: Double?
+
+        enum CodingKeys: String, CodingKey {
+            case phase
+            case frameAgeMs = "frame_age_ms"
+            case cameraFPS = "camera_fps"
+        }
+    }
+
     var lessonId: String?
     /// Opaque and increasing. When it changes, refetch the lesson and add `?v=<rev>` to file URLs.
     var rev: Int = 0
@@ -92,6 +105,9 @@ struct HubState: Codable, Hashable, Sendable {
     var nextClip: String?
     /// The current run, from the hub; sent back with end_lesson so a stale End is ignored.
     var runId: String?
+    /// Camera completion stays verified on this step until released; checks and feedback continue.
+    var held: Bool = false
+    var observation: Observation?
 
     enum CodingKeys: String, CodingKey {
         case lessonId = "lesson_id"
@@ -105,6 +121,7 @@ struct HubState: Codable, Hashable, Sendable {
         case checkMode = "check_mode"
         case nextClip = "next_clip"
         case runId = "run_id"
+        case held, observation
     }
 
     static let empty = HubState()
@@ -112,7 +129,8 @@ struct HubState: Codable, Hashable, Sendable {
     init(lessonId: String? = nil, rev: Int = 0, step: Int = 0, total: Int = 0, status: Status = .watching,
          lastCheck: LastCheck? = nil, cameraConnected: Bool = false, camera: CameraInfo? = nil,
          checkOffline: Bool = false, checkOfflineReason: OfflineReason? = nil, mistake: MistakeMessage? = nil,
-         checkMode: CheckMode? = nil, nextClip: String? = nil, runId: String? = nil) {
+         checkMode: CheckMode? = nil, nextClip: String? = nil, runId: String? = nil, held: Bool = false,
+         observation: Observation? = nil) {
         self.lessonId = lessonId
         self.rev = rev
         self.step = step
@@ -127,6 +145,8 @@ struct HubState: Codable, Hashable, Sendable {
         self.checkMode = checkMode
         self.nextClip = nextClip
         self.runId = runId
+        self.held = held
+        self.observation = observation
     }
 
     init(from decoder: any Decoder) throws {
@@ -146,6 +166,8 @@ struct HubState: Codable, Hashable, Sendable {
         checkMode = (try? c.decodeIfPresent(CheckMode.self, forKey: .checkMode)) ?? nil
         nextClip = (try? c.decodeIfPresent(String.self, forKey: .nextClip)) ?? nil
         runId = (try? c.decodeIfPresent(String.self, forKey: .runId)) ?? nil
+        held = (try? c.decodeIfPresent(Bool.self, forKey: .held)) ?? false
+        observation = (try? c.decodeIfPresent(Observation.self, forKey: .observation)) ?? nil
     }
 
     var hasLesson: Bool { lessonId != nil }

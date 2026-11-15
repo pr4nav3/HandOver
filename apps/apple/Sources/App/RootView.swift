@@ -4,6 +4,7 @@ import SwiftUI
 /// not this shell. It owns the `LearnFlow` (open tab, camera choice, the running lesson) and the camera sheet.
 struct RootView: View {
     @Environment(AppModel.self) private var model
+    @Environment(AccountStore.self) private var accounts
     @State private var flow: LearnFlow
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var sizeClass
@@ -66,7 +67,15 @@ struct RootView: View {
                 Label(place.title, systemImage: place.symbol)
                     .tag(place)
             }
-            .navigationTitle("HandOver")
+            .safeAreaInset(edge: .top, spacing: 0) {
+                HStack {
+                    HandOverBrandLockup(markSize: 24)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, HOSpace.m)
+                .padding(.vertical, HOSpace.s)
+            }
+            .navigationTitle("")
             #if os(macOS)
             .navigationSplitViewColumnWidth(min: 180, ideal: 200)
             #endif
@@ -89,6 +98,10 @@ struct RootView: View {
         }
         guard url.host() != "join", let hub = HubURL(parsing: url.absoluteString) else { return }
         model.connect(to: hub)
+        accounts.follow(hub)
+        if let handoff = AccountHandoffIntent(url: url) {
+            Task { try? await accounts.approveHandoff(handoff.claim) }
+        }
         if let intent = CameraLaunchIntent(url: url) { flow.openCamera(intent) }
     }
 }

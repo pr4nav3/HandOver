@@ -149,3 +149,18 @@ enum CameraLaunchIntent: String, Equatable, Sendable {
         self.init(rawValue: value.lowercased())
     }
 }
+
+/// A high-entropy, two-minute claim in a desktop pairing QR. It is not an account token: this signed-in phone
+/// approves it at the hub, then the Mac redeems it once for an independent token.
+struct AccountHandoffIntent: Equatable, Sendable {
+    let claim: String
+
+    init?(url: URL) {
+        guard url.scheme?.lowercased() == HubURL.linkScheme,
+              url.host()?.lowercased() == "connect",
+              let value = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?
+                .first(where: { $0.name == "handoff" })?.value,
+              (32...128).contains(value.count) else { return nil }
+        claim = value
+    }
+}

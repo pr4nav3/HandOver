@@ -197,7 +197,7 @@ def test_direct_env_calls_match_registry():
 def test_live_view_and_teach_tunables_registered():
     """The check cadence, the frame gap for 15 fps cameras, the UI rate cap, and the two teach names."""
     want = {
-        "HANDOVER_CHECK_INTERVAL_S": ("float", 1.0, 0.2, 10, "main.py"),
+        "HANDOVER_CHECK_INTERVAL_S": ("float", 0.5, 0.2, 10, "main.py"),
         "HANDOVER_MIN_FRAME_GAP": ("float", 0.04, 0, 5, "main.py"),
         "HANDOVER_UI_FPS": ("int", 15, 1, 30, "main.py"),
         "HANDOVER_MIN_STEP_S": ("float", 6.0, 0.0, 600.0, "teach.py"),
@@ -209,7 +209,7 @@ def test_live_view_and_teach_tunables_registered():
         with env(**{name: None}):
             assert config.get(name) == default, name
     with env(HANDOVER_CHECK_INTERVAL_S="0.1", HANDOVER_UI_FPS="31", HANDOVER_MIN_STEP_S="-1"):
-        assert config.get("HANDOVER_CHECK_INTERVAL_S") == 1.0  # out of range: default
+        assert config.get("HANDOVER_CHECK_INTERVAL_S") == 0.5  # out of range: default
         assert config.get("HANDOVER_UI_FPS") == 15 and config.get("HANDOVER_MIN_STEP_S") == 6.0
     with env(HANDOVER_CHECK_INTERVAL_S="0.5", HANDOVER_UI_FPS="30", HANDOVER_AUTO_SELFTEST="0"):
         assert config.get("HANDOVER_CHECK_INTERVAL_S") == 0.5 and config.get("HANDOVER_UI_FPS") == 30

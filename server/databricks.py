@@ -25,6 +25,7 @@ API:
     emit("advance", from_step=2, to_step=3, reason="camera")
     emit("mistake", step=4, kind="behind", looks_like=3, confidence=0.86)
     emit("check_offline", reason="rate_limited")
+    emit("camera_first_frame", source="glasses", platform="ios", connect_latency_ms=420)
     end_run()
     upload_lesson_files(lesson_dir, lesson_id)
     status()
@@ -56,6 +57,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
+from server import analytics_privacy
+
 log = logging.getLogger("handover.databricks")
 
 REPO = Path(__file__).resolve().parent.parent
@@ -73,7 +76,8 @@ MAX_RETRIES = 3  # a failed batch is retried this many times, then dropped (the 
 HTTP_TIMEOUT = 45.0  # wait_timeout is 30 s on the server side
 IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
 KINDS = {"run_start", "run_end", "run_done", "run_stop", "step_enter", "check", "advance", "mistake",
-         "check_offline"}
+         "check_offline", "camera_connect", "camera_hello", "camera_first_frame", "camera_active",
+         "camera_disconnect", "auto_advance_hold"}
 
 
 # ---------------------------------------------------------------- config (read at import, no side effects)
@@ -320,10 +324,12 @@ def emit(kind: str, /, **fields: Any) -> None:
 
     Recognised fields: step (0-based; defaults to the last known step), lesson_id (defaults to the run's),
     done, confidence, latency_ms, reason, from_step / to_step (or "from" / "to"), kind / mistake_kind and
-    looks_like for mistakes. Anything else goes to `extra` as JSON.
+    looks_like for mistakes. Operational and aggregate fields (camera source/readiness, stale, attempt kind,
+    completion ratio and run totals) go to `extra` as compact JSON. Anything else does too. Callers must never
+    pass frames, device ids, camera names, tokens or other secrets.
     """
     try:
-        f = dict(fields)
+        f, _ = analytics_privacy.scrub_fields(fields)
         if "from" in f:
             f.setdefault("from_step", f.pop("from"))
         if "to" in f:
@@ -439,7 +445,15 @@ def _write_local(row: dict) -> None:
             except FileNotFoundError:
                 pass
             with path.open("a", encoding="utf-8") as fh:
+                if os.name != "nt":
+                    os.chmod(path, 0o600)
                 fh.write(line)
+            if os.name != "nt":
+                # Harden both files, including a rotation created by an older build with a permissive umask.
+                try:
+                    os.chmod(path.with_name(path.name + ".1"), 0o600)
+                except FileNotFoundError:
+                    pass
     except Exception as e:
         now = time.time()
         with _lock:

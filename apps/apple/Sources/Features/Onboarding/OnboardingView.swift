@@ -102,6 +102,9 @@ struct OnboardingView: View {
                 .buttonStyle(HOButtonStyle(.quiet, size: .small))
             }
         }
+        .overlay {
+            if step == .welcome { HandOverBrandLockup(markSize: 20) }
+        }
         .padding(.horizontal, HOSpace.s)
         .frame(height: 52)
     }

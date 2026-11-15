@@ -173,7 +173,7 @@ REGISTRY: tuple[Tunable, ...] = (
     T("HANDOVER_GATE_STILL", 0.005, "float", "gate.py", "a frame is still below this motion fraction", 0, 1),
     T("HANDOVER_GATE_STILL_FRAMES", 2, "int", "gate.py", "still frames in a row to count as settled", 1, 30),
     T("HANDOVER_GATE_CHANGE", 0.018, "float", "gate.py", "change vs the last checked frame to check again", 0, 1),
-    T("HANDOVER_GATE_HEARTBEAT_S", 6.0, "float", "gate.py", "seconds between heartbeat checks", 0.5, 600),
+    T("HANDOVER_GATE_HEARTBEAT_S", 2.0, "float", "gate.py", "seconds between heartbeat checks", 0.5, 600),
     # mistake
     T("HANDOVER_MISTAKE_MIN_CONF", 0.7, "float", "mistake.py", "minimum compare confidence for behind or ahead",
       0, 1),
@@ -240,7 +240,7 @@ REGISTRY: tuple[Tunable, ...] = (
     T("HANDOVER_WEB_DIST", None, "str", "main.py", "folder with the built web app; default <repo>/web/dist"),
     T("HANDOVER_MIN_FRAME_GAP", 0.04, "float", "main.py",
       "seconds between camera frames the hub accepts (0.04 lets 15 fps senders through with jitter)", 0, 5),
-    T("HANDOVER_CHECK_INTERVAL_S", 1.0, "float", "main.py",
+    T("HANDOVER_CHECK_INTERVAL_S", 0.5, "float", "main.py",
       "seconds between frames offered to the vision model", 0.2, 10),
     T("HANDOVER_UI_FPS", 15, "int", "main.py", "live frames forwarded to each viewer per second, at most", 1, 30),
     T("HANDOVER_MAX_CAMERAS", 8, "int", "main.py", "camera connections allowed at once", 1, 64),

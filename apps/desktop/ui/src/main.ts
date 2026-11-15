@@ -29,13 +29,13 @@ const DOWN_GRACE_MS = 1500;
 const root = document.getElementById("app")!;
 root.innerHTML = `<div class="shell">
   <nav class="pane" id="pane" aria-label="HandOver"></nav>
-  <div class="main">
+  <main class="main" id="main-content">
     <div class="screen" id="content"></div>
     <div class="screen full" id="learn-screen">
       <header class="learn-bar" id="learn-bar"></header>
       <div class="learn-host" id="learn"></div>
     </div>
-  </div>
+  </main>
   <div class="screen overlay-screen" id="onboarding"></div>
   <div class="settings" id="settings" hidden></div>
   <div class="sheet-layer" id="sheet" hidden></div>
@@ -73,7 +73,17 @@ const learn = new LearnView($("learn"), {
     stopLocalCamera();
     render();
   },
+  hold: (held) => void call("hold", { held }).catch(showError),
   finished: (s) => onFinished(s),
+});
+
+// Tauri can hide a native window before its webview is destroyed. Stop at both browser lifecycle boundaries so
+// neither the looping clip nor speech survives a closed/minimized lesson window.
+window.addEventListener("pagehide", () => learn.stopMedia());
+window.addEventListener("beforeunload", () => learn.stopMedia());
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") learn.pauseMedia();
+  else if (app.route.name === "learn") learn.resumeMedia();
 });
 
 // ---- This computer as the camera ----
@@ -571,6 +581,18 @@ window.addEventListener("keydown", (e) => {
   } else if (e.key.toLowerCase() === "r") {
     e.preventDefault();
     learn.replay();
+  } else if (e.key.toLowerCase() === "k") {
+    e.preventDefault();
+    learn.toggleTutorial();
+  } else if (e.key.toLowerCase() === "j") {
+    e.preventDefault();
+    learn.seekTutorial(-5);
+  } else if (e.key.toLowerCase() === "l") {
+    e.preventDefault();
+    learn.seekTutorial(5);
+  } else if (e.key.toLowerCase() === "h") {
+    e.preventDefault();
+    learn.toggleHold();
   }
 });
 

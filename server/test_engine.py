@@ -29,6 +29,7 @@ os.environ["HANDOVER_CHECK_INTERVAL_S"] = "0.2"  # the floor: pipelining tests n
 os.environ.pop("HANDOVER_MOCK_MISTAKE", None)
 os.environ["HANDOVER_EVENTS_JSONL"] = str(TMP / "scratch" / "events.jsonl")  # server.databricks local mirror
 os.environ["HANDOVER_DATA"] = str(TMP / "data")  # accounts and library state, never the repo's
+os.environ["HANDOVER_NO_NETWORK"] = "1"  # the suite is hermetic; individual tests explicitly fake remote sends
 os.environ.pop("HANDOVER_AUTH", None)
 
 import anyio  # noqa: E402
@@ -444,7 +445,7 @@ def test_set_check_interval_clamps_and_broadcasts() -> None:
     bad values are ignored."""
     with env(HANDOVER_CHECK_INTERVAL_S=None, HANDOVER_UI_FPS="20"), hub() as c, c.websocket_connect("/ws/ui") as ui:
         st = recv_json(ui, is_state)
-        assert st["check_interval_s"] == 1.0 and st["ui_fps"] == 20  # registry default, env value
+        assert st["check_interval_s"] == 0.5 and st["ui_fps"] == 20  # registry default, env value
         for sent, want in ((0.5, 0.5), (2, 2.0), (0.01, 0.2), (99, 10.0), (0.2, 0.2)):
             ui.send_json({"type": "set_check_interval", "seconds": sent})
             st = recv_json(ui, is_state)
@@ -456,6 +457,38 @@ def test_set_check_interval_clamps_and_broadcasts() -> None:
         assert main.engine.check_interval_s() == 0.2
         make_lesson()
         assert select(ui)["check_interval_s"] == 0.2  # kept across select_lesson
+
+
+def test_confirmation_uses_bounded_fast_lane() -> None:
+    """Only an already-justified confirm gets the 250 ms lane; routine checks keep the user's budget."""
+    assert main.check_offer_interval(2.0, False) == 2.0
+    assert main.check_offer_interval(2.0, True) == main.FAST_CONFIRM_INTERVAL == 0.25
+    assert main.check_offer_interval(0.2, True) == 0.2
+
+
+def test_hold_blocks_only_camera_auto_advance_and_state_reports_feedback() -> None:
+    make_lesson()
+    yes = FakeCheck(lambda ref: check.CheckResult("yes", 0.99, 1))
+    with env(HANDOVER_DEBOUNCE_N="1"), patched(check, check_frame=yes), patched(main, VERIFIED_HOLD=0.05), \
+            hub() as c, c.websocket_connect("/ws/ui") as ui, c.websocket_connect("/ws/camera") as cam:
+        st = select(ui)
+        assert st["held"] is False
+        assert st["observation"]["phase"] in ("waiting_camera", "waiting_frame")
+        ui.send_json({"type": "hold", "hold": True})
+        assert recv_json(ui, lambda m: is_state(m) and m.get("held") is True)["step"] == 0
+        cam.send_json(hello())
+        for _ in range(5):
+            cam.send_bytes(FRAME)
+            time.sleep(0.05)
+        wait_for(lambda: main.engine.verified)
+        time.sleep(0.12)
+        assert main.engine.step == 0 and main.engine.verified and main.engine.auto_advance_held
+        feedback = main.engine.state()["observation"]
+        assert feedback["phase"] == "verified" and feedback["frame_age_ms"] is not None
+        assert feedback["camera_fps"] is not None and feedback["camera_fps"] > 0
+        ui.send_json({"type": "hold", "hold": False})
+        st = recv_json(ui, lambda m: is_state(m) and m["step"] == 1)
+        assert st["held"] is False and not main.engine.auto_advance_held
 
 
 def test_check_interval_caps_model_calls_at_camera_rate() -> None:
@@ -477,9 +510,9 @@ def test_check_interval_caps_model_calls_at_camera_rate() -> None:
         fake.calls.clear()
         sent = stream(2.5)
         assert sent >= 20, sent
-        assert 2 <= len(fake.calls) <= 3, len(fake.calls)  # 1 s default: about 2.5 checks, never one per frame
+        assert 4 <= len(fake.calls) <= 7, len(fake.calls)  # 0.5 s default: responsive, still never one per frame
         gaps = [b - a for a, b in zip(fake.times, fake.times[1:])]
-        assert all(g >= 0.95 for g in gaps), gaps
+        assert all(g >= 0.45 for g in gaps), gaps
         ui.send_json({"type": "set_check_interval", "seconds": 0.5})
         recv_json(ui, lambda m: is_state(m) and m["check_interval_s"] == 0.5)
         fake.calls.clear()
@@ -932,7 +965,9 @@ def test_run_start_carries_source_mode_and_learner() -> None:
     starts = [e for e in events if e["kind"] == "run_start"]
     assert (starts[0]["learner"], starts[0]["source"], starts[0]["check_mode"]) == ("u-42", "file", "mock"), starts[0]
     assert starts[1]["learner"] is None and starts[2]["learner"] is None
-    assert calls[0] == ("start_run", LESSON, "u-42", "file", {"check_mode": "mock"}), calls[0]
+    assert calls[0][:4] == ("start_run", LESSON, "u-42", "file"), calls[0]
+    assert {"check_mode", "platform", "attempt_kind", "camera_ready", "camera_connect_age_ms",
+            "check_interval_s", "hub_run_id", "rev", "hub_ts", "total"} <= calls[0][4].keys()
     assert ("old_start_run", LESSON, "u-42") in calls, calls
 
 
@@ -1520,22 +1555,85 @@ def test_events_reach_list_sink() -> None:
             time.sleep(0.1)
         wait_for(lambda: any(e["kind"] == "run_done" for e in events))
     kinds = [e["kind"] for e in events]
-    assert kinds[:3] == ["run_start", "step_enter", "advance"], kinds
-    assert {"check", "run_done"} <= set(kinds)
-    run_ids = {e["run_id"] for e in events}
-    assert len(run_ids) == 1 and None not in run_ids
+    assert kinds[:4] == ["camera_connect", "run_start", "step_enter", "advance"], kinds
+    assert {"camera_first_frame", "check", "run_done", "camera_disconnect"} <= set(kinds)
+    run_ids = {e["run_id"] for e in events if e["run_id"] is not None}
+    assert len(run_ids) == 1
     for e in events:
         assert {"event_id", "ts", "run_id", "lesson_id", "rev", "kind"} <= e.keys() and e["ts"].endswith("Z")
-        assert e["lesson_id"] == LESSON
+        if e["run_id"] is not None:
+            assert e["lesson_id"] == LESSON
     first = next(e for e in events if e["kind"] == "step_enter")
     assert first == {**first, "step": 0, "check_type": "camera", "expert_seconds": 1.0}
     adv = next(e for e in events if e["kind"] == "advance")
     assert (adv["from"], adv["to"], adv["reason"]) == (0, 1, "button") and adv["step_seconds"] >= 0
     chk = next(e for e in events if e["kind"] == "check")
     assert chk["model"] == "mock" and chk["error_kind"] is None and chk["gated"] is False
+    assert chk["stale"] is False and chk["frame_seq"] > 0 and chk["latency_ms"] >= 0
     done = next(e for e in events if e["kind"] == "run_done")
     assert (done["camera_steps"], done["manual_steps"], done["mistakes"]) == (2, 1, 0)
+    assert done["checks"] >= 2 and done["checks_yes"] >= 2 and done["check_errors"] == 0
+    assert done["check_latency_avg_ms"] is not None and done["completion_ratio"] == 1.0
     assert len(json.dumps(events)) < 20_000  # small metadata only, never frames
+
+
+def test_camera_analytics_are_metadata_only_and_measure_readiness() -> None:
+    """Camera telemetry describes readiness/source without stable device identity or any image payload."""
+    events: list[dict] = []
+    with patched(main, EVENT_SINKS=[events.append]), hub() as c, \
+            c.websocket_connect("/ws/camera") as cam:
+        cam.send_json(hello(name="Private phone name", device_id="stable-private-id", source="glasses"))
+        wait_for(lambda: any(e["kind"] == "camera_hello" for e in events))
+        cam.send_bytes(FRAME)
+        wait_for(lambda: any(e["kind"] == "camera_first_frame" for e in events))
+    lifecycle = [e for e in events if e["kind"].startswith("camera_")]
+    assert [e["kind"] for e in lifecycle] == ["camera_connect", "camera_hello", "camera_first_frame",
+                                                "camera_disconnect"]
+    ready = lifecycle[2]
+    assert ready["source"] == "glasses" and ready["platform"] == "ios"
+    assert ready["connect_latency_ms"] >= 0 and ready["hello_to_frame_ms"] >= 0
+    encoded = json.dumps(lifecycle)
+    assert "stable-private-id" not in encoded and "Private phone name" not in encoded
+    assert "bytes" not in encoded and "data" not in encoded and len(encoded) < 5000
+
+
+def test_event_privacy_guard_fails_closed_before_sinks_and_disk() -> None:
+    """A future accidental frame/token field cannot become an in-process or persisted analytics value."""
+    events: list[dict] = []
+    engine = main.Engine()
+    with patched(main, EVENT_SINKS=[events.append]):
+        engine.emit("privacy_probe", frame=FRAME, device_id="stable-secret", token="bearer-secret",
+                    nested={"authorization": "auth-secret", "safe": "kept"}, frame_seq=7,
+                    invalid_number=float("nan"))
+    event = events[0]
+    assert event["frame_seq"] == 7 and event["nested"] == {"safe": "kept"}
+    assert event["privacy_dropped_fields"] == 5
+    encoded = json.dumps(event)
+    assert all(secret not in encoded for secret in ("stable-secret", "bearer-secret", "auth-secret", "JFIF"))
+
+    from server import databricks
+    rows: list[dict] = []
+    with patched(databricks, _write_local=rows.append, _enqueue=lambda *_: None):
+        databricks.emit("check", frame=FRAME, device_id="stable-secret", token="bearer-secret",
+                        nested={"data": FRAME, "safe": True}, frame_seq=9)
+    assert len(rows) == 1
+    persisted = json.dumps(rows[0])
+    assert "stable-secret" not in persisted and "bearer-secret" not in persisted and "JFIF" not in persisted
+    extra = json.loads(rows[0]["extra"])
+    assert extra["frame_seq"] == 9 and extra["nested"] == {"safe": True}
+    assert extra["privacy_dropped_fields"] == 4
+    mirror = TMP / "private-events.jsonl"
+    mirror.unlink(missing_ok=True)
+    rotated = mirror.with_name(mirror.name + ".1")
+    rotated.write_text("{}\n", "utf-8")
+    if os.name != "nt":
+        os.chmod(rotated, 0o644)  # older builds followed the process umask
+    with patched(databricks, _cfg={**databricks._cfg, "jsonl": str(mirror)}):
+        databricks._write_local({"kind": "privacy_probe"})
+    if os.name != "nt":
+        import stat
+        assert stat.S_IMODE(mirror.stat().st_mode) == 0o600
+        assert stat.S_IMODE(rotated.stat().st_mode) == 0o600
 
 
 class FakeDatabricks:
@@ -1595,8 +1693,9 @@ def test_databricks_adapter() -> None:
         else:
             sys.modules["server.databricks"] = old
     names = [x[0] if x[0] != "emit" else x[1] for x in fake.calls]
-    assert names[:3] == ["end_run", "start_run", "step_enter"], names
-    assert fake.calls[1] == ("start_run", LESSON)
+    start = names.index("start_run")
+    assert names[start - 1:start + 2] == ["end_run", "start_run", "step_enter"], names
+    assert fake.calls[start] == ("start_run", LESSON)
     adv = next(x[2] for x in fake.calls if x[:2] == ("emit", "advance"))
     assert (adv["from_step"], adv["to_step"], adv["reason"]) == (0, 1, "camera") and "step_seconds" in adv
     chk = next(x[2] for x in fake.calls if x[:2] == ("emit", "check"))
@@ -1606,11 +1705,12 @@ def test_databricks_adapter() -> None:
     offline = [(x[2]["open"], x[2]["reason"]) for x in fake.calls if x[:2] == ("emit", "check_offline")]
     assert offline == [(True, "rate_limited"), (False, None)], offline
     done = next(x[2] for x in fake.calls if x[:2] == ("emit", "run_done"))
-    assert {"total_seconds", "camera_steps", "manual_steps", "mistakes"} <= done.keys()
+    assert {"total_seconds", "camera_steps", "manual_steps", "mistakes", "checks", "checks_yes",
+            "check_errors", "check_latency_avg_ms", "camera_sources"} <= done.keys()
     assert names[names.index("run_done") + 1] == "end_run"
     assert chk["hub_run_id"] and isinstance(chk["rev"], int) and chk["hub_ts"].endswith("Z")
     assert "run_start" not in names and "run_end" not in names
-    assert names[-1] == "upload" and fake.calls[-1] == ("upload", LESSON)
+    assert ("upload", LESSON) in fake.calls
 
 
 def test_databricks_knows_every_engine_event_kind() -> None:
@@ -1622,7 +1722,9 @@ def test_databricks_knows_every_engine_event_kind() -> None:
     from server import databricks
 
     emitted = set(re.findall(r'self\.emit\("([a-z_]+)"', Path(main.__file__).read_text("utf-8")))
-    assert {"advance", "check", "mistake", "step_enter", "breaker", "run_done", "run_stop"} <= emitted, emitted
+    assert {"advance", "check", "mistake", "step_enter", "breaker", "run_done", "run_stop",
+            "camera_connect", "camera_hello", "camera_first_frame", "camera_active",
+            "camera_disconnect"} <= emitted, emitted
     sent = {"check_offline" if k == "breaker" else k for k in emitted} | {"run_start", "run_end"}
     assert sent <= databricks.KINDS, sent - databricks.KINDS
 
@@ -1638,6 +1740,20 @@ def test_run_stops_on_delete_and_shutdown() -> None:
             select(ui, "stop-b")
         stops = [e["reason"] for e in events if e["kind"] == "run_stop"]
     assert stops == ["deleted", "shutdown"], stops
+
+
+def test_restarting_and_replaying_are_distinct_run_outcomes() -> None:
+    events: list[dict] = []
+    make_lesson()
+    with patched(main, EVENT_SINKS=[events.append]), hub() as c, c.websocket_connect("/ws/ui") as ui:
+        select(ui)
+        select(ui)
+        main.engine.go(len(main.engine.steps), "button")
+        select(ui)
+    starts = [e["attempt_kind"] for e in events if e["kind"] == "run_start"]
+    stops = [e for e in events if e["kind"] == "run_stop"]
+    assert starts == ["new", "restart", "replay"]
+    assert stops[0]["reason"] == "restarted" and 0 <= stops[0]["completion_ratio"] < 1
 
 
 def test_request_id_header() -> None:

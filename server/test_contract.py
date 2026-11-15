@@ -446,7 +446,7 @@ async def test_ui_set_check_interval():
     ui = await Conn.open("/ws/ui")
     try:
         st = await ui.wait(is_type("state"))
-        assert st.get("check_interval_s") == 1.0, f"default check_interval_s {st.get('check_interval_s')!r}"
+        assert st.get("check_interval_s") == 0.5, f"default check_interval_s {st.get('check_interval_s')!r}"
         assert st.get("ui_fps") == 15, f"default ui_fps {st.get('ui_fps')!r}"
         for sent, want in ((0.5, 0.5), (2, 2.0), (0.05, 0.2), (60, 10.0)):
             await ui.send({"type": "set_check_interval", "seconds": sent})

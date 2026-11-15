@@ -80,11 +80,13 @@ def reset() -> None:
         shutil.rmtree(p, ignore_errors=True)
         p.mkdir(parents=True)
     EVENTS.unlink(missing_ok=True)
+    EVENTS.with_name(EVENTS.name + ".1").unlink(missing_ok=True)
     for v in CALLS.values():
         v.clear()
     RECUT_FAIL["error"] = None
     JOBS.clear()
     accounts.reset_rate_limits()
+    accounts.reset_handoffs()
     accounts.now = time.time
     for name in ("HANDOVER_AUTH", "HANDOVER_TOKEN_DAYS", "HANDOVER_HISTORY_DEPTH"):
         os.environ.pop(name, None)
@@ -229,6 +231,39 @@ def test_setup_login_logout():
     assert client.get("/api/me", headers=auth(t2)).json()["detail"] == "invalid or expired token"
     assert client.get("/api/me", headers={"Authorization": "Basic x"}).json()["detail"] == "bad authorization header"
     assert client.get("/api/me", headers=auth(token)).status_code == 200  # other sessions stay
+
+
+def test_qr_handoff_is_approved_by_phone_and_redeemed_once_by_mac():
+    reset()
+    phone = setup_owner()
+    started = client.post("/api/auth/handoff/start").json()
+    claim = started["claim"]
+    assert len(claim) >= 32 and phone not in claim
+
+    assert client.post("/api/auth/handoff/redeem", json={"claim": claim}).json() == {"status": "pending"}
+    approved = client.post("/api/auth/handoff/approve", json={"claim": claim}, headers=auth(phone))
+    assert approved.status_code == 200 and approved.json()["approved"] is True
+
+    redeemed = client.post("/api/auth/handoff/redeem", json={"claim": claim})
+    assert redeemed.status_code == 200
+    desktop = redeemed.json()["token"]
+    assert desktop != phone and redeemed.json()["user"]["name"] == "Hana"
+    assert client.get("/api/me", headers=auth(desktop)).json()["user"]["name"] == "Hana"
+    assert client.post("/api/auth/handoff/redeem", json={"claim": claim}).status_code == 404
+
+
+def test_qr_handoff_requires_signed_in_approval_and_expires():
+    reset()
+    setup_owner()
+    claim = client.post("/api/auth/handoff/start").json()["claim"]
+    assert client.post("/api/auth/handoff/approve", json={"claim": claim}).status_code == 401
+    assert client.post("/api/auth/handoff/approve", json={"claim": "wrong"}).status_code == 401
+    original = accounts.now
+    accounts.now = lambda: original() + accounts.HANDOFF_TTL_S + 1
+    try:
+        assert client.post("/api/auth/handoff/redeem", json={"claim": claim}).status_code == 404
+    finally:
+        accounts.now = original
 
 
 def test_login_rate_limit():
@@ -658,6 +693,38 @@ def test_progress():
     item = next(c for c in client.get("/api/courses", headers=auth(users["Lee"])).json() if c["id"] == "c1")
     assert item["progress"]["completed"] == 1
     assert client.get("/api/courses/c1/progress", headers=auth(users["Ola"])).json()["known"] is False
+
+
+def test_private_profile_analytics_are_real_aggregate_only():
+    reset()
+    users, ids = _people()
+    assert client.get("/api/profile/analytics").status_code == 401
+    assert client.get("/api/profile/analytics", headers=auth(users["Lee"])).json() == \
+        {"known": False, "reason": "no runs yet", "runs": 0}
+    rows = sample_run("r1", ids["Lee"])
+    rows.insert(1, ev("camera_first_frame", "r1", source="glasses", platform="ios", connect_latency_ms=420))
+    rows.append(ev("run_start", "mock-run", learner=ids["Lee"], check_mode="mock"))
+    rows.append(ev("run_done", "mock-run", total_seconds=999))
+    rows.extend(sample_run("other", ids["Ola"]))
+    write_events(rows)
+    a = client.get("/api/profile/analytics", headers=auth(users["Lee"])).json()
+    assert a["known"] and (a["runs"], a["completed_runs"], a["courses_completed"]) == (1, 1, 1)
+    assert a["completion_rate"] == 1.0 and a["minutes_practiced"] == 0.4
+    assert (a["checks"], a["check_pass_rate"], a["check_errors"]) == (2, 0.5, 1)
+    assert (a["camera_verified_steps"], a["manual_steps"], a["mistakes_caught"]) == (1, 3, 1)
+    assert a["current_streak_days"] == 1 and a["camera_sources"] == ["glasses"]
+    assert a["median_camera_ready_ms"] == 420
+    assert "learner" not in a and "lesson_id" not in a and ids["Lee"] not in json.dumps(a)
+
+
+def test_profile_analytics_reads_the_retained_event_rotation():
+    reset()
+    users, ids = _people()
+    write_events(sample_run("older", ids["Lee"]))
+    EVENTS.replace(EVENTS.with_name(EVENTS.name + ".1"))
+    write_events(sample_run("newer", ids["Lee"]))
+    a = client.get("/api/profile/analytics", headers=auth(users["Lee"])).json()
+    assert (a["runs"], a["completed_runs"], a["courses_completed"], a["minutes_practiced"]) == (2, 2, 1, 0.8)
 
 
 def _lesson_for_scoring(mistake: str = "Fold along the crease") -> dict:

@@ -60,6 +60,15 @@ struct ModelDecodingTests {
         #expect(s.isDone && s.position == 8)
     }
 
+    @Test func liveObservationAndHoldDecodeWithoutBreakingOldHubs() throws {
+        let s = try decode(HubState.self, #"{"held":true,"observation":{"phase":"settling","frame_age_ms":73,"camera_fps":14.8}}"#)
+        #expect(s.held)
+        #expect(s.observation?.phase == "settling")
+        #expect(s.observation?.frameAgeMs == 73)
+        #expect(s.observation?.cameraFPS == 14.8)
+        #expect(!HubState.empty.held && HubState.empty.observation == nil)
+    }
+
     @Test func recordingBanner() throws {
         let s = try decode(HubState.self, #"{"camera":{"name":"Replay: take1.mp4","platform":"replay","source":"file"}}"#)
         #expect(s.isRecording)
@@ -104,6 +113,29 @@ struct ModelDecodingTests {
         #expect(HubClient.detail(Data(#"{"detail":"lesson not found"}"#.utf8)) == "lesson not found")
         #expect(HubClient.detail(Data(#"{"detail":[{"loc":["body","file"],"msg":"Field required"}]}"#.utf8)) == "Field required")
         #expect(HubClient.detail(Data("oops".utf8)) == nil)
+    }
+
+    @Test func profileAnalyticsKeepsMissingMeasurementsUnknown() throws {
+        let full = try decode(ProfileAnalytics.self, """
+        {"known":true,"reason":null,"runs":12,"completed_runs":9,"completion_rate":0.75,
+         "courses_completed":4,"minutes_practiced":86.5,"active_days":6,"current_streak_days":3,
+         "checks":48,"check_pass_rate":0.875,"camera_verified_steps":31,"mistakes_caught":7,
+         "camera_sources":["phone","glasses"]}
+        """)
+        #expect(full.runs == 12 && full.completedRuns == 9)
+        #expect(full.completionRate == 0.75 && full.cameraVerifiedSteps == 31)
+        #expect(full.cameraSources == ["phone", "glasses"])
+
+        let empty = try decode(ProfileAnalytics.self, #"{"known":false,"reason":"no runs yet","runs":0}"#)
+        #expect(!empty.known && empty.runs == 0)
+        #expect(empty.checkPassRate == nil && empty.minutesPracticed == nil)
+    }
+
+    @Test @MainActor func profileDisplayFormatting() {
+        #expect(ProfileView.practiceTime(8.2) == "8m")
+        #expect(ProfileView.practiceTime(86.5) == "1h 27m")
+        #expect(ProfileView.cameraSourceName("glasses") == "Meta glasses")
+        #expect(ProfileView.cameraSourceName("browser") == "a computer camera")
     }
 }
 

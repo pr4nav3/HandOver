@@ -6,6 +6,7 @@ certs/
 .env
 *.pyc
 .DS_Store
+.claude/
 server/uploads/
 /hub.json
 /uploads/
@@ -21,3 +22,5 @@ rehearsal.log
 /data/
 *.orig.mp4
 *.orig.vtt
+apps/desktop/app/icons/android/
+apps/desktop/app/icons/ios/

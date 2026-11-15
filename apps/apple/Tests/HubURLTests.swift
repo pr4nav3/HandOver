@@ -72,6 +72,15 @@ struct HubURLTests {
         #expect(HubURL(parsing: hub.cameraLink(.glasses).absoluteString) == hub)
     }
 
+    @Test func pairingLinkCarriesOnlyAnOpaqueAccountHandoffClaim() throws {
+        let claim = String(repeating: "a", count: 43)
+        let link = try #require(URL(string:
+            "handover://connect?hub=http%3A%2F%2F10.1.2.3%3A8000&camera=glasses&handoff=\(claim)"))
+        #expect(AccountHandoffIntent(url: link)?.claim == claim)
+        #expect(HubURL(parsing: link.absoluteString)?.displayName == "10.1.2.3:8000")
+        #expect(AccountHandoffIntent(url: try #require(URL(string: "handover://connect?hub=10.1.2.3&handoff=short"))) == nil)
+    }
+
     @Test func codableAsPlainString() throws {
         let hub = try #require(HubURL(parsing: "10.1.2.3"))
         let data = try JSONEncoder().encode([hub])

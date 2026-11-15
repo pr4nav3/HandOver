@@ -86,6 +86,7 @@ fn handle(
             let result = match cmd {
                 "__launch" => Ok(launch.to_string()),
                 "__notify" => Ok("null".into()),
+                "__ensure_local_hub" => Ok(json!({ "address": "localhost:8000", "started": false }).to_string()),
                 // Stands in for the native picker: the file named by DEVSERVER_PICK.
                 "__pick_video" => Ok(match std::env::var("DEVSERVER_PICK").ok().filter(|p| Path::new(p).is_file()) {
                     Some(p) => {

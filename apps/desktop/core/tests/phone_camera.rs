@@ -4,7 +4,7 @@
 use handover_core::address::HubAddress;
 use handover_core::api::Answer;
 use handover_core::camera::{CameraLink, CameraSocket, Hello, LatestSlot};
-use handover_core::phone::{connect_link, from_hub_info, is_loopback_host, phone_hub, qr_svg};
+use handover_core::phone::{camera_link, connect_link, from_hub_info, handoff_link, is_loopback_host, phone_hub, qr_svg};
 use std::net::{IpAddr, TcpListener};
 use std::sync::mpsc::channel;
 use std::sync::Arc;
@@ -52,6 +52,12 @@ fn phone_address_and_link() {
 
     let link = connect_link(&HubAddress::parse("192.168.1.20").unwrap());
     assert_eq!(link, "handover://connect?hub=http%3A%2F%2F192.168.1.20%3A8000");
+    assert_eq!(camera_link(&link, "phone"), format!("{link}&camera=phone"));
+    assert_eq!(camera_link(&link, "glasses"), format!("{link}&camera=glasses"));
+    assert_eq!(camera_link(&link, "bad"), link);
+    let claim = "abcdefghijklmnopqrstuvwxyzABCDEFGH123456789";
+    assert_eq!(handoff_link(&link, claim), format!("{link}&handoff={claim}"));
+    assert_eq!(handoff_link(&link, "short"), link);
     // The hub's own answer wins; a missing route or no LAN address falls back.
     let info = |status: u16, body: serde_json::Value| from_hub_info(&Answer { status, body });
     let good = serde_json::json!({ "hub_url": "http://10.0.0.7:8000", "pair_link": "handover://connect?hub=http%3A%2F%2F10.0.0.7%3A8000" });

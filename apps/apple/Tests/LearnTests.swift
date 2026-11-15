@@ -60,6 +60,30 @@ struct ClipControllerTests {
         #expect(clips.slots.allSatisfy { $0 == nil })
         #expect(!clips.isDucked)
     }
+
+    @Test func nextStepAndCloseInvalidatePreviousPlaybackGeneration() {
+        let clips = ClipController()
+        let first = URL(fileURLWithPath: "/tmp/handover-step-1.mp4")
+        let second = URL(fileURLWithPath: "/tmp/handover-step-2.mp4")
+        let initial = clips.playbackGeneration
+        clips.show(clip: first, captions: nil)
+        let stepOne = clips.playbackGeneration
+        clips.show(clip: second, captions: nil)
+        let stepTwo = clips.playbackGeneration
+        #expect(stepOne != initial)
+        #expect(stepTwo != stepOne)
+        #expect(clips.activeSlot?.url == second)
+        clips.stop()
+        #expect(clips.playbackGeneration != stepTwo)
+        #expect(clips.slots.allSatisfy { $0 == nil })
+    }
+}
+
+struct AppAudioLifecycleTests {
+    @Test func inactiveAndBackgroundHardStopWhileActiveDoesNot() {
+        #expect(!AppAudioLifecycle.shouldHardStop(isActive: true))
+        #expect(AppAudioLifecycle.shouldHardStop(isActive: false))
+    }
 }
 
 @MainActor
@@ -426,11 +450,34 @@ struct SpeechQueueTests {
         #expect(q.speaking == nil && q.pending.isEmpty)
     }
 
+    @Test func callbacksFromAClosedLessonCannotTouchTheNextLesson() {
+        var gate = SpeechCallbackGate()
+        let closedLesson = gate.generation
+        gate.invalidate()
+        let nextLesson = gate.generation
+        #expect(!gate.accepts(closedLesson))
+        #expect(gate.accepts(nextLesson))
+    }
+
+    @Test func changingStepsCancelsOnceButRepeatedStateDoesNot() {
+        var gate = SpeechStepGate()
+        let opened = gate.move(to: "lesson|1|0|false")
+        let repeated = gate.move(to: "lesson|1|0|false")
+        let advanced = gate.move(to: "lesson|1|1|false")
+        #expect(opened)
+        #expect(!repeated)
+        #expect(advanced)
+        gate.clear()
+        #expect(gate.token == nil)
+    }
+
     @Test func spokenStepAndGlassesRoute() {
         #expect(LearnView.spokenStep(Step(n: 5, title: "Flip the paper over", start: "0", end: "1")) == "Step 5. Flip the paper over.")
         #expect(LearnView.spokenStep(Step(n: 2, title: "Done?", start: "0", end: "1")) == "Step 2. Done?")
         #expect(LearnView.spokenStep(Step(n: 3, start: "0", end: "1")) == "Step 3.")
         #expect(SpokenGuide.looksLikeGlasses("Ray-Ban Meta"))
         #expect(!SpokenGuide.looksLikeGlasses("AirPods Pro"))
+        #expect(SpokenGuide.audioDestinationName(.init(name: "Ray-Ban Meta", isGlasses: true), fallback: "Device audio") == "Glasses audio")
+        #expect(SpokenGuide.audioDestinationName(nil, fallback: "Device audio") == "Device audio")
     }
 }

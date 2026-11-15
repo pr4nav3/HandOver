@@ -124,6 +124,58 @@ struct CourseProgressItem: Codable, Hashable, Sendable, Identifiable {
     enum CodingKeys: String, CodingKey { case id, title, steps, progress }
 }
 
+/// Private, aggregate-only learning activity for the signed-in person. Optional measurements are absent when
+/// their denominator does not exist, so the UI never turns missing evidence into a zero.
+struct ProfileAnalytics: Codable, Hashable, Sendable {
+    var known: Bool
+    var reason: String?
+    var runs: Int
+    var completedRuns: Int?
+    var completionRate: Double?
+    var coursesCompleted: Int?
+    var minutesPracticed: Double?
+    var activeDays: Int?
+    var currentStreakDays: Int?
+    var checks: Int?
+    var checkPassRate: Double?
+    var checkErrors: Int?
+    var averageCheckLatencyMS: Double?
+    var cameraVerifiedSteps: Int?
+    var manualSteps: Int?
+    var mistakesCaught: Int?
+    var replays: Int?
+    var interruptions: Int?
+    var cameraSources: [String]?
+    var medianCameraReadyMS: Double?
+
+    enum CodingKeys: String, CodingKey {
+        case known, reason, runs, checks, replays, interruptions
+        case completedRuns = "completed_runs"
+        case completionRate = "completion_rate"
+        case coursesCompleted = "courses_completed"
+        case minutesPracticed = "minutes_practiced"
+        case activeDays = "active_days"
+        case currentStreakDays = "current_streak_days"
+        case checkPassRate = "check_pass_rate"
+        case checkErrors = "check_errors"
+        case averageCheckLatencyMS = "avg_check_latency_ms"
+        case cameraVerifiedSteps = "camera_verified_steps"
+        case manualSteps = "manual_steps"
+        case mistakesCaught = "mistakes_caught"
+        case cameraSources = "camera_sources"
+        case medianCameraReadyMS = "median_camera_ready_ms"
+    }
+
+    /// Used only by previews and screenshot tests. Product UI labels it as sample data.
+    static let sample = ProfileAnalytics(
+        known: true, reason: nil, runs: 12, completedRuns: 9, completionRate: 0.75,
+        coursesCompleted: 4, minutesPracticed: 86.5, activeDays: 6, currentStreakDays: 3,
+        checks: 48, checkPassRate: 0.88, checkErrors: 1, averageCheckLatencyMS: 740,
+        cameraVerifiedSteps: 31, manualSteps: 11, mistakesCaught: 7, replays: 3,
+        interruptions: 1, cameraSources: ["phone", "glasses"], medianCameraReadyMS: 620
+    )
+}
+
 /// The hub's account and organization API (`server/routes_library.py`), sending the bearer token when there
 /// is one. Separate from Core's `HubClient` so the token never leaks into calls that do not need it.
 actor AccountClient {
@@ -167,9 +219,23 @@ actor AccountClient {
         let _: JSONValue = try await request("POST", "auth/logout")
     }
 
+    /// Approves the Mac's short-lived QR claim with this phone's existing hub account.
+    func approveHandoff(_ claim: String) async throws {
+        let _: JSONValue = try await request("POST", "auth/handoff/approve", body: ["claim": .string(claim)])
+    }
+
     /// `GET /api/courses`: everything this person may see, each with their own progress.
     func courses() async throws -> [CourseProgressItem] {
         try await request("GET", "courses")
+    }
+
+    /// Aggregate activity exists only on newer hubs. A missing route is a supported legacy state, not an error.
+    func profileAnalytics() async throws -> ProfileAnalytics? {
+        do {
+            return try await request("GET", "profile/analytics")
+        } catch HubError.http(let status, _) where status == 404 || status == 405 {
+            return nil
+        }
     }
 
     // MARK: - Plumbing

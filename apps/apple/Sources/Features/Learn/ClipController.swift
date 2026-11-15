@@ -46,8 +46,20 @@ final class ClipController {
         func tearDown() {
             captionTask?.cancel()
             looper.disableLooping()
+            player.isMuted = true
+            player.volume = 0
             player.pause()
+            player.seek(to: .zero)
             player.removeAllItems()
+        }
+
+        /// Makes a slot inaudible before another step becomes active. AVQueuePlayer can finish rendering a
+        /// queued audio buffer after `pause`; muting first closes that very small but audible overlap window.
+        func deactivate() {
+            player.isMuted = true
+            player.volume = 0
+            player.pause()
+            player.seek(to: .zero)
         }
 
         var isReady: Bool { player.currentItem?.status == .readyToPlay }
@@ -60,14 +72,21 @@ final class ClipController {
     private(set) var slots: [Slot?] = [nil, nil]
     private(set) var active = 0
     private(set) var phase: Phase = .idle
+    /// Changes for every visible clip transition and hard stop. Tests use it to prove that stale work belongs
+    /// to an older step; production uses the same boundary to make every old slot inaudible before a swap.
+    private(set) var playbackGeneration: UInt = 0
     /// The caption line showing now, or nil between cues.
     private(set) var caption: String?
     var isMuted = false {
-        didSet { for slot in slots { slot?.player.isMuted = isMuted } }
+        didSet {
+            for (index, slot) in slots.enumerated() { slot?.player.isMuted = index == active ? isMuted : true }
+        }
     }
     /// Lowered while spoken guidance talks, so it never talks over the narration.
     var isDucked = false {
-        didSet { for slot in slots { slot?.player.volume = isDucked ? 0.15 : 1 } }
+        didSet {
+            for (index, slot) in slots.enumerated() { slot?.player.volume = index == active ? (isDucked ? 0.15 : 1) : 0 }
+        }
     }
     /// A fixed caption for previews and snapshots, where no clip plays.
     @ObservationIgnored private var stillCaption: String?
@@ -93,6 +112,7 @@ final class ClipController {
     func show(clip: URL?, captions: URL?) {
         if stillCaption != nil { return }
         guard let clip else {
+            playbackGeneration &+= 1
             wanted = nil
             for slot in slots { slot?.tearDown() }
             slots = [nil, nil]
@@ -102,15 +122,20 @@ final class ClipController {
         }
         wanted = (clip, captions)
         if slots[active]?.url == clip { return }
+        playbackGeneration &+= 1
+        // Silence the outgoing step before touching the incoming player. This ordering matters on Bluetooth,
+        // where a paused AVQueuePlayer can otherwise drain a final buffered packet after Next.
+        slots[active]?.deactivate()
         let spare = 1 - active
         if slots[spare]?.url != clip {
             slots[spare]?.tearDown()
             slots[spare] = Slot(url: clip, captionsURL: captions, muted: isMuted)
             slots[spare]?.player.volume = isDucked ? 0.15 : 1
         }
-        slots[active]?.player.pause()
         active = spare
         let slot = slots[spare]!
+        slot.player.isMuted = isMuted
+        slot.player.volume = isDucked ? 0.15 : 1
         slot.player.seek(to: .zero)
         if !paused { slot.player.play() }
         phase = slot.isReady ? .playing : .loading
@@ -126,7 +151,8 @@ final class ClipController {
         slots[spare]?.tearDown()
         let slot = Slot(url: clip, captionsURL: captions, muted: isMuted)
         slot.player.pause()
-        slot.player.volume = isDucked ? 0.15 : 1
+        slot.player.isMuted = true
+        slot.player.volume = 0
         slots[spare] = slot
     }
 
@@ -157,6 +183,7 @@ final class ClipController {
     }
 
     func stop() {
+        playbackGeneration &+= 1
         ticker?.cancel()
         ticker = nil
         for slot in slots { slot?.tearDown() }

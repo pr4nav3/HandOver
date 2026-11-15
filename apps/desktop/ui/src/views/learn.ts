@@ -5,11 +5,23 @@
 // this run's real events (section 20).
 
 import { frameUrl, lessonUrl, toSeconds, type Advance, type CameraLink, type HubState, type Lesson, type Mistake, type Step } from "../api";
-import { playChime } from "../chime";
+import { playChime, stopChime } from "../chime";
 import { empty, mmss, ring } from "../components";
 import { LiveCanvas, type LocalState } from "../frames";
 import type { CameraChoice } from "../state";
 import { icons } from "../icons";
+import { learnFeedback } from "../learn_feedback";
+import { replaceLessonPlayback, stopLessonPlayback } from "../lesson_audio";
+import {
+  DEFAULT_LEARN_LAYOUT,
+  MAX_CAMERA_PERCENT,
+  MIN_CAMERA_PERCENT,
+  layoutFromLeftPercent,
+  leftPercent,
+  readLearnLayout,
+  writeLearnLayout,
+  type LearnLayout,
+} from "../learn_layout";
 import { html, paint, type Raw } from "../util";
 import { stepRow } from "./course";
 
@@ -37,28 +49,13 @@ export interface LearnActions {
   chooseCamera: () => void;
   /** Tries this computer's camera again after it failed. */
   retryCamera: () => void;
+  /** Prevents camera verification from advancing while feedback keeps running. */
+  hold: (held: boolean) => void;
   /** The run finished: its summary, for this device's progress and the rating prompt. */
   finished: (s: RunSummary) => void;
 }
 
-type Badge = "watching" | "verified" | "manual" | "done" | "offline" | "nocamera";
-
-const BADGE_LABEL: Record<Badge, string> = {
-  watching: "Watching",
-  verified: "Verified",
-  manual: "Tap Next when done",
-  done: "Done",
-  offline: "Checks off, use Next",
-  nocamera: "No camera",
-};
-
-/** Section 7.8 meta lines for checks off. */
-const OFFLINE_LINE: Record<string, string> = {
-  no_key: "No check key on the hub.",
-  rate_limited: "Too many checks. Trying again soon.",
-  errors: "Checks failed. Trying again soon.",
-  budget: "Check spending limit reached.",
-};
+type Badge = "watching" | "verified" | "manual" | "done" | "offline" | "nocamera" | "held";
 
 interface StepRun {
   ms: number;
@@ -82,6 +79,10 @@ export interface RunSummary {
 
 const TEMPLATE = html`<div class="learn">
   <div class="progress" role="progressbar" aria-valuemin="0"></div>
+  <div class="learn-layout-tools" aria-label="Workspace layout">
+    <button class="quiet small layout-swap" type="button" title="Move the tutorial to the other side">${icons.swap}<span>Swap</span></button>
+    <button class="quiet small layout-reset" type="button" title="Restore the default workspace">Reset</button>
+  </div>
   <main class="learn-grid">
     <div class="live-col">
     <section class="panel live" aria-label="Your camera">
@@ -102,27 +103,44 @@ const TEMPLATE = html`<div class="learn">
       </div>
     </section>
     </div>
+    <button class="learn-divider" type="button" role="separator" aria-orientation="vertical" aria-label="Resize camera and tutorial panels" aria-valuemin="24" aria-valuemax="76"><span></span></button>
     <section class="side">
       <div class="clip-box">
         <div class="clip">
           <video loop playsinline preload="auto" crossorigin="anonymous"></video>
-          <button class="replay-clip" type="button" title="Replay this step (R)">${icons.refresh}<span>Replay</span></button>
           <button class="unmute" type="button" hidden>${icons.sound}<span>Turn on sound</span></button>
           <span class="result-moment" hidden></span>
           <div class="placeholder clip-ph" hidden><span class="spinner"></span></div>
+          <div class="tutorial-transport">
+            <button class="tutorial-play" type="button" title="Pause tutorial (K)">${icons.pause}<span>Pause</span></button>
+            <button class="replay-clip" type="button" title="Replay tutorial (R)">${icons.refresh}<span class="sr-only">Replay tutorial</span></button>
+            <input class="tutorial-scrubber" type="range" min="0" max="1" step="0.01" value="0" aria-label="Tutorial position" />
+            <span class="tutorial-time" aria-hidden="true">0:00 / 0:00</span>
+          </div>
         </div>
       </div>
       <div class="step-info">
-        <p class="step-count">&nbsp;</p>
+        <div class="step-meta-row"><p class="step-count">&nbsp;</p>
+          <button class="hold-step" type="button" aria-pressed="false" title="Keep camera feedback on this step without advancing (H)">${icons.pause}<span>Hold step</span></button>
+        </div>
         <h1 class="step-title">&nbsp;</h1>
+      </div>
+      <div class="badge-wrap feedback-card idle" role="status" aria-live="polite" aria-atomic="true">
+        <div class="feedback-head">
+          <span class="badge watching"><span class="badge-dot"></span><span class="badge-label">Getting ready</span></span>
+          <span class="feedback-metric"></span>
+        </div>
+        <div class="check-meta">
+          <strong class="meta-top">Loading this step</strong>
+          <span class="check-reason meta-bottom">The tutorial will begin in a moment.</span>
+        </div>
+        <div class="feedback-foot">
+          <span class="feedback-audio" title="Desktop audio follows the output selected in system sound settings">${icons.sound}<span>Audio · System output</span></span>
+        </div>
       </div>
       <div class="mistake-card" role="alert" hidden></div>
       <div class="course-list scroll" aria-label="Steps"></div>
       <div class="controls">
-        <div class="badge-wrap">
-          <span class="badge watching" aria-live="polite"><span class="badge-dot"></span><span class="badge-label">Watching</span></span>
-          <span class="check-meta"><span class="meta-top"></span><span class="check-reason meta-bottom"></span></span>
-        </div>
         <div class="next-wrap">
           <button class="back" type="button" title="Back (Left Arrow)">Back</button>
           <button class="next" type="button" title="Next (Right Arrow or Space)">Next</button>
@@ -160,6 +178,7 @@ export class LearnView {
   private flashTimer = 0;
   private resultTimer = 0;
   private loadedClip = "";
+  private userPaused = false;
   private active = false;
   // This run (section 20.1).
   private runStart = 0;
@@ -170,6 +189,8 @@ export class LearnView {
   private interrupted = false;
   private summary: RunSummary | null = null;
   private lastListKey = "";
+  private layout: LearnLayout = readLearnLayout();
+  private draggingLayout = false;
 
   constructor(
     private el: HTMLElement,
@@ -187,11 +208,34 @@ export class LearnView {
     this.video.addEventListener("loadedmetadata", () => {
       const v = this.video;
       if (v.videoWidth && v.videoHeight) this.q<HTMLElement>(".clip").style.aspectRatio = `${v.videoWidth} / ${v.videoHeight}`;
+      this.syncTutorialTimeline();
       this.fit();
     });
+    this.video.addEventListener("timeupdate", () => this.syncTutorialTimeline());
+    this.video.addEventListener("durationchange", () => this.syncTutorialTimeline());
+    this.video.addEventListener("play", () => this.syncTutorialPlayback());
+    this.video.addEventListener("pause", () => this.syncTutorialPlayback());
     this.q(".next").addEventListener("click", () => this.next());
     this.q("button.back").addEventListener("click", () => this.back());
     this.q(".replay-clip").addEventListener("click", () => this.replay());
+    this.q(".tutorial-play").addEventListener("click", () => this.toggleTutorial());
+    this.q<HTMLInputElement>(".tutorial-scrubber").addEventListener("input", (e) => {
+      const at = Number((e.currentTarget as HTMLInputElement).value);
+      if (Number.isFinite(at)) this.video.currentTime = at;
+      this.syncTutorialTimeline();
+    });
+    this.q(".hold-step").addEventListener("click", () => this.toggleHold());
+    this.q(".layout-swap").addEventListener("click", () => {
+      this.layout = { ...this.layout, tutorialFirst: !this.layout.tutorialFirst };
+      this.commitLayout();
+    });
+    this.q(".layout-reset").addEventListener("click", () => {
+      this.layout = { ...DEFAULT_LEARN_LAYOUT };
+      this.commitLayout();
+    });
+    const divider = this.q<HTMLButtonElement>(".learn-divider");
+    divider.addEventListener("pointerdown", (e) => this.beginLayoutDrag(e));
+    divider.addEventListener("keydown", (e) => this.resizeLayoutWithKeyboard(e));
     this.q(".unmute").addEventListener("click", () => {
       this.video.muted = false;
       this.q<HTMLElement>(".unmute").hidden = true;
@@ -218,6 +262,74 @@ export class LearnView {
     });
     new ResizeObserver(() => this.fit()).observe(this.q(".live-col"));
     new ResizeObserver(() => this.fit()).observe(this.q(".side"));
+    this.applyLayout();
+    this.syncTutorialPlayback();
+    this.syncTutorialTimeline();
+  }
+
+  private applyLayout() {
+    const grid = this.q<HTMLElement>(".learn-grid");
+    const left = leftPercent(this.layout);
+    grid.style.setProperty("--learn-left", `${left}%`);
+    grid.classList.toggle("tutorial-first", this.layout.tutorialFirst);
+    const divider = this.q<HTMLButtonElement>(".learn-divider");
+    divider.setAttribute("aria-valuemin", String(this.layout.tutorialFirst ? 100 - MAX_CAMERA_PERCENT : MIN_CAMERA_PERCENT));
+    divider.setAttribute("aria-valuemax", String(this.layout.tutorialFirst ? 100 - MIN_CAMERA_PERCENT : MAX_CAMERA_PERCENT));
+    divider.setAttribute("aria-valuenow", String(Math.round(left)));
+    divider.setAttribute("aria-valuetext", `Tutorial ${Math.round(100 - this.layout.cameraPercent)} percent, camera ${Math.round(this.layout.cameraPercent)} percent`);
+    const swap = this.q<HTMLButtonElement>(".layout-swap");
+    swap.setAttribute("aria-label", this.layout.tutorialFirst ? "Move tutorial to the right" : "Move tutorial to the left");
+    grid.classList.add("layout-ready");
+    this.fit();
+  }
+
+  private commitLayout() {
+    writeLearnLayout(this.layout);
+    this.applyLayout();
+  }
+
+  private setLayoutFromPointer(clientX: number) {
+    const grid = this.q<HTMLElement>(".learn-grid");
+    const rect = grid.getBoundingClientRect();
+    if (!rect.width) return;
+    const left = ((clientX - rect.left) / rect.width) * 100;
+    this.layout = layoutFromLeftPercent(left, this.layout.tutorialFirst);
+    this.applyLayout();
+  }
+
+  private beginLayoutDrag(e: PointerEvent) {
+    if (e.button !== 0) return;
+    const divider = this.q<HTMLButtonElement>(".learn-divider");
+    this.draggingLayout = true;
+    divider.classList.add("dragging");
+    divider.setPointerCapture(e.pointerId);
+    this.setLayoutFromPointer(e.clientX);
+    const move = (event: PointerEvent) => this.setLayoutFromPointer(event.clientX);
+    const finish = () => {
+      if (!this.draggingLayout) return;
+      this.draggingLayout = false;
+      divider.classList.remove("dragging");
+      divider.removeEventListener("pointermove", move);
+      divider.removeEventListener("pointerup", finish);
+      divider.removeEventListener("pointercancel", finish);
+      this.commitLayout();
+    };
+    divider.addEventListener("pointermove", move);
+    divider.addEventListener("pointerup", finish);
+    divider.addEventListener("pointercancel", finish);
+    e.preventDefault();
+  }
+
+  private resizeLayoutWithKeyboard(e: KeyboardEvent) {
+    const current = leftPercent(this.layout);
+    let next: number | null = null;
+    if (e.key === "ArrowLeft") next = current - (e.shiftKey ? 10 : 3);
+    else if (e.key === "ArrowRight") next = current + (e.shiftKey ? 10 : 3);
+    else if (e.key === "Home") next = leftPercent({ ...DEFAULT_LEARN_LAYOUT, tutorialFirst: this.layout.tutorialFirst });
+    if (next === null) return;
+    this.layout = layoutFromLeftPercent(next, this.layout.tutorialFirst);
+    this.commitLayout();
+    e.preventDefault();
   }
 
   resetRun() {
@@ -235,26 +347,103 @@ export class LearnView {
   }
 
   setActive(on: boolean) {
-    if (this.active === on) return;
+    if (on && this.active) return;
     this.active = on;
     if (!on) {
-      this.video.pause();
-      this.video.currentTime = 0;
-      window.speechSynthesis?.cancel();
-      window.clearTimeout(this.flashTimer);
-      window.clearTimeout(this.resultTimer);
-      this.flashVerified = false;
-      this.q<HTMLElement>(".result-moment").hidden = true;
-      this.live.stop();
+      this.stopMedia();
     }
     this.render();
   }
 
+  /** Pauses tutorial audio and guidance without unloading the clip. Used by learner Pause/Hold controls. */
+  pauseMedia() {
+    this.video.pause();
+    window.speechSynthesis?.cancel();
+    stopChime();
+  }
+
+  /** Resumes only the visible, unfinished tutorial. */
+  resumeMedia() {
+    if (!this.userPaused && this.active && this.model.state?.status !== "done" && this.tutorialLoaded) this.play();
+  }
+
+  /** Deterministic lesson teardown. Safe to call repeatedly from route, window, and native close events. */
+  stopMedia() {
+    stopLessonPlayback(this.video, window.speechSynthesis);
+    stopChime();
+    this.userPaused = false;
+    this.loadedClip = "";
+    this.video.querySelectorAll("track").forEach((track) => track.remove());
+    window.clearTimeout(this.flashTimer);
+    window.clearTimeout(this.resultTimer);
+    this.flashVerified = false;
+    this.q<HTMLElement>(".result-moment").hidden = true;
+    this.live.stop();
+  }
+
   /** Starts the current expert step from the beginning without changing course progress. */
   replay() {
-    if (!this.video.src) return;
+    if (!this.tutorialLoaded) return;
     this.video.currentTime = 0;
+    this.userPaused = false;
     if (this.active) this.play();
+    this.syncTutorialPlayback();
+  }
+
+  /** Pauses or resumes only the expert clip; the live camera and feedback remain active. */
+  toggleTutorial() {
+    if (!this.tutorialLoaded) return;
+    if (this.video.paused) {
+      this.userPaused = false;
+      if (this.active) this.play();
+    } else {
+      this.userPaused = true;
+      this.video.pause();
+    }
+    this.syncTutorialPlayback();
+  }
+
+  /** J/L: inspect the expert movement without changing the lesson step. */
+  seekTutorial(delta: number) {
+    const duration = this.video.duration;
+    if (!Number.isFinite(duration) || duration <= 0) return;
+    this.video.currentTime = Math.max(0, Math.min(duration, this.video.currentTime + delta));
+    this.syncTutorialTimeline();
+  }
+
+  toggleHold() {
+    const s = this.model.state;
+    if (!s?.lesson_id || s.status === "done" || this.model.down) return;
+    this.actions.hold(!s.held);
+  }
+
+  private syncTutorialPlayback() {
+    const paused = this.video.paused;
+    const button = this.q<HTMLButtonElement>(".tutorial-play");
+    paint(button, paused ? html`${icons.play}<span>Play</span>` : html`${icons.pause}<span>Pause</span>`);
+    button.setAttribute("aria-label", paused ? "Play tutorial" : "Pause tutorial");
+    button.title = `${paused ? "Play" : "Pause"} tutorial (K)`;
+    button.disabled = !this.tutorialLoaded;
+  }
+
+  private get tutorialLoaded() {
+    return !!this.video.getAttribute("src");
+  }
+
+  private syncTutorialTimeline() {
+    const duration = Number.isFinite(this.video.duration) ? this.video.duration : 0;
+    const current = Number.isFinite(this.video.currentTime) ? this.video.currentTime : 0;
+    const range = this.q<HTMLInputElement>(".tutorial-scrubber");
+    range.max = String(Math.max(duration, 0.01));
+    range.value = String(Math.min(current, duration || current));
+    range.disabled = !duration;
+    range.setAttribute("aria-valuetext", `${this.tutorialTime(current)} of ${this.tutorialTime(duration)}`);
+    this.q(".tutorial-time").textContent = `${this.tutorialTime(current)} / ${this.tutorialTime(duration)}`;
+  }
+
+  private tutorialTime(seconds: number) {
+    const safe = Math.max(0, Math.floor(Number.isFinite(seconds) ? seconds : 0));
+    return `${Math.floor(safe / 60)}:${String(safe % 60).padStart(2, "0")}`;
   }
 
   private run(i: number): StepRun {
@@ -332,7 +521,7 @@ export class LearnView {
     const H = col.clientHeight;
     if (!W || !H) return;
     const GAP = 14;
-    const GOAL_MIN = 150;
+    const GOAL_MIN = 108;
     let w = W;
     let h = W / this.liveAspect;
     const room = H - h - GAP;
@@ -417,12 +606,19 @@ export class LearnView {
 
   next() {
     const s = this.model.state;
-    if (s?.lesson_id && s.status !== "done" && !this.model.down) this.actions.next(s.step);
+    if (s?.lesson_id && s.status !== "done" && !this.model.down) {
+      // Stop the old narration at the gesture boundary; do not wait for the hub round trip.
+      this.pauseMedia();
+      this.actions.next(s.step);
+    }
   }
 
   back() {
     const s = this.model.state;
-    if (s?.lesson_id && !this.model.down) this.actions.back(s.step);
+    if (s?.lesson_id && !this.model.down) {
+      this.pauseMedia();
+      this.actions.back(s.step);
+    }
   }
 
   /** Section 20: the run's numbers, frozen when the lesson finishes. */
@@ -551,6 +747,8 @@ export class LearnView {
     // Only while Learn is open, so the clip is not fetched for a lesson nobody is viewing.
     if (clipKey && clipKey !== this.loadedClip && lesson && step && this.active) {
       this.loadedClip = clipKey;
+      this.userPaused = false;
+      stopChime();
       v.querySelectorAll("track").forEach((t) => {
         t.track.mode = "disabled";
         t.remove();
@@ -563,16 +761,22 @@ export class LearnView {
       track.src = lessonUrl(lesson.id, step.captions, s?.rev);
       v.appendChild(track);
       track.track.mode = "showing";
-      v.src = clipKey;
-      v.load();
+      replaceLessonPlayback(v, clipKey, window.speechSynthesis);
     }
     v.classList.toggle("hidden", !step);
-    if (this.active && step && !isDone && v.paused && v.src) this.play();
+    if (this.active && step && !isDone && !this.userPaused && v.paused && this.tutorialLoaded) this.play();
     if (isDone || !this.active) v.pause();
     this.q<HTMLElement>(".clip-ph").hidden = !!step;
 
     this.q(".step-count").textContent = step ? `Step ${idx + 1} of ${total}` : " ";
     this.q(".step-title").textContent = step ? step.title : " ";
+    const hold = this.q<HTMLButtonElement>(".hold-step");
+    const held = !!s?.held && !isDone;
+    hold.disabled = !s?.lesson_id || isDone || down;
+    hold.classList.toggle("on", held);
+    hold.setAttribute("aria-pressed", String(held));
+    paint(hold, html`${icons.pause}<span>${held ? "Release hold" : "Hold step"}</span>`);
+    hold.title = held ? "Allow camera verification to advance (H)" : "Keep camera feedback on this step without advancing (H)";
 
     // Course list: rebuilt only when something in it changed.
     const how = this.howList();
@@ -587,29 +791,23 @@ export class LearnView {
       list.querySelector<HTMLElement>(".step-row.current")?.scrollIntoView({ block: "nearest" });
     }
 
-    // Badge and meta (section 7.8). Checking shows as Watching so the badge stays calm.
-    const offline = !!s?.check_offline;
-    const cameraStep = !!step && step.check_type !== "manual" && !isDone;
+    // Large live feedback: what HandOver is doing, followed by one clear next action.
     let badge: Badge = "watching";
     if (isDone) badge = "done";
+    else if (s?.held) badge = "held";
     else if (this.flashVerified || s?.status === "verified") badge = "verified";
     else if (s?.status === "manual" || step?.check_type === "manual") badge = "manual";
-    else if (offline) badge = "offline";
-    else if (cameraStep && s && !s.camera_connected) badge = "nocamera";
+    else if (s?.check_offline) badge = "offline";
+    else if (step && s && !s.camera_connected) badge = "nocamera";
+    const feedback = learnFeedback(s, step, this.flashVerified);
+    const feedbackCard = this.q<HTMLElement>(".feedback-card");
+    feedbackCard.className = `badge-wrap feedback-card ${feedback.tone} phase-${feedback.phase}`;
     const b = this.q<HTMLElement>(".badge");
     b.className = `badge ${badge === "nocamera" ? "watching" : badge}${s?.camera_connected ? " live" : ""}`;
-    this.q(".badge-label").textContent = BADGE_LABEL[badge];
-    const lc = s?.last_check;
-    let top = "";
-    let bottom = "";
-    if (badge === "offline") top = OFFLINE_LINE[s?.check_offline_reason ?? ""] ?? s?.offline_label ?? "";
-    else if (badge === "nocamera") top = "Connect a camera to check steps.";
-    else if (!down && badge === "watching" && cameraStep && s?.camera_connected && lc) {
-      top = `Last check ${(lc.latency_ms / 1000).toFixed(1)} s`;
-      bottom = s?.check_reason ?? "";
-    }
-    this.q(".meta-top").textContent = top;
-    this.q(".meta-bottom").textContent = bottom;
+    this.q(".badge-label").textContent = feedback.label;
+    this.q(".meta-top").textContent = feedback.title;
+    this.q(".meta-bottom").textContent = feedback.action;
+    this.q(".feedback-metric").textContent = feedback.metric;
 
     const can = !!s?.lesson_id && !down;
     const nextBtn = this.q<HTMLButtonElement>(".next");

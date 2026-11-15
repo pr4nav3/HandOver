@@ -83,6 +83,7 @@ struct LearnView: View {
     private var resolvedStatus: LearnStatus { LearnStatus.resolve(state, step: step, flashVerified: flashVerified) }
     /// The badge on screen: the resolved status, or Checking while it is held for its 0.6 s minimum.
     private var shownStatus: LearnStatus { holdChecking ? .checking : resolvedStatus }
+    private var feedback: LearnFeedback { LearnFeedback.resolve(state: state, step: step, status: shownStatus) }
     private var isLastStep: Bool { state.total > 0 && state.step == state.total - 1 && !state.isDone }
 
     /// Progress (0 to 1) and stage from the real-time understanding work, when the hub sends them. The Core
@@ -177,7 +178,16 @@ struct LearnView: View {
         .onChange(of: clipKey, initial: true) { _, _ in updateClip() }
         .onChange(of: preloadKey, initial: true) { _, _ in preloadNext() }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .active, doneSummary == nil { clips.resume() } else if phase == .background { clips.pause() }
+            if phase == .active, doneSummary == nil {
+                guide.beginLessonAudio()
+                guide.beginStep(speechStepKey(state))
+                updateClip()
+                preloadNext()
+            } else {
+                // Inactive is included: Home, app switching and window close all pass through it before the
+                // background/disappear callbacks. A soft pause left Bluetooth and speech buffers alive.
+                stopMedia()
+            }
         }
         .task(id: resolvedStatus) { await settleStatus() }
         .task(id: resultID) {
@@ -191,6 +201,7 @@ struct LearnView: View {
             flashVerified = false
         }
         .onAppear {
+            guide.beginLessonAudio()
             #if os(iOS)
             UIApplication.shared.isIdleTimerDisabled = true
             #endif
@@ -241,9 +252,11 @@ struct LearnView: View {
                     .background(theme.colors.stage)
                     .padding(.horizontal, HOSpace.l)
             }
-            stepInfo(oneLine: false)
+            stepInfo(oneLine: false, showsHint: false)
                 .padding(.horizontal, HOSpace.l)
                 .padding(.top, HOSpace.m)
+            LearnFeedbackCard(feedback: feedback)
+                .padding(.horizontal, HOSpace.l)
             mistakeSlot(compact: true, overVideo: false)
                 .padding(.horizontal, HOSpace.l)
             controlsTray(compactBack: true)
@@ -312,8 +325,7 @@ struct LearnView: View {
                     VStack(alignment: .leading, spacing: HOSpace.s) {
                         // The status and its reason come before the general hint, so they show without scrolling.
                         stepInfo(oneLine: false, showsHint: false)
-                        badgeBlock.frame(maxWidth: .infinity, alignment: .leading)
-                        hintLine.frame(maxWidth: .infinity, alignment: .leading)
+                        LearnFeedbackCard(feedback: feedback)
                         if clipIsTile, captionsOn, let caption = clips.caption {
                             Text(caption)
                                 .font(theme.fonts.footnote)
@@ -341,7 +353,7 @@ struct LearnView: View {
         HStack(spacing: HOSpace.xs) {
             if let onClose { closeButton(onClose, onVideo: false) }
             Spacer(minLength: 0)
-            SpokenGuideIndicator(guide: guide)
+            LearnAudioOutputControl(guide: guide, compact: true)
             Button { Haptics.tap(); showSteps = true } label: { Image(systemName: "list.bullet") }
                 .buttonStyle(HOIconButtonStyle())
                 .accessibilityLabel("Steps")
@@ -393,16 +405,21 @@ struct LearnView: View {
                 banner
                 HStack(spacing: gap) {
                     if clipFirst {
-                        clipColumn
-                        live(radius: HORadius.panel).aspectRatio(Self.paneAspect, contentMode: .fit)
+                        clipColumn.layoutPriority(2)
+                        live(radius: HORadius.panel)
+                            .aspectRatio(Self.paneAspect, contentMode: .fit)
+                            .frame(maxWidth: size.width * 0.34)
                     } else {
-                        live(radius: HORadius.panel).aspectRatio(Self.paneAspect, contentMode: .fit)
-                        clipColumn
+                        live(radius: HORadius.panel)
+                            .aspectRatio(Self.paneAspect, contentMode: .fit)
+                            .frame(maxWidth: size.width * 0.34)
+                        clipColumn.layoutPriority(2)
                     }
                 }
                 .frame(maxWidth: .infinity)
                 .layoutPriority(1)
-                stepInfo(oneLine: false).frame(maxWidth: .infinity, alignment: .leading)
+                stepInfo(oneLine: false, showsHint: false).frame(maxWidth: .infinity, alignment: .leading)
+                LearnFeedbackCard(feedback: feedback)
                 Spacer(minLength: 0)
                 mistakeSlot(compact: false, overVideo: false)
                 controlsTray(compactBack: false)
@@ -444,7 +461,7 @@ struct LearnView: View {
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: onClose == nil ? .leading : .center)
                 .accessibilityAddTraits(.isHeader)
-            SpokenGuideIndicator(guide: guide)
+            LearnAudioOutputControl(guide: guide, compact: !stepsInSidebar)
             Button {
                 Haptics.tap()
                 if stepsInSidebar {
@@ -509,7 +526,8 @@ struct LearnView: View {
     /// second line of defense: a route transition can keep the old SwiftUI tree alive for part of its animation.
     private func stopMedia() {
         clips.stop()
-        guide.stop()
+        guide.endLessonAudio()
+        Chime.shared.stop()
     }
 
     private func swapVideos() {
@@ -691,10 +709,8 @@ struct LearnView: View {
     }
 
     private func controlsTray(compactBack: Bool) -> some View {
-        HStack(alignment: .center, spacing: HOSpace.m) {
-            badgeBlock.frame(maxWidth: .infinity, alignment: .leading)
-            navButtons(compactBack: compactBack, minNext: compactBack ? nil : 160)
-        }
+        navButtons(compactBack: compactBack, minNext: compactBack ? nil : 160)
+            .frame(maxWidth: .infinity, alignment: .trailing)
     }
 
     @ViewBuilder
@@ -831,6 +847,8 @@ struct LearnView: View {
     }
 
     private func stateChanged(from old: HubState, to new: HubState) {
+        // Cancel the previous step's in-flight utterance before enqueuing any result or new instruction.
+        guide.beginStep(speechStepKey(new))
         let change = recorder.observe(new, advance: model.lastAdvance, at: Date())
         let firstState = !seenFirstState
         seenFirstState = true
@@ -877,6 +895,10 @@ struct LearnView: View {
         guard !title.isEmpty else { return "Step \(step.n)." }
         let end = title.last.map { ".!?".contains($0) } ?? false
         return "Step \(step.n). \(title)\(end ? "" : ".")"
+    }
+
+    private func speechStepKey(_ state: HubState) -> String {
+        "\(state.lessonId ?? "none")|\(state.rev)|\(state.step)|\(state.isDone)"
     }
 
     private func speakStep() {

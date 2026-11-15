@@ -54,7 +54,7 @@ final class CameraStreamer {
     private(set) var framesDropped = 0
     private(set) var choices: [CameraChoice] = []
     private(set) var deviceID: String?
-    /// iPhone is warm: one frame every 2 s at most.
+    /// iPhone is warm: the adaptive sender is reducing work while keeping completion checks responsive.
     private(set) var isThrottled = false
 
     var isSending: Bool { phase == .streaming && connection.isConnected }
@@ -67,6 +67,7 @@ final class CameraStreamer {
     @ObservationIgnored private var rate = SendRate()
     @ObservationIgnored private var startedAt: TimeInterval = 0
     @ObservationIgnored private var isPushing = false
+    @ObservationIgnored private var thermalGap = FrameSizing.sendGap
 
     init(feed: PhoneCameraFeed = .shared) {
         self.feed = feed
@@ -211,7 +212,7 @@ final class CameraStreamer {
         return false
     }
 
-    private var minGap: Duration { isThrottled ? .seconds(2) : FrameSizing.sendGap }
+    private var minGap: Duration { thermalGap }
 
     private func handle(_ event: HubSocket.Event) {
         switch event {
@@ -253,6 +254,7 @@ final class CameraStreamer {
     private func updateThermal() {
         let state = ProcessInfo.processInfo.thermalState
         isThrottled = state == .serious || state == .critical
+        thermalGap = ThermalFramePolicy.sendGap(for: state)
     }
     #endif
 

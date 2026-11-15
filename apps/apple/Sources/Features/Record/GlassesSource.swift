@@ -39,6 +39,24 @@ enum GlassesTransport: Sendable {
     static let frameRate = 15
 }
 
+/// Small, testable decisions shared by the toolkit lifecycle. The Meta SDK types stay in
+/// `GlassesToolkit.swift`, while this policy remains available to simulator and macOS tests.
+enum GlassesLifecyclePolicy {
+    enum SelectorMode: Equatable { case waitForAuto, automatic, specific }
+
+    static let discoveryPollCount = 40
+    static let discoveryPollInterval: Duration = .milliseconds(250)
+    static let connectedSettle: Duration = .milliseconds(350)
+    static let firstFrameTimeout: Duration = .seconds(15)
+
+    /// Auto selection follows connectivity, but the SDK can briefly report no active auto device while still
+    /// exposing the one registered pair. Probe that sole identifier once with a specific selector; do not spin.
+    static func selectorMode(autoHasDevice: Bool, discoveredDeviceCount: Int) -> SelectorMode {
+        if autoHasDevice { return .automatic }
+        return discoveredDeviceCount == 1 ? .specific : .waitForAuto
+    }
+}
+
 /// Where the glasses are in registration, permission and streaming. Copy per state is in SCREENS.md 12.2.
 enum GlassesState: Equatable, Sendable {
     /// This build has no toolkit, or the platform has none (Mac).
@@ -103,6 +121,49 @@ enum GlassesState: Equatable, Sendable {
     var isStreaming: Bool { if case .streaming = self { return true } else { return false } }
     /// Errors that offer "Use iPhone".
     var offersPhone: Bool { [.batteryLow, .tooHot, .powerLimit, .lost].contains(self) || { if case .failed = self { true } else { false } }() }
+
+    /// The one next action shown during setup. Keeping this decision in the state model prevents the camera,
+    /// lesson and recording entry points from drifting into three different glasses workflows.
+    var setupAction: GlassesSetupAction {
+        switch self {
+        case .unavailable, .connecting, .streaming, .batteryLow, .tooHot: .none
+        case .notRegistered: .connect
+        case .developerModeOff, .metaAIMissing: .openMetaAI
+        case .waitingForMetaAI: .cancel
+        case .noDevice, .powerLimit, .failed: .retry
+        case .permissionNeeded: .allowCamera
+        case .paused: .resume
+        case .lost: .reconnect
+        }
+    }
+
+    var statusLine: String {
+        switch self {
+        case .unavailable: "Unavailable in this build"
+        case .notRegistered: "Ready to connect"
+        case .waitingForMetaAI: "Finish in Meta AI"
+        case .connecting: "Starting camera"
+        case .streaming: "Live"
+        default: title
+        }
+    }
+}
+
+enum GlassesSetupAction: Equatable, Sendable {
+    case none, connect, openMetaAI, cancel, retry, allowCamera, resume, reconnect
+
+    var title: String? {
+        switch self {
+        case .none: nil
+        case .connect: "Connect Meta Glasses"
+        case .openMetaAI: "Open Meta AI"
+        case .cancel: "Cancel"
+        case .retry: "Try Again"
+        case .allowCamera: "Allow Camera"
+        case .resume: "Resume"
+        case .reconnect: "Reconnect"
+        }
+    }
 }
 
 /// Talks to the glasses. The MWDAT implementation lives in GlassesToolkit.swift; without the toolkit every

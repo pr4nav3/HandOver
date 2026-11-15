@@ -55,6 +55,21 @@ fn revision6_fields_are_optional() {
 }
 
 #[test]
+fn held_state_is_preserved_and_optional_for_old_hubs() {
+    let current = parse_server_message(
+        r#"{"type":"state","lesson_id":"fold","step":0,"total":2,"status":"verified","held":true}"#,
+    )
+    .unwrap();
+    let ServerMessage::State(current) = current else { panic!("expected state") };
+    assert_eq!(current.held, Some(true));
+    assert_eq!(state_json(&current)["held"], true);
+
+    let old = state("state_revision1.json");
+    assert_eq!(old.held, None);
+    assert!(state_json(&old).get("held").is_none());
+}
+
+#[test]
 fn contract_mistake_sample() {
     let m = match parse_server_message(&fixture("mistake_contract.json")).unwrap() {
         ServerMessage::Mistake(m) => m,
@@ -213,6 +228,7 @@ fn client_messages_match_contract() {
     assert_eq!(ClientMessage::Next { reason: "voice", from: None }.to_json(), r#"{"type":"next","reason":"voice"}"#);
     assert_eq!(ClientMessage::Back { from: Some(2) }.to_json(), r#"{"type":"back","from":2}"#);
     assert_eq!(ClientMessage::Goto { step: 0 }.to_json(), r#"{"type":"goto","step":0}"#);
+    assert_eq!(ClientMessage::Hold { hold: true }.to_json(), r#"{"type":"hold","hold":true}"#);
     assert_eq!(ClientMessage::DismissMistake.to_json(), r#"{"type":"dismiss_mistake"}"#);
     let interval = |s: f64| ClientMessage::set_check_interval(s).map(|m| m.to_json());
     assert_eq!(interval(0.5).as_deref(), Some(r#"{"type":"set_check_interval","seconds":0.5}"#));

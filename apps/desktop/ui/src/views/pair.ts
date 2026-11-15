@@ -3,12 +3,13 @@
 // (core/src/phone.rs). The choice of camera (this computer, a phone, Meta glasses) is kept on
 // this device and shown as a "Camera" row with Change.
 
-import { call, type Pairing } from "../api";
+import { call, hub as hubApi, HubError, type Pairing } from "../api";
 import { closeSheet, drawSheet, openSheet, sheetOpen } from "../components";
 import { icons } from "../icons";
 import { pairedCamera, type PairingCamera } from "../pairing";
 import { app, errorText, prefs, rerender, toast, type CameraChoice } from "../state";
 import { html, raw, type Raw } from "../util";
+import { refreshMe } from "./profile";
 
 export const CAMERA_WORD: Record<CameraChoice, string> = {
   computer: "This computer",
@@ -27,6 +28,42 @@ let expectedCamera: PairingCamera = "phone";
 let pairingConnected = false;
 let pairedTimer = 0;
 let pairedAction: (() => void) | null = null;
+let handoffTimer = 0;
+let handoffClaim = "";
+
+function startHandoff(claim: string | null | undefined) {
+  if (!claim || claim === handoffClaim) return;
+  window.clearTimeout(handoffTimer);
+  handoffClaim = claim;
+  void pollHandoff();
+}
+
+async function pollHandoff() {
+  const claim = handoffClaim;
+  if (!claim) return;
+  try {
+    const answer = await hubApi<{ status: "pending" | "approved" }>("POST", "/api/auth/handoff/redeem", {
+      body: { claim },
+    });
+    if (claim !== handoffClaim) return;
+    if (answer.status === "approved") {
+      handoffClaim = "";
+      handoffTimer = 0;
+      await refreshMe();
+      if (open) drawSheet();
+      toast("Signed in from iPhone");
+      return;
+    }
+  } catch (error) {
+    if (claim !== handoffClaim) return;
+    if (error instanceof HubError && error.status === 404) {
+      handoffClaim = "";
+      handoffTimer = 0;
+      return;
+    }
+  }
+  if (claim === handoffClaim) handoffTimer = window.setTimeout(() => void pollHandoff(), 700);
+}
 
 function watchPairing(camera: PairingCamera, action: () => void) {
   window.clearTimeout(pairedTimer);
@@ -51,6 +88,7 @@ async function loadPairing(force = false, camera: "phone" | "glasses" = "phone")
     pairing = await call<Pairing>("pairing", { camera });
     pairingHub = app.link.hub;
     pairingCamera = camera;
+    startHandoff(pairing.handoff);
   } catch (e) {
     pairing = null;
     pairingError = errorText(e);
@@ -93,18 +131,14 @@ function cameraStatus(): Raw {
     : html`<p class="cam-status waiting"><span class="pair-radar"><span></span></span>Waiting for the scan</p>`;
 }
 
-const steps = (items: string[]) => html`<ol class="pair-steps">${items.map((t, i) => html`<li><span class="pair-num">${i + 1}</span><span>${t}</span></li>`)}</ol>`;
-
-const PHONE_STEPS = [
-  "Scan this code with the iPhone Camera app.",
-  "HandOver opens, connects, and starts Be the Camera.",
-  "Point the phone at the work. The live picture appears here.",
-];
-const GLASSES_STEPS = [
-  "Scan this code with the iPhone Camera app.",
-  "HandOver opens the Meta glasses setup automatically.",
-  "Approve the Meta AI handoff, then wear the glasses. The live picture appears here.",
-];
+function pairingContext(): Raw {
+  const hub = app.link.label || app.link.hub || "This Mac";
+  const account = app.me?.user?.name ? `Signed in as ${app.me.user.name}` : "Your iPhone sign-in syncs here";
+  return html`<div class="pair-context" role="status">
+    <span class="pair-context-check">${icons.checkFill}</span>
+    <span><strong>${app.link.link === "connected" ? `Ready on ${hub}` : `Connecting to ${hub}`}</strong><small>${account}</small></span>
+  </div>`;
+}
 
 function onPairAction(act: string) {
   if (act === "pair-retry") void loadPairing(true);
@@ -129,11 +163,11 @@ export function pairSheet() {
     body: () => html`<div class="pair">
       ${qrBlock()}
       <div class="pair-text">
-        <p class="sheet-lede">Use a phone as the camera that watches your hands.</p>
-        ${steps(PHONE_STEPS)}
+        ${pairingContext()}
+        <p class="pair-instruction">Scan with the iPhone Camera</p>
         ${cameraStatus()}
-        <p class="hint">The phone must be on the same Wi-Fi as this hub.</p>
-        <div class="form-actions"><button class="primary" data-sheet="close">Done</button></div>
+        <p class="hint">HandOver opens and connects automatically.</p>
+        <div class="form-actions"><button class="secondary" data-sheet="close">Cancel</button></div>
       </div>
     </div>`,
     onAction: onPairAction,
@@ -159,10 +193,10 @@ export function cameraSheet(opts: { then?: () => void; step?: CameraChoice } = {
   };
   if (step === "phone" || step === "glasses") watchPairing(step, done);
   else stopWatching();
-  const option = (v: CameraChoice, icon: Raw, title: string, line: string, tag = "") =>
+  const option = (v: CameraChoice, icon: Raw, title: string, line: string) =>
     html`<button class="role-card camera-option ${prefs.camera === v ? "on" : ""}" data-act="cam-pick" data-cam="${v}" role="radio" aria-checked="${prefs.camera === v}">
       <span class="tile">${icon}</span>
-      <span class="role-text"><span class="option-title">${title}${tag ? html` <span class="badge-soft">${tag}</span>` : ""}</span><span class="option-line">${line}</span></span>
+      <span class="role-text"><span class="option-title">${title}</span><span class="option-line">${line}</span></span>
       <span class="role-check">${prefs.camera === v ? icons.checkFill : icons.chevron}</span></button>`;
   openSheet({
     title: step === "phone" ? "Use a Phone" : step === "glasses" ? "Use Meta Glasses" : "How should HandOver see your hands?",
@@ -170,22 +204,22 @@ export function cameraSheet(opts: { then?: () => void; step?: CameraChoice } = {
     body: () => {
       if (step === "choose")
         return html`<div class="form">
-          <p class="sheet-lede">Point a camera at your hands and your work. You can change this anytime.</p>
-          <div class="role-list" role="radiogroup" aria-label="Camera">
-            ${option("computer", icons.laptop, "This Computer's Camera", "Use the webcam on this computer.")}
-            ${option("phone", icons.phone, "A Phone", "Prop up a phone running HandOver and point it at your work.")}
-            ${option("glasses", icons.glasses, "Meta Glasses", "Ray-Ban Meta glasses, connected through the HandOver phone app.", "Experimental")}
+          ${pairingContext()}
+          <p class="sheet-lede">Choose what should watch your work.</p>
+          <div class="camera-primary-options" role="radiogroup" aria-label="Camera">
+            ${option("phone", icons.phone, "iPhone Camera", "Use your phone")}
+            ${option("glasses", icons.glasses, "Meta Glasses", "Use what you see")}
           </div>
+          <button class="quiet camera-computer" data-act="cam-pick" data-cam="computer">${icons.laptop}<span>Use this computer instead</span></button>
         </div>`;
       return html`<div class="pair">
         ${qrBlock()}
         <div class="pair-text">
-          <p class="sheet-lede">${step === "phone" ? "Set up the phone as your camera." : "The glasses send their camera through the HandOver phone app."}</p>
-          ${steps(step === "phone" ? PHONE_STEPS : GLASSES_STEPS)}
+          ${pairingContext()}
+          <p class="pair-instruction">Scan with the iPhone Camera</p>
           ${cameraStatus()}
-          ${step === "glasses" ? html`<p class="hint">Experimental. The glasses need Developer Mode on in the Meta AI app.</p>` : html`<p class="hint">The phone must be on the same Wi-Fi as this hub.</p>`}
-          <div class="form-actions"><button class="secondary" data-act="cam-back">Back</button>
-            <button class="primary" data-act="cam-done">${opts.then ? "Start Lesson" : "Done"}</button></div>
+          <p class="hint">${step === "glasses" ? "HandOver opens the Meta glasses setup on your iPhone." : "HandOver opens the iPhone camera automatically."}</p>
+          <div class="form-actions"><button class="secondary" data-act="cam-back">Back</button></div>
         </div>
       </div>`;
     },

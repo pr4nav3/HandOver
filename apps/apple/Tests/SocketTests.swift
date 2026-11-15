@@ -30,6 +30,7 @@ struct MessageRoutingTests {
         #expect(HubCommand.back(from: 0).text == #"{"from":0,"type":"back"}"#)
         #expect(HubCommand.goto(step: 2).text == #"{"step":2,"type":"goto"}"#)
         #expect(HubCommand.dismissMistake.text == #"{"type":"dismiss_mistake"}"#)
+        #expect(HubCommand.hold(true).text == #"{"hold":true,"type":"hold"}"#)
         #expect(HubCommand.endLesson(lessonId: "demo-v1", runId: "r7").text
             == #"{"lesson_id":"demo-v1","run_id":"r7","type":"end_lesson"}"#)
         #expect(HubCommand.endLesson(lessonId: "demo-v1", runId: nil).text == #"{"lesson_id":"demo-v1","type":"end_lesson"}"#)

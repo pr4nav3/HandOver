@@ -123,6 +123,7 @@ Client to hub (text JSON):
 | `{"type":"back","from":int}` | back | EXISTS |
 | `{"type":"goto","step":int}` | jump, 0-based, `< total` | EXISTS |
 | `{"type":"dismiss_mistake"}` | clears `state.mistake`, broadcasts state | NEW |
+| `{"type":"hold","hold":bool}` | pauses/resumes camera auto-advance for this step; checks and mistake feedback continue, manual navigation still works | NEW |
 | `{"type":"set_check_interval","seconds":float}` | seconds between frames offered to the vision model, clamped to 0.2..10, applied at once for the whole session (every viewer), broadcasts state with the new `check_interval_s`. Works with no lesson loaded. A non-number is ignored | EXISTS |
 
 Any message other than `select_lesson` or `set_check_interval` with no lesson loaded gets `error` `no lesson selected`. Invalid JSON and unknown types are ignored.
@@ -136,7 +137,8 @@ Hub to client:
  "camera_connected":true,
  "camera":{"name":"Ray-Ban Meta via iPhone","platform":"ios","source":"glasses"},
  "check_offline":false,"check_offline_reason":null,
- "mistake":null,"check_interval_s":1.0,"ui_fps":15}
+ "mistake":null,"check_interval_s":1.0,"ui_fps":15,"held":false,
+ "observation":{"phase":"settling","frame_age_ms":73,"camera_fps":14.8}}
 ```
 | Field | Type | Status |
 |---|---|---|
@@ -153,6 +155,8 @@ Hub to client:
 | `mistake` | the current mistake object (7.2 fields minus `type`) or null; cleared on step change, `dismiss_mistake`, or a yes on this step | NEW |
 | `check_interval_s` | float: seconds between frames offered to the vision model, at least (`set_check_interval`, else `HANDOVER_CHECK_INTERVAL_S`). Optional for readers | EXISTS |
 | `ui_fps` | int: live frames per second forwarded to each viewer, at most (`HANDOVER_UI_FPS`). Optional for readers | EXISTS |
+| `held` | bool: camera completion remains verified on this step instead of advancing; manual navigation clears it | NEW |
+| `observation` | optional frame-free checker feedback: `phase` is `idle|waiting_camera|waiting_frame|moving|settling|checking|watching|verified`; `frame_age_ms` and `camera_fps` are nullable numbers | NEW |
 
 - `advance` (EXISTS): `{"type":"advance","from":int,"to":int,"reason":"camera|button|voice"}`, sent right before the matching state; `to` may equal `total` (finished). UI plays the chime when reason is `camera`.
 - `mistake` (NEW), sent once when the mistake check fires:

@@ -3,6 +3,7 @@ import SwiftUI
 @main
 struct HandOverApp: App {
     @State private var model: AppModel
+    @Environment(\.scenePhase) private var scenePhase
 
     init() {
         // Meta requires the toolkit to be configured once at app launch, before registration callbacks or
@@ -23,11 +24,23 @@ struct HandOverApp: App {
                 .handOverSetup()
                 .handOverTheme()
                 .environment(model)
+                .onChange(of: scenePhase) { _, phase in
+                    guard AppAudioLifecycle.shouldHardStop(isActive: phase == .active) else { return }
+                    // Process-wide backstop for routes that disappear before their local onDisappear runs.
+                    SpokenGuide.shared.endLessonAudio()
+                    Chime.shared.stop()
+                }
         }
         #if os(macOS)
         .defaultSize(width: 1100, height: 720)
         #endif
     }
+}
+
+/// Kept pure so the app/background contract has a deterministic regression test. Both `.inactive` (Home,
+/// app switcher, window close) and `.background` must stop; waiting only for background caused orphan speech.
+enum AppAudioLifecycle {
+    static func shouldHardStop(isActive: Bool) -> Bool { !isActive }
 }
 
 /// Links from the Meta AI app carry a `metaWearablesAction` query item.

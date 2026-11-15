@@ -113,14 +113,14 @@ struct RecordGlassesCard: View {
                     .frame(width: HOSize.tile + 4, height: HOSize.tile + 4)
                     .background(theme.colors.well, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                 VStack(alignment: .leading, spacing: HOSpace.xxs) {
-                    Text(state == .notRegistered || state == .unavailable ? (controller.deviceName ?? "Ray-Ban Meta") : state.title)
+                    Text(state == .notRegistered || state == .unavailable ? (controller.deviceName ?? "Meta Glasses") : state.title)
                         .font(theme.fonts.headline)
                         .foregroundStyle(theme.colors.ink)
                     HStack(spacing: HOSpace.xs) {
                         if state.isBusy { ProgressView().controlSize(.mini) } else {
                             Circle().fill(dot(state)).frame(width: 7, height: 7)
                         }
-                        Text(status(state)).font(theme.fonts.callout).foregroundStyle(theme.colors.ink2)
+                        Text(state.statusLine).font(theme.fonts.callout).foregroundStyle(theme.colors.ink2)
                     }
                     if let message = state.message {
                         Text(message).font(theme.fonts.footnote).foregroundStyle(theme.colors.ink2)
@@ -144,42 +144,25 @@ struct RecordGlassesCard: View {
 
     @ViewBuilder private func actions(_ state: GlassesState) -> some View {
         HStack(spacing: HOSpace.s) {
-            switch state {
-            case .unavailable:
-                EmptyView()
-            case .notRegistered:
-                Button("Connect Glasses") { controller.connect() }.buttonStyle(HOButtonStyle(.primary, size: .small))
-            case .developerModeOff, .metaAIMissing:
-                Button("Open Meta AI") { openMetaAI() }.buttonStyle(HOButtonStyle(.secondary, size: .small))
-                Button("Try Again") { controller.connect() }.buttonStyle(HOButtonStyle(.secondary, size: .small))
-            case .waitingForMetaAI:
-                Button("Cancel") { controller.cancel() }.buttonStyle(HOButtonStyle(.secondary, size: .small))
-            case .noDevice:
-                Button("Try Again") { controller.connect() }.buttonStyle(HOButtonStyle(.secondary, size: .small))
-            case .permissionNeeded:
-                Button("Allow") { controller.allowCamera() }.buttonStyle(HOButtonStyle(.primary, size: .small))
-            case .paused:
-                Button("Resume") { controller.connect() }.buttonStyle(HOButtonStyle(.secondary, size: .small))
-            case .powerLimit, .lost, .failed:
-                Button(state == .lost ? "Reconnect" : "Try Again") { controller.connect() }
-                    .buttonStyle(HOButtonStyle(.secondary, size: .small))
-                Button("Use iPhone", action: usePhone).buttonStyle(HOButtonStyle(.secondary, size: .small))
-            case .batteryLow, .tooHot:
-                Button("Use iPhone", action: usePhone).buttonStyle(HOButtonStyle(.secondary, size: .small))
-            case .connecting, .streaming:
-                EmptyView()
+            if let title = state.setupAction.title {
+                Button(title) { perform(state.setupAction) }
+                    .buttonStyle(HOButtonStyle(state.setupAction == .connect || state.setupAction == .allowCamera ? .primary : .secondary,
+                                               size: .small))
+            }
+            if state.offersPhone {
+                Button("Use iPhone", action: usePhone)
+                    .buttonStyle(HOButtonStyle(.quiet, size: .small))
             }
         }
     }
 
-    private func status(_ state: GlassesState) -> String {
-        switch state {
-        case .unavailable: "Not available in this build"
-        case .notRegistered: "Not connected to HandOver"
-        case .streaming: "Streaming"
-        case .connecting: "Connecting"
-        case .waitingForMetaAI: "Waiting"
-        default: state.title
+    private func perform(_ action: GlassesSetupAction) {
+        switch action {
+        case .none: break
+        case .openMetaAI: openMetaAI()
+        case .cancel: controller.cancel()
+        case .allowCamera: controller.allowCamera()
+        case .connect, .retry, .resume, .reconnect: controller.connect()
         }
     }
 

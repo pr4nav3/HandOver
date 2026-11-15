@@ -52,6 +52,26 @@ pub fn connect_link(hub: &HubAddress) -> String {
     format!("handover://connect?hub={encoded}")
 }
 
+/// Adds the camera the desktop asked for to a normal pairing link. Unknown values deliberately make a plain
+/// connection link, so a typo can never launch an unexpected capture source on the phone.
+pub fn camera_link(link: &str, camera: &str) -> String {
+    if !link.starts_with("handover://connect?") || !matches!(camera, "phone" | "glasses") {
+        return link.to_string();
+    }
+    let separator = if link.contains('?') { '&' } else { '?' };
+    format!("{link}{separator}camera={camera}")
+}
+
+/// Adds the short-lived, one-use account handoff claim to the pairing link. This is deliberately not an
+/// account bearer token: the signed-in phone must approve it before the Mac can redeem it.
+pub fn handoff_link(link: &str, claim: &str) -> String {
+    if !link.starts_with("handover://connect?") || claim.len() < 32 || claim.len() > 128 {
+        return link.to_string();
+    }
+    let encoded: String = url::form_urlencoded::byte_serialize(claim.as_bytes()).collect();
+    format!("{link}&handoff={encoded}")
+}
+
 /// The hub URL and pairing link from the hub's `GET /api/hub-info` answer, when it has them.
 /// None on hubs without the route or without a LAN address (the caller falls back).
 pub fn from_hub_info(ans: &crate::api::Answer) -> Option<(String, String)> {

@@ -56,6 +56,8 @@ export interface Pairing {
   label: string | null;
   link: string | null;
   svg: string | null;
+  /** Short-lived QR claim. The phone approves it; this Mac redeems it for its own token. */
+  handoff?: string | null;
 }
 
 /** This computer's webcam link to the hub (core/src/camera.rs). */
@@ -138,6 +140,14 @@ export interface HubState {
   position: number;
   offline_label: string | null;
   check_reason: string | null;
+  /** A learner explicitly paused camera auto-advance on this step. Absent from older hubs. */
+  held?: boolean;
+  /** Lightweight live feedback from frame intake and the checker. Absent from older hubs. */
+  observation?: {
+    phase: "idle" | "waiting_camera" | "waiting_frame" | "moving" | "settling" | "checking" | "watching" | "verified" | string;
+    frame_age_ms: number | null;
+    camera_fps: number | null;
+  } | null;
 }
 
 export interface Advance {
@@ -302,6 +312,30 @@ export interface Me {
   user: User | null;
   auth: "optional" | "required";
   setup_needed: boolean;
+}
+
+/** Aggregate-only stats for the signed-in person. Never contains raw frames, event text or identifiers. */
+export interface ProfileAnalytics {
+  known: boolean;
+  reason: string | null;
+  runs: number;
+  completed_runs?: number;
+  completion_rate?: number | null;
+  courses_completed?: number;
+  minutes_practiced?: number;
+  active_days?: number;
+  current_streak_days?: number;
+  checks?: number;
+  check_pass_rate?: number | null;
+  check_errors?: number;
+  avg_check_latency_ms?: number | null;
+  camera_verified_steps?: number;
+  manual_steps?: number;
+  mistakes_caught?: number;
+  replays?: number;
+  interruptions?: number;
+  camera_sources?: string[];
+  median_camera_ready_ms?: number | null;
 }
 
 export interface OrgRef {

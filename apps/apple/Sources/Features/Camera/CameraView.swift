@@ -6,6 +6,7 @@ import SwiftUI
 struct CameraView: View {
     @Environment(AppModel.self) private var model
     @Environment(LearnFlow.self) private var flow
+    @Environment(AccountStore.self) private var accounts: AccountStore?
     @Environment(\.theme) private var theme
     @State private var running = false
     @State private var askCamera = false
@@ -81,10 +82,10 @@ struct CameraView: View {
         ScrollView {
             VStack(spacing: HOSpace.l) {
                 VStack(spacing: HOSpace.s) {
-                    SymbolTile(symbol: "viewfinder", side: 56)
-                    Text("Choose a camera")
+                    SymbolTile(symbol: "viewfinder", side: 48)
+                    Text("Send a live camera")
                         .hoFont(.display, theme).foregroundStyle(theme.colors.ink).multilineTextAlignment(.center)
-                    Text("Your live view appears on the laptop. Nothing is recorded.")
+                    Text("Choose what the Mac should see.")
                         .font(theme.fonts.body).foregroundStyle(theme.colors.ink2).multilineTextAlignment(.center)
                         .frame(maxWidth: 360)
                 }
@@ -92,13 +93,12 @@ struct CameraView: View {
                 hubStatus.frame(maxWidth: 420)
                 VStack(spacing: HOSpace.s) {
                     #if os(iOS)
-                    Button { beginGlasses() } label: { Label("Meta Glasses", systemImage: "eyeglasses") }
-                        .buttonStyle(HOButtonStyle(.primary, size: .large, fullWidth: true))
-                        .disabled(model.hub == nil || !GlassesFeature.toolkitLinked)
-                    Button { begin() } label: { Label("This iPhone", systemImage: "iphone") }
-                        .buttonStyle(HOButtonStyle(.secondary, size: .large, fullWidth: true))
-                        .disabled(model.hub == nil)
-                    if !GlassesFeature.toolkitLinked { Text("Meta glasses are unavailable in this build.").font(theme.fonts.footnote).foregroundStyle(theme.colors.ink2) }
+                    HStack(spacing: HOSpace.s) {
+                        CameraLaunchCard(symbol: "iphone", title: "iPhone Camera", line: "Use this phone") { begin() }
+                            .disabled(model.hub == nil)
+                        CameraLaunchCard(symbol: "eyeglasses", title: "Meta Glasses", line: "Use what you see") { beginGlasses() }
+                            .disabled(model.hub == nil || !GlassesFeature.toolkitLinked)
+                    }
                     #else
                     Button { begin() } label: { Label("This Mac's Camera", systemImage: "video.fill") }
                         .buttonStyle(HOButtonStyle(.primary, size: .large, fullWidth: true))
@@ -120,13 +120,18 @@ struct CameraView: View {
 
     /// Which hub the frames go to, or what to do first.
     @ViewBuilder private var hubStatus: some View {
-        if model.hub != nil {
+        if let hub = model.hub {
             HOBanner(symbol: model.connection.isConnected ? "checkmark.circle.fill" : "arrow.clockwise",
                      tone: model.connection.isConnected ? .good : .caution,
-                     text: model.connection.isConnected ? "Connected to your hub" : "Connecting to your hub")
+                     text: model.connection.isConnected ? connectedText(hub) : "Connecting to \(hub.host)")
         } else {
-            HOBanner(symbol: "qrcode.viewfinder", text: "Scan the pairing code on your Mac first.")
+            HOBanner(symbol: "qrcode.viewfinder", text: "Scan the pairing code on your Mac first")
         }
+    }
+
+    private func connectedText(_ hub: HubURL) -> String {
+        if let name = accounts?.user?.name { return "Connected to \(hub.host) as \(name)" }
+        return "Connected to \(hub.host)"
     }
 
     private func begin() {
@@ -151,6 +156,36 @@ struct CameraView: View {
     }
     #endif
 }
+
+#if os(iOS)
+private struct CameraLaunchCard: View {
+    let symbol: String
+    let title: String
+    let line: String
+    let action: () -> Void
+    @Environment(\.theme) private var theme
+    @Environment(\.isEnabled) private var isEnabled
+
+    var body: some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: HOSpace.s) {
+                SymbolTile(symbol: symbol, tone: .neutral, side: 42)
+                Text(title).font(theme.fonts.headline).foregroundStyle(theme.colors.ink)
+                    .multilineTextAlignment(.leading)
+                Text(line).font(theme.fonts.footnote).foregroundStyle(theme.colors.ink2)
+            }
+            .padding(HOSpace.m)
+            .frame(maxWidth: .infinity, minHeight: 142, alignment: .topLeading)
+            .background(theme.colors.raised, in: RoundedRectangle(cornerRadius: HORadius.card, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: HORadius.card, style: .continuous)
+                .strokeBorder(theme.colors.line, lineWidth: HOLine.width))
+        }
+        .buttonStyle(.plain)
+        .opacity(isEnabled ? 1 : 0.5)
+        .accessibilityHint(line)
+    }
+}
+#endif
 
 #if os(iOS)
 /// Ray-Ban Meta camera mode: the toolkit's newest raw frame is previewed here and fed into the same

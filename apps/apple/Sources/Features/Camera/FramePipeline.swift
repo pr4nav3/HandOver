@@ -36,6 +36,24 @@ enum FrameSizing {
     }
 }
 
+/// Keeps the camera useful when iOS raises its thermal state. The old emergency path fell all the way to one
+/// frame every two seconds. That made a finished physical step take several seconds just to reach the hub (and
+/// the motion gate needs more than one frame to know the hands have stopped). These bounded rates shed most of
+/// the encoding/upload work while keeping enough fresh observations for completion detection.
+enum ThermalFramePolicy {
+    static let seriousGap: Duration = .milliseconds(250)  // 4 fps
+    static let criticalGap: Duration = .milliseconds(500) // 2 fps
+
+    static func sendGap(for state: ProcessInfo.ThermalState) -> Duration {
+        switch state {
+        case .serious: seriousGap
+        case .critical: criticalGap
+        case .nominal, .fair: FrameSizing.sendGap
+        @unknown default: seriousGap
+        }
+    }
+}
+
 /// Downscales camera frames and encodes JPEGs on one shared Metal-backed `CIContext` (creating a context
 /// per frame is the slow part, so there is exactly one).
 final class FrameEncoder: Sendable {

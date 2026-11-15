@@ -27,7 +27,7 @@ import re
 import statistics
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
@@ -727,28 +727,40 @@ def _flatten(raw: dict) -> Optional[dict]:
 
 
 def load_events() -> list[dict]:
-    """Every event in the local mirror, parsed once per file change. Unreadable lines are skipped."""
+    """Every retained event in the current and rotated local mirrors, parsed once per file change.
+
+    The uploader keeps one ``.1`` file when the 50 MB mirror rotates. Reading it first preserves profile history
+    across that rotation. Unreadable files/lines are skipped; analytics endpoints never fail the app over a
+    damaged optional mirror.
+    """
     path = events_path()
-    try:
-        st = path.stat()
-    except OSError:
+    paths = (path.with_name(path.name + ".1"), path)
+    found = []
+    for source in paths:
+        try:
+            st = source.stat()
+        except OSError:
+            continue
+        found.append((source, st))
+    if not found:
         return []
-    key = (str(path), st.st_size, st.st_mtime_ns)
+    key = tuple((str(source), st.st_size, st.st_mtime_ns) for source, st in found)
     with LOCK:
         if _events_cache["key"] == key:
             return _events_cache["rows"]
     rows = []
-    try:
-        with path.open("r", encoding="utf-8", errors="replace") as f:
-            for line in f:
-                try:
-                    row = _flatten(json.loads(line))
-                except ValueError:
-                    continue
-                if row is not None:
-                    rows.append(row)
-    except OSError:
-        return []
+    for source, _ in found:
+        try:
+            with source.open("r", encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    try:
+                        row = _flatten(json.loads(line))
+                    except ValueError:
+                        continue
+                    if row is not None:
+                        rows.append(row)
+        except OSError:
+            continue
     with LOCK:
         _events_cache.update(key=key, rows=rows)
     return rows
@@ -814,6 +826,77 @@ def progress(lesson_id: str, user: Optional[dict], total: int) -> dict:
     return {"known": True, "runs": len(summaries), "completed": sum(s["finished"] for s in summaries),
             "best_steps_done": max(s["steps_done"] for s in summaries), "last_steps_done": last["steps_done"],
             "last_finished": last["finished"], "last_at": last["last_at"], "total": total}
+
+
+def _event_time(value: Any) -> Optional[datetime]:
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+
+
+def learner_analytics(user_id: str) -> dict:
+    """Private, aggregate-only learning stats for one signed-in person.
+
+    The answer contains no event text, frame data, device identifiers, or course/learner identifiers. Mock runs
+    are excluded explicitly. Rates carry their denominators so clients never imply accuracy from no data.
+    """
+    mine = []
+    for evs in runs(load_events()).values():
+        if run_learner(evs) != user_id:
+            continue
+        start = next((e for e in evs if e.get("kind") == "run_start"), {})
+        if str(start.get("check_mode") or "").lower() == "mock":
+            continue
+        mine.append(evs)
+    if not mine:
+        return {"known": False, "reason": "no runs yet", "runs": 0}
+
+    completed = [evs for evs in mine if any(e.get("kind") == "run_done" for e in evs)]
+    stopped = [evs for evs in mine if any(e.get("kind") == "run_stop" for e in evs)]
+    checks = [e for evs in mine for e in evs if e.get("kind") == "check" and not e.get("stale")]
+    useful_checks = [e for e in checks if not e.get("error_kind") and e.get("done") in ("yes", "no", "unsure")]
+    forward = [e for evs in mine for e in evs if e.get("kind") == "advance"
+               and (as_int(e.get("to_step")) or 0) > (as_int(e.get("from_step")) or 0)]
+    camera = [e for e in forward if e.get("reason") not in ("button", "voice")]
+    manual = [e for e in forward if e.get("reason") in ("button", "voice")]
+    mistakes = [e for evs in mine for e in evs if e.get("kind") == "mistake"]
+    durations = []
+    for evs in mine:
+        outcome = next((e for e in reversed(evs) if e.get("kind") in ("run_done", "run_stop")), {})
+        value = as_float(outcome.get("total_seconds") if outcome.get("kind") == "run_done"
+                         else outcome.get("elapsed_seconds"))
+        if value is not None and value >= 0:
+            durations.append(value)
+    completed_lessons = {str(e.get("lesson_id")) for evs in completed for e in evs if e.get("lesson_id")}
+    completed_days = {t.date() for evs in completed for t in [_event_time(max(
+        (str(e.get("ts") or "") for e in evs), default=""))] if t is not None}
+    today = datetime.now(timezone.utc).date()
+    cursor = today if today in completed_days else today - timedelta(days=1)
+    streak = 0
+    while cursor in completed_days:
+        streak += 1
+        cursor -= timedelta(days=1)
+    latencies = [v for v in (as_float(e.get("latency_ms")) for e in useful_checks) if v is not None and v >= 0]
+    readiness = [v for v in (as_float(e.get("connect_latency_ms")) for evs in mine for e in evs
+                              if e.get("kind") == "camera_first_frame") if v is not None and v >= 0]
+    sources = sorted({str(e.get("source") or e.get("camera_source")) for evs in mine for e in evs
+                      if (e.get("source") or e.get("camera_source")) not in (None, "", "unknown")})
+    pass_n = sum(1 for e in useful_checks if e.get("done") == "yes")
+    return {
+        "known": True, "reason": None, "runs": len(mine), "completed_runs": len(completed),
+        "completion_rate": _rate(len(completed), len(mine)), "courses_completed": len(completed_lessons),
+        "minutes_practiced": round(sum(durations) / 60, 1), "active_days": len(completed_days),
+        "current_streak_days": streak, "checks": len(useful_checks),
+        "check_pass_rate": _rate(pass_n, len(useful_checks)),
+        "check_errors": sum(1 for e in checks if e.get("error_kind")),
+        "avg_check_latency_ms": round(sum(latencies) / len(latencies)) if latencies else None,
+        "camera_verified_steps": len(camera), "manual_steps": len(manual), "mistakes_caught": len(mistakes),
+        "replays": sum(1 for evs in mine for e in evs
+                       if e.get("kind") == "run_start" and e.get("attempt_kind") == "replay"),
+        "interruptions": len(stopped), "camera_sources": sources,
+        "median_camera_ready_ms": round(statistics.median(readiness)) if readiness else None,
+    }
 
 
 def _median(values: list[float]) -> Optional[float]:

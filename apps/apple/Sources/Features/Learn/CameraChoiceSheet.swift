@@ -1,10 +1,11 @@
 import SwiftUI
 
-/// "How should HandOver see your hands?": This iPhone, Meta glasses or Another device, each with what it is and
-/// how to set it up. Opened before the first lesson and from every "Camera: ..., Change" row.
+/// A short camera choice: connection first, then two equal primary sources. Meta setup advances one action at
+/// a time; secondary-device pairing stays available without competing with the common path.
 struct CameraChoiceSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(LearnFlow.self) private var flow
+    @Environment(AccountStore.self) private var accounts: AccountStore?
     @Environment(\.theme) private var theme
     @Environment(\.dismiss) private var dismiss
     @State private var choice: LearnCamera = .thisDevice
@@ -15,23 +16,16 @@ struct CameraChoiceSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: HOSpace.l) {
                     VStack(alignment: .leading, spacing: HOSpace.xs) {
-                        Text("How should HandOver see your hands?")
+                        Text("Choose your camera")
                             .hoFont(.title, theme)
                             .foregroundStyle(theme.colors.ink)
                             .accessibilityAddTraits(.isHeader)
-                        Text("A camera watches your hands so HandOver knows when each step is done. Pick one; you can change it any time.")
+                        Text("What should watch your work?")
                             .font(theme.fonts.callout)
                             .foregroundStyle(theme.colors.ink2)
                     }
-                    VStack(spacing: HOSpace.s) {
-                        ForEach(LearnCamera.allCases) { option in
-                            CameraOptionRow(option: option, selected: option == choice,
-                                            available: option != .glasses || LearnCamera.glassesAvailable) {
-                                Haptics.tap()
-                                choice = option
-                            }
-                        }
-                    }
+                    connectionStatus
+                    primaryChoices
                     details
                 }
                 .padding(HOSpace.l)
@@ -61,14 +55,24 @@ struct CameraChoiceSheet: View {
     }
 
     private var footer: some View {
-        Button {
-            Haptics.impact(.medium)
-            flow.confirm(choice, model: model)
-        } label: {
-            Text(flow.pending == nil ? "Done" : "Start Lesson").frame(maxWidth: .infinity)
+        Group {
+            if canConfirm {
+                Button {
+                    Haptics.impact(.medium)
+                    flow.confirm(choice, model: model)
+                } label: {
+                    Text(flow.pending == nil ? "Use \(choice.title)" : "Start Lesson").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(HOButtonStyle(.primary, size: .large, fullWidth: true))
+                .disabled(model.hub == nil)
+            } else {
+                Text("Connect your glasses above to continue")
+                    .font(theme.fonts.callout)
+                    .foregroundStyle(theme.colors.ink2)
+                    .frame(maxWidth: .infinity)
+                    .frame(minHeight: HOSize.controlLarge)
+            }
         }
-        .buttonStyle(HOButtonStyle(.primary, size: .large, fullWidth: true))
-        .disabled(choice == .glasses && !LearnCamera.glassesAvailable)
         .padding(.horizontal, HOSpace.l)
         .padding(.vertical, HOSpace.m)
         .frame(maxWidth: 560)
@@ -79,7 +83,8 @@ struct CameraChoiceSheet: View {
     @ViewBuilder private var details: some View {
         switch choice {
         case .thisDevice:
-            SetupSteps(title: "Before you start", steps: thisDeviceSteps)
+            HOBanner(symbol: "checkmark.circle.fill", tone: .good,
+                     text: "Ready to use \(DeviceWord.this.lowercased()).")
         case .glasses:
             glassesDetails
         case .otherDevice:
@@ -87,14 +92,61 @@ struct CameraChoiceSheet: View {
         }
     }
 
-    private var thisDeviceSteps: [String] {
-        #if os(macOS)
-        ["Point the Mac's camera at your table.", "Keep your hands in view while you work."]
+    private var canConfirm: Bool {
+        guard choice == .glasses else { return true }
+        return flow.glasses?.state.isStreaming == true
+    }
+
+    private var connectionStatus: some View {
+        HStack(spacing: HOSpace.s) {
+            Image(systemName: model.connection.isConnected ? "checkmark.circle.fill" : "arrow.clockwise")
+                .foregroundStyle(model.connection.isConnected ? theme.colors.good : theme.colors.caution)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(connectionTitle).font(theme.fonts.bodyMedium).foregroundStyle(theme.colors.ink)
+                if let user = accounts?.user {
+                    Text("Signed in as \(user.name)").font(theme.fonts.footnote).foregroundStyle(theme.colors.ink2)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(HOSpace.m)
+        .background(theme.colors.raised, in: RoundedRectangle(cornerRadius: HORadius.control, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: HORadius.control, style: .continuous)
+            .strokeBorder(theme.colors.line, lineWidth: HOLine.width))
+        .accessibilityElement(children: .combine)
+    }
+
+    private var connectionTitle: String {
+        guard let hub = model.hub else { return "Not paired with a Mac" }
+        return model.connection.isConnected ? "Connected to \(hub.host)" : "Connecting to \(hub.host)"
+    }
+
+    @ViewBuilder private var primaryChoices: some View {
+        #if os(iOS)
+        HStack(spacing: HOSpace.s) {
+            PrimaryCameraCard(option: .thisDevice, selected: choice == .thisDevice, available: true) { pick(.thisDevice) }
+            PrimaryCameraCard(option: .glasses, selected: choice == .glasses,
+                              available: LearnCamera.glassesAvailable) { pick(.glasses) }
+        }
+        Button { pick(.otherDevice) } label: {
+            Label("Use another device", systemImage: "qrcode")
+                .font(theme.fonts.callout)
+                .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(HOButtonStyle(choice == .otherDevice ? .secondary : .quiet, size: .small, fullWidth: true))
         #else
-        ["Stand the \(DeviceWord.noun) up with the screen facing you.",
-         "Check that the back camera sees your hands and the table.",
-         "Turn the sound up so you hear the guidance."]
+        VStack(spacing: HOSpace.s) {
+            ForEach(LearnCamera.allCases) { option in
+                CameraOptionRow(option: option, selected: option == choice,
+                                available: option != .glasses || LearnCamera.glassesAvailable) { pick(option) }
+            }
+        }
         #endif
+    }
+
+    private func pick(_ option: LearnCamera) {
+        Haptics.tap()
+        choice = option
     }
 
     @ViewBuilder private var glassesDetails: some View {
@@ -140,6 +192,48 @@ struct CameraChoiceSheet: View {
         }
     }
 }
+
+#if os(iOS)
+private struct PrimaryCameraCard: View {
+    let option: LearnCamera
+    let selected: Bool
+    let available: Bool
+    let action: () -> Void
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: HOSpace.s) {
+                HStack {
+                    SymbolTile(symbol: option.symbol, tone: selected ? .accent : .neutral, side: 42)
+                    Spacer(minLength: 0)
+                    Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                        .foregroundStyle(selected ? theme.colors.accentInk : theme.colors.ink3)
+                }
+                Text(option == .thisDevice ? "iPhone Camera" : "Meta Glasses")
+                    .font(theme.fonts.headline)
+                    .foregroundStyle(theme.colors.ink)
+                    .multilineTextAlignment(.leading)
+                Text(option == .thisDevice ? "Use this phone" : "Use what you see")
+                    .font(theme.fonts.footnote)
+                    .foregroundStyle(theme.colors.ink2)
+            }
+            .padding(HOSpace.m)
+            .frame(maxWidth: .infinity, minHeight: 142, alignment: .topLeading)
+            .background(selected ? theme.colors.accentSoft : theme.colors.raised,
+                        in: RoundedRectangle(cornerRadius: HORadius.card, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: HORadius.card, style: .continuous)
+                .strokeBorder(selected ? theme.colors.accentInk.opacity(0.5) : theme.colors.line,
+                              lineWidth: HOLine.width))
+        }
+        .buttonStyle(.plain)
+        .disabled(!available)
+        .opacity(available ? 1 : 0.5)
+        .accessibilityLabel(option == .thisDevice ? "iPhone Camera" : "Meta Glasses")
+        .accessibilityValue(selected ? "Selected" : "")
+    }
+}
+#endif
 
 /// Which second device is the camera.
 enum OtherDeviceKind: String, CaseIterable, Identifiable {

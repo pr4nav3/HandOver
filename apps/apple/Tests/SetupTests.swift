@@ -281,6 +281,15 @@ struct FramePipelineTests {
         #expect(FrameSizing.target(for: CGSize(width: 4032, height: 3024), longSide: sharp) == CGSize(width: 960, height: 720))
     }
 
+    @Test func thermalThrottleKeepsAnalysisFramesFresh() {
+        #expect(ThermalFramePolicy.sendGap(for: .nominal) == FrameSizing.sendGap)
+        #expect(ThermalFramePolicy.sendGap(for: .fair) == FrameSizing.sendGap)
+        #expect(ThermalFramePolicy.sendGap(for: .serious) == .milliseconds(250))
+        #expect(ThermalFramePolicy.sendGap(for: .critical) == .milliseconds(500))
+        #expect(ThermalFramePolicy.criticalGap < .seconds(1),
+                "even a hot phone must deliver multiple observations per second")
+    }
+
     @Test func neverUpscalesAndKeepsEvenSizes() {
         #expect(FrameSizing.target(for: CGSize(width: 640, height: 480)) == CGSize(width: 640, height: 480))
         #expect(FrameSizing.target(for: CGSize(width: 320, height: 240)) == CGSize(width: 320, height: 240))

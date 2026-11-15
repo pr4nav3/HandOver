@@ -7,7 +7,8 @@
 --   events.step   0-based step index (same as the hub's `state.step`)
 --   steps.n       1-based step number (same as lesson.json `n`), so join with  steps.n = events.step + 1
 --   ts / *_at     UTC
---   events.kind   run_start, run_end, step_enter, check, advance, mistake, check_offline
+--   events.kind   run_start/end/done/stop, step_enter, check, advance, mistake, check_offline,
+--                 camera_connect/hello/first_frame/active/disconnect, auto_advance_hold
 --   advance       from_step -> to_step; reason camera | button | voice; to_step = total means finished
 --   check         done yes | no | unsure, confidence 0..1, latency_ms, reason (what differs, may be null)
 --   mistake       mistake_kind behind | ahead, looks_like = 0-based step the frame resembles
@@ -48,7 +49,7 @@ CREATE TABLE IF NOT EXISTS workspace.handover.events (
   lesson_id    STRING    COMMENT 'Lesson id',
   step         INT       COMMENT '0-based step index the event belongs to',
   ts           TIMESTAMP COMMENT 'Event time (UTC)',
-  kind         STRING    COMMENT 'run_start, run_end, step_enter, check, advance, mistake, check_offline',
+  kind         STRING    COMMENT 'Run, step/check/mistake, and privacy-safe camera lifecycle event kind',
   done         STRING    COMMENT 'check: yes, no or unsure',
   confidence   DOUBLE    COMMENT 'check or mistake confidence 0..1',
   latency_ms   INT       COMMENT 'check latency in ms',
@@ -128,3 +129,65 @@ ORDER BY false_passes DESC;
 
 -- Main Genie question:
 --   "Which step do people get stuck on?"
+
+-- 4. Camera readiness and stability. camera_number is ephemeral; names and device ids are never collected.
+SELECT date_trunc('day', ts) AS day,
+       coalesce(get_json_object(extra, '$.source'), 'unknown')   AS source,
+       coalesce(get_json_object(extra, '$.platform'), 'other')  AS platform,
+       count_if(kind = 'camera_first_frame')                    AS ready_sessions,
+       round(percentile_approx(try_cast(get_json_object(extra, '$.connect_latency_ms') AS DOUBLE), 0.5))
+                                                                  AS median_ready_ms,
+       round(percentile_approx(try_cast(get_json_object(extra, '$.connect_latency_ms') AS DOUBLE), 0.95))
+                                                                  AS p95_ready_ms,
+       count_if(kind = 'camera_disconnect')                     AS disconnects,
+       count_if(kind = 'camera_disconnect' AND get_json_object(extra, '$.had_frame') = 'false')
+                                                                  AS disconnected_before_video
+FROM workspace.handover.events
+WHERE kind IN ('camera_first_frame', 'camera_disconnect')
+GROUP BY day, source, platform
+ORDER BY day DESC, ready_sessions DESC;
+
+-- 5. Vision-check health by lesson and step. Stale results are recorded for operations but excluded here.
+SELECT e.lesson_id, e.step + 1 AS step, s.title,
+       count(*) AS checks,
+       round(avg(CASE WHEN e.done = 'yes' THEN 1.0 ELSE 0.0 END), 3) AS pass_rate,
+       round(avg(CASE WHEN get_json_object(e.extra, '$.error_kind') IS NOT NULL THEN 1.0 ELSE 0.0 END), 3)
+                                                                    AS error_rate,
+       round(percentile_approx(e.latency_ms, 0.5))                  AS median_latency_ms,
+       round(percentile_approx(e.latency_ms, 0.95))                 AS p95_latency_ms,
+       count_if(e.done = 'no')                                     AS no_answers,
+       count_if(e.done = 'unsure')                                 AS unsure_answers
+FROM workspace.handover.events e
+LEFT JOIN workspace.handover.steps s ON s.lesson_id = e.lesson_id AND s.n = e.step + 1
+WHERE e.kind = 'check' AND coalesce(get_json_object(e.extra, '$.stale'), 'false') = 'false'
+GROUP BY e.lesson_id, e.step, s.title
+ORDER BY error_rate DESC, p95_latency_ms DESC;
+
+-- 6. Completion/replay/interruption funnel. Ratios are only over runs that emitted run_start.
+WITH starts AS (
+  SELECT run_id, lesson_id, ts,
+         coalesce(get_json_object(extra, '$.attempt_kind'), 'new') AS attempt_kind,
+         get_json_object(extra, '$.source') AS source
+  FROM workspace.handover.events WHERE kind = 'run_start'
+), outcomes AS (
+  SELECT run_id,
+         max(CASE WHEN kind = 'run_done' THEN 1 ELSE 0 END) AS completed,
+         max(CASE WHEN kind = 'run_stop' THEN 1 ELSE 0 END) AS interrupted,
+         max(try_cast(get_json_object(extra, '$.completion_ratio') AS DOUBLE)) AS completion_ratio,
+         max(try_cast(coalesce(get_json_object(extra, '$.total_seconds'),
+                               get_json_object(extra, '$.elapsed_seconds')) AS DOUBLE)) AS elapsed_seconds
+  FROM workspace.handover.events
+  WHERE kind IN ('run_done', 'run_stop')
+  GROUP BY run_id
+)
+SELECT date_trunc('day', s.ts) AS day, s.lesson_id, s.source,
+       count(*) AS runs,
+       sum(coalesce(o.completed, 0)) AS completed,
+       round(avg(coalesce(o.completed, 0)), 3) AS completion_rate,
+       sum(CASE WHEN s.attempt_kind = 'replay' THEN 1 ELSE 0 END) AS replays,
+       sum(coalesce(o.interrupted, 0)) AS interruptions,
+       round(avg(o.completion_ratio), 3) AS average_completion,
+       round(percentile_approx(o.elapsed_seconds, 0.5), 1) AS median_run_seconds
+FROM starts s LEFT JOIN outcomes o ON o.run_id = s.run_id
+GROUP BY day, s.lesson_id, s.source
+ORDER BY day DESC, runs DESC;

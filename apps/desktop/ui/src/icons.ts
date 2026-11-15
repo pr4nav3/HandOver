@@ -12,7 +12,7 @@ const cameraBody =
 
 export const icons = {
   mark: raw(
-    '<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6.6 10.6 3.4 3.2 7.2-7.2" stroke="currentColor" stroke-width="2.2"/><path d="M6.5 18.5h2.6M10.7 18.5h2.6" stroke="var(--green)" stroke-width="2"/><path d="M14.9 18.5h2.6" stroke="currentColor" stroke-opacity="0.35" stroke-width="2"/></svg>',
+    '<svg width="30" height="30" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 8v48M52 8v48M12 32h40M40 20l12 12-12 12"/></svg>',
   ),
   hub: svg(16, '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>'),
   close: svg(14, '<path d="M6 6l12 12M18 6 6 18"/>', 2),
@@ -32,6 +32,7 @@ export const icons = {
   sound: svg(15, '<path d="M11 5 6 9H3v6h3l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/>'),
   chevron: svg(16, '<path d="m9 6 6 6-6 6"/>', 2),
   refresh: svg(15, '<path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/>'),
+  swap: svg(15, '<path d="M4 8h13M14 5l3 3-3 3M20 16H7M10 13l-3 3 3 3"/>'),
   film: svg(28, '<rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M7 4v16M17 4v16M3 9h4M3 15h4M17 9h4M17 15h4"/>', 1.4),
   filmBig: svg(40, '<rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M7 4v16M17 4v16M3 9h4M3 15h4M17 9h4M17 15h4"/>', 1.3),
   star: svg(16, '<path d="m12 3.5 2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z"/>', 1.6),
@@ -53,6 +54,7 @@ export const icons = {
   undo: svg(16, '<path d="M9 7 4.5 11.5 9 16"/><path d="M5 11.5h9a5.5 5.5 0 0 1 0 11h-2" transform="translate(0 -4)"/>', 1.8),
   redo: svg(16, '<path d="m15 7 4.5 4.5L15 16"/><path d="M19 11.5h-9a5.5 5.5 0 0 0 0 11h2" transform="translate(0 -4)"/>', 1.8),
   play: raw('<svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10" fill="currentColor"/><path d="m10 8.3 6 3.7-6 3.7z" fill="var(--panel)"/></svg>'),
+  pause: svg(15, '<path d="M8 5v14M16 5v14"/>', 2.4),
   checkFill: raw('<svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10" fill="currentColor"/><path d="m7.8 12.3 2.8 2.8 5.6-5.8" fill="none" stroke="var(--panel)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>'),
   tap: svg(18, '<path d="M9.5 12V5.8a1.6 1.6 0 0 1 3.2 0V11l4.6.9a2 2 0 0 1 1.6 2.3l-.8 4.3A2.5 2.5 0 0 1 15.6 20.5h-3.7a3 3 0 0 1-2.3-1.1l-3.4-4.2a1.5 1.5 0 0 1 2.2-2z"/>', 1.6),
   skipped: svg(18, '<circle cx="12" cy="12" r="9.5"/><path d="M8 13.5a4 4 0 0 1 7.5-2M15.5 8.5v3h-3"/>', 1.6),

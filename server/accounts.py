@@ -31,6 +31,7 @@ NAME_MAX = 40
 PASSCODE_MIN, PASSCODE_MAX = 4, 128
 NAME_RE = re.compile(r"^[^\x00-\x1f\x7f]+$")
 WINDOW_S = 60.0
+HANDOFF_TTL_S = 120.0
 
 
 def now() -> float:
@@ -270,6 +271,67 @@ def revoke_user_tokens(user_id: str) -> None:
         kept = {k: v for k, v in tokens.items() if not (isinstance(v, dict) and v.get("user_id") == user_id)}
         if len(kept) != len(tokens):
             _save_tokens(kept)
+
+
+# ---------------------------------------------------------------- one-scan account handoff
+
+# Pairing secrets are short lived and memory-only. The QR contains this high-entropy secret, never a bearer
+# token. A signed-in phone approves it; the Mac that created the QR redeems it once for an independent token.
+_handoffs: dict[str, dict] = {}
+
+
+def _clean_handoffs() -> None:
+    t = now()
+    for digest, entry in list(_handoffs.items()):
+        if not isinstance(entry, dict) or float(entry.get("expires", 0)) <= t:
+            _handoffs.pop(digest, None)
+
+
+def start_handoff() -> dict:
+    claim = secrets.token_urlsafe(32)
+    expires = now() + HANDOFF_TTL_S
+    with library.LOCK:
+        _clean_handoffs()
+        _handoffs[_digest(claim)] = {"expires": expires, "user_id": None}
+    return {"claim": claim, "expires": _iso(expires)}
+
+
+def approve_handoff(claim: object, user_id: str) -> dict:
+    if not isinstance(claim, str) or not 32 <= len(claim) <= 128:
+        raise HTTPException(404, "pairing code expired; show a new code on the Mac")
+    with library.LOCK:
+        _clean_handoffs()
+        entry = _handoffs.get(_digest(claim))
+        if not isinstance(entry, dict):
+            raise HTTPException(404, "pairing code expired; show a new code on the Mac")
+        entry["user_id"] = user_id
+        return {"approved": True, "expires": _iso(float(entry["expires"]))}
+
+
+def redeem_handoff(claim: object) -> Optional[dict]:
+    """Consume an approved handoff and return a fresh device token. None means the phone has not approved yet."""
+    if not isinstance(claim, str) or not 32 <= len(claim) <= 128:
+        raise HTTPException(404, "pairing code expired; show a new code on the Mac")
+    with library.LOCK:
+        _clean_handoffs()
+        digest = _digest(claim)
+        entry = _handoffs.get(digest)
+        if not isinstance(entry, dict):
+            raise HTTPException(404, "pairing code expired; show a new code on the Mac")
+        user_id = entry.get("user_id")
+        if not isinstance(user_id, str) or not user_id:
+            return None
+        _handoffs.pop(digest, None)
+    user = get_user(user_id)
+    if user is None:
+        raise HTTPException(404, "account no longer exists")
+    return {"status": "approved", "user": user, **issue_token(user_id)}
+
+
+def reset_handoffs() -> None:
+    """Tests and hub teardown: handoffs never survive a process."""
+    with library.LOCK:
+        _handoffs.clear()
 
 
 # ---------------------------------------------------------------- login rate limit

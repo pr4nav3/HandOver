@@ -243,6 +243,14 @@ def me(user: Optional[dict] = Depends(accounts.current_user)) -> dict:
     return {"user": user, "auth": library.auth_mode(), "setup_needed": not accounts.has_users()}
 
 
+@router.get("/profile/analytics")
+def profile_analytics(user: Optional[dict] = Depends(accounts.current_user)) -> dict:
+    """The signed-in person's aggregate learning telemetry; never raw events or another learner's data."""
+    if user is None:
+        raise HTTPException(401, "sign in required", headers={"WWW-Authenticate": "Bearer"})
+    return library.learner_analytics(user["id"])
+
+
 @router.post("/auth/setup")
 async def auth_setup(request: Request) -> dict:
     body = await _body(request)
@@ -271,6 +279,26 @@ def auth_logout(request: Request) -> dict:
         raise HTTPException(401, "sign in required", headers={"WWW-Authenticate": "Bearer"})
     accounts.revoke_token(token)
     return {"ok": True}
+
+
+@router.post("/auth/handoff/start")
+def auth_handoff_start() -> dict:
+    """Create a two-minute, one-use QR claim. It carries no account or bearer token."""
+    return accounts.start_handoff()
+
+
+@router.post("/auth/handoff/approve")
+async def auth_handoff_approve(request: Request, user: dict = Depends(accounts.require_user)) -> dict:
+    body = await _body(request)
+    _only(body, ("claim",))
+    return accounts.approve_handoff(body.get("claim"), user["id"])
+
+
+@router.post("/auth/handoff/redeem")
+async def auth_handoff_redeem(request: Request) -> dict:
+    body = await _body(request)
+    _only(body, ("claim",))
+    return accounts.redeem_handoff(body.get("claim")) or {"status": "pending"}
 
 
 @router.get("/users")

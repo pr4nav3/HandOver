@@ -91,7 +91,8 @@ export function stars(value: number, settable = false, size = 16): Raw {
   return html`<span class="stars ${settable ? "settable" : ""}" role="${settable ? "radiogroup" : "img"}"
     aria-label="Rating, ${value} of 5 stars">${[1, 2, 3, 4, 5].map((n) =>
       settable
-        ? html`<button type="button" class="star ${n <= value ? "on" : ""}" data-act="star" data-stars="${n}" aria-label="${n} stars"
+        ? html`<button type="button" class="star ${n <= value ? "on" : ""}" data-act="star" data-stars="${n}" role="radio"
+            aria-checked="${n === value}" tabindex="${n === (value || 1) ? 0 : -1}" aria-label="${n} stars"
             style="font-size:${size}px">${n <= value ? icons.starFill : icons.star}</button>`
         : html`<span class="star ${n <= Math.round(value) ? "on" : ""}" style="font-size:${size}px">${n <= Math.round(value) ? icons.starFill : icons.star}</span>`,
     )}</span>`;
@@ -126,11 +127,17 @@ export interface Sheet {
 }
 
 let current: Sheet | null = null;
+let returnFocus: HTMLElement | null = null;
+
+const focusable = (root: HTMLElement) =>
+  [...root.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])')]
+    .filter((el) => !el.hidden && el.getAttribute("aria-hidden") !== "true");
 
 export function openSheet(s: Sheet) {
+  if (!current) returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   current = s;
   drawSheet();
-  const first = document.querySelector<HTMLInputElement>("#sheet input:not([type=hidden]), #sheet textarea");
+  const first = document.querySelector<HTMLElement>("#sheet input:not([type=hidden]):not([disabled]), #sheet textarea:not([disabled]), #sheet select:not([disabled]), #sheet button:not([disabled])");
   first?.focus();
 }
 
@@ -141,6 +148,9 @@ export function closeSheet() {
   const el = document.getElementById("sheet")!;
   el.hidden = true;
   el.innerHTML = "";
+  const restore = returnFocus;
+  returnFocus = null;
+  if (restore?.isConnected) queueMicrotask(() => restore.focus());
 }
 
 export const sheetOpen = () => !!current;
@@ -153,7 +163,9 @@ export function drawSheet() {
   el.querySelectorAll<HTMLInputElement>("input[name], textarea[name], select[name]").forEach((i) => {
     if (i.type !== "checkbox" && i.type !== "radio") values.set(i.name, i.value);
   });
-  const focusName = (document.activeElement as HTMLInputElement | null)?.name;
+  const active = document.activeElement as HTMLElement | null;
+  const focusName = (active as HTMLInputElement | null)?.name;
+  const focusStars = active?.dataset.stars;
   el.hidden = false;
   el.innerHTML = String(html`<div class="sheet-backdrop" data-sheet="close"></div>
     <div class="sheet ${current.wide ? "wide" : ""}" role="dialog" aria-modal="true" aria-label="${current.title}">
@@ -168,6 +180,7 @@ export function drawSheet() {
     if (v !== undefined && i.type !== "checkbox" && i.type !== "radio" && !i.dataset.fixed) i.value = v;
   });
   if (focusName) el.querySelector<HTMLInputElement>(`[name="${focusName}"]`)?.focus();
+  else if (focusStars) el.querySelector<HTMLElement>(`[data-stars="${focusStars}"]`)?.focus();
 }
 
 export function bindSheet() {
@@ -183,4 +196,29 @@ export function bindSheet() {
     current?.onSubmit?.(e.target as HTMLFormElement);
   });
   el.addEventListener("input", (e) => current?.onInput?.(e.target as HTMLInputElement));
+  el.addEventListener("keydown", (e) => {
+    if (e.key === "Tab") {
+      const items = focusable(el);
+      if (!items.length) return;
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+      return;
+    }
+    const star = (e.target as HTMLElement).closest<HTMLElement>("[data-stars]");
+    if (!star || !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(e.key)) return;
+    const stars = [...el.querySelectorAll<HTMLElement>("[data-stars]")];
+    const at = stars.indexOf(star);
+    const next = e.key === "Home" ? 0 : e.key === "End" ? stars.length - 1 : Math.max(0, Math.min(stars.length - 1, at + (["ArrowRight", "ArrowUp"].includes(e.key) ? 1 : -1)));
+    e.preventDefault();
+    const choice = stars[next];
+    current?.onAction?.("star", choice);
+    el.querySelector<HTMLElement>(`[data-stars="${choice.dataset.stars}"]`)?.focus();
+  });
 }

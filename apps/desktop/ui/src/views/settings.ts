@@ -46,6 +46,12 @@ const KEYWORDS: Record<string, string> = {
 };
 
 const LOOKS_WORDS = { system: "follows system", light: "always light", dark: "always dark" };
+let wasOpen = false;
+let returnFocus: HTMLElement | null = null;
+
+const focusable = (root: HTMLElement) =>
+  [...root.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])')]
+    .filter((node) => !node.hidden && node.getAttribute("aria-hidden") !== "true");
 
 /** "Model sees every" choices, in seconds (CONTRACT.md 7, set_check_interval). */
 export const CHECK_INTERVALS = [0.5, 1, 2];
@@ -97,7 +103,18 @@ function interval(v: number): Raw {
 
 export function renderSettings(el: HTMLElement, m: SettingsModel) {
   el.hidden = !m.open;
-  if (!m.open) return;
+  if (!m.open) {
+    if (wasOpen && returnFocus?.isConnected) {
+      const restore = returnFocus;
+      queueMicrotask(() => restore.focus());
+    }
+    wasOpen = false;
+    returnFocus = null;
+    return;
+  }
+  const opening = !wasOpen;
+  if (opening) returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  wasOpen = true;
   const s = m.settings;
   const connected = m.link.link !== "idle";
   const q = m.search.trim().toLowerCase();
@@ -120,14 +137,15 @@ export function renderSettings(el: HTMLElement, m: SettingsModel) {
         </header>
         <div class="sheet-body">
           <section>
-            <h3>Camera</h3>
+            <h3>Connection</h3>
             <dl class="hub-details">
-              <div><dt>Sees your hands</dt><dd>${m.camera}<button class="quiet small" data-camera>Change</button></dd></div>
+              <div><dt>Mac</dt><dd><span class="dot ${m.link.link === "connected" ? "ok" : "warn"}"></span>${m.link.link === "connected" ? `Ready · ${m.link.label || m.link.hub}` : connected ? "Reconnecting" : "Not paired"}</dd></div>
+              ${m.account ? html`<div><dt>Account</dt><dd>${m.account}</dd></div>` : ""}
+              <div><dt>Camera</dt><dd>${m.camera}<button class="quiet small" data-camera>Change</button></dd></div>
             </dl>
             ${connected
-              ? html`<div class="hub-actions"><button class="secondary" data-pair>${icons.qr}<span>Pair a Phone</span></button>
-                  <span class="hint">Show a code the HandOver phone app scans to join this hub.</span></div>`
-              : ""}
+              ? html`<div class="hub-actions"><button class="primary" data-pair>${icons.qr}<span>Pair iPhone</span></button></div>`
+              : html`<div class="hub-actions"><button class="primary" data-other-hub>Connect to a Hub</button></div>`}
           </section>
           <section>
             <h3>Appearance</h3>
@@ -165,19 +183,20 @@ export function renderSettings(el: HTMLElement, m: SettingsModel) {
             )}
           </section>
           <section>
-            <h3>Hub</h3>
-            ${connected
-              ? html`<dl class="hub-details">
+            <details class="settings-advanced">
+              <summary>Advanced hub settings</summary>
+              ${connected
+                ? html`<dl class="hub-details">
                   <div><dt>Address</dt><dd><code>${m.link.hub}</code><button class="quiet small" data-copy="${m.link.hub}">Copy</button></dd></div>
                   <div><dt>Status</dt><dd><span class="dot ${m.link.link === "connected" ? "ok" : "warn"}"></span>${m.link.link === "connected" ? "Connected" : "Reconnecting"}</dd></div>
                   <div><dt>Checks</dt><dd>${m.checks}</dd></div>
-                  ${m.account ? html`<div><dt>Account</dt><dd>${m.account}</dd></div>` : ""}
                 </dl>
                 ${m.checkInterval !== null ? interval(m.checkInterval) : ""}
                 <div class="hub-actions"><button class="secondary" data-other-hub>Connect to Another Hub</button>
                   <button class="quiet danger-text" data-disconnect>Disconnect</button></div>`
-              : html`<p class="muted">Not connected.</p><div class="hub-actions"><button class="primary" data-other-hub>Connect to a Hub</button></div>`}
-            ${toggle("reopenLastHub", "Reconnect to the last hub at launch", s.reopen_last_hub, "Skips the connect screen.")}
+                : html`<p class="muted">Not connected.</p>`}
+              ${toggle("reopenLastHub", "Reconnect to the last hub at launch", s.reopen_last_hub, "Skips the connect screen.")}
+            </details>
           </section>
           <section>
             <h3>Keyboard</h3>
@@ -203,6 +222,7 @@ export function renderSettings(el: HTMLElement, m: SettingsModel) {
   }
   const body = el.querySelector(".sheet-body");
   if (body) body.scrollTop = scroll;
+  if (opening) el.querySelector<HTMLElement>("[data-close]")?.focus();
 }
 
 export function bindSettings(el: HTMLElement, a: SettingsActions) {
@@ -230,5 +250,19 @@ export function bindSettings(el: HTMLElement, a: SettingsActions) {
   el.addEventListener("input", (e) => {
     const t = e.target as HTMLInputElement;
     if (t.id === "theme-search") a.search(t.value);
+  });
+  el.addEventListener("keydown", (e) => {
+    if (e.key !== "Tab") return;
+    const items = focusable(el);
+    if (!items.length) return;
+    const first = items[0];
+    const last = items[items.length - 1];
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
   });
 }

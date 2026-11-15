@@ -146,6 +146,9 @@ impl Engine {
             }
             "back" => self.send(ClientMessage::Back { from: int("from") })?,
             "goto" => self.send(ClientMessage::Goto { step: int("step").ok_or("goto needs a step")? })?,
+            "hold" => self.send(ClientMessage::Hold {
+                hold: args.get("held").and_then(Value::as_bool).ok_or("hold needs held")?,
+            })?,
             "dismissMistake" => self.send(ClientMessage::DismissMistake)?,
             "setCheckInterval" => {
                 let seconds = args.get("seconds").and_then(Value::as_f64).unwrap_or(f64::NAN);
@@ -155,7 +158,7 @@ impl Engine {
                 let opt = |v: String| if v.is_empty() { None } else { Some(v) };
                 self.send(ClientMessage::EndLesson { lesson_id: opt(s("lessonId")), run_id: opt(s("runId")) })?
             }
-            "pairing" => self.pairing()?,
+            "pairing" => self.pairing(&s("camera"))?,
             "cameraStart" => self.camera_start(&s("name"), &s("platform"))?,
             "cameraStop" => {
                 self.camera_stop();
@@ -288,7 +291,7 @@ impl Engine {
             args.get("body"),
         );
         let ok = (200..300).contains(&ans.status);
-        if ok && (path == "/api/auth/login" || path == "/api/auth/setup") {
+        if ok && matches!(path, "/api/auth/login" | "/api/auth/setup" | "/api/auth/handoff/redeem") {
             if let Some(t) = ans.body.as_object_mut().and_then(|o| o.remove("token")) {
                 self.tokens.set(&base, t.as_str())?;
             }
@@ -350,21 +353,31 @@ impl Engine {
 
     /// What a phone needs to pair with this hub: the address it can reach, the link and its QR.
     /// The hub's own `/api/hub-info` comes first; older hubs fall back to this computer's address.
-    fn pairing(&self) -> Result<Value, String> {
+    fn pairing(&self, camera: &str) -> Result<Value, String> {
         let hub = self.require_hub()?;
         if let Some((url, link)) =
             phone::from_hub_info(&api::request(&hub, None, "GET", "/api/hub-info", &Value::Null, None))
         {
+            let link = phone::camera_link(&link, camera);
+            let started = api::request(&hub, None, "POST", "/api/auth/handoff/start", &Value::Null, None);
+            let handoff = if (200..300).contains(&started.status) {
+                started.body.get("claim").and_then(Value::as_str).map(str::to_string)
+            } else {
+                None
+            };
+            let link = handoff.as_deref().map(|claim| phone::handoff_link(&link, claim)).unwrap_or(link);
             let label = HubAddress::parse(&url).map(|h| h.authority()).unwrap_or_else(|_| url.clone());
-            return Ok(json!({ "hub": url, "label": label, "link": link, "svg": phone::qr_svg(&link)? }));
+            return Ok(json!({ "hub": url, "label": label, "link": link, "svg": phone::qr_svg(&link)?,
+                              "handoff": handoff }));
         }
         let lan = phone::lan_ip();
         Ok(match phone::phone_hub(&hub, lan) {
             Some(p) => {
-                let link = phone::connect_link(&p);
-                json!({ "hub": p.base(), "label": p.authority(), "link": link, "svg": phone::qr_svg(&link)? })
+                let link = phone::camera_link(&phone::connect_link(&p), camera);
+                json!({ "hub": p.base(), "label": p.authority(), "link": link, "svg": phone::qr_svg(&link)?,
+                        "handoff": null })
             }
-            None => json!({ "hub": null, "label": null, "link": null, "svg": null }),
+            None => json!({ "hub": null, "label": null, "link": null, "svg": null, "handoff": null }),
         })
     }
 

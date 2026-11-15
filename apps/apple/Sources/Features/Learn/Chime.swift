@@ -1,8 +1,7 @@
 import AVFoundation
 
 /// The short tone played when the camera moves the step on: two soft sine notes (E6 then B6) with a quick
-/// attack and a gentle decay, synthesized once into a buffer and played through AVAudioEngine. On iPhone it uses
-/// the ambient audio category, so it mixes with other audio and stays silent when the ring switch is off.
+/// attack and a gentle decay, synthesized once into a buffer and played through AVAudioEngine.
 @MainActor
 final class Chime {
     static let shared = Chime()
@@ -20,10 +19,18 @@ final class Chime {
         player.play()
     }
 
+    /// Interrupts a verification tone immediately when Learn closes and discards the render graph, so no
+    /// scheduled buffer can survive a route or scene transition. The next `play` builds a clean graph.
+    func stop() {
+        player?.stop()
+        engine?.stop()
+        engine?.reset()
+        player = nil
+        engine = nil
+        buffer = nil
+    }
+
     private func setUp() {
-        #if os(iOS)
-        try? AVAudioSession.sharedInstance().setCategory(.ambient, options: [.mixWithOthers])
-        #endif
         let engine = AVAudioEngine()
         let player = AVAudioPlayerNode()
         guard let format = AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 1),

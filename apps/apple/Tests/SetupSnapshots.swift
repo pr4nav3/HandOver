@@ -137,7 +137,8 @@ struct SetupSnapshots {
                                progress: .init(runs: 1, completed: 0, bestStepsDone: 3, lastStepsDone: 3, lastFinished: false, total: 5)),
         ]
         try await shoot("account-profile") {
-            NavigationStack { ProfileView(preset: progress) }.environment(app).environment(accounts)
+            NavigationStack { ProfileView(preset: progress, presetAnalytics: .sample) }
+                .environment(app).environment(accounts)
         }
         let mine = MyOrgs(orgs: [Self.org.summary,
                                  OrgSummary(id: "o2", name: "Saturday Class", members: 12, role: .learner)],

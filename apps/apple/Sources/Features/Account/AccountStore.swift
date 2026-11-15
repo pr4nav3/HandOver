@@ -118,6 +118,14 @@ final class AccountStore {
         await adopt(answer)
     }
 
+    /// Lets the Mac that displayed a scanned QR adopt this same hub identity with its own revocable token.
+    func approveHandoff(_ claim: String) async throws {
+        // A cold-launch deep link can arrive before /api/me finishes. The client already loaded this hub's
+        // Keychain token in follow(); let the hub decide whether it is signed in.
+        guard let client else { throw HubError.unreachable("No hub.") }
+        try await client.approveHandoff(claim)
+    }
+
     /// Signs out on the hub (best effort) and forgets the token here.
     func signOut() async {
         guard let hub, let client else { return }
@@ -132,6 +140,12 @@ final class AccountStore {
     func progress() async throws -> [CourseProgressItem] {
         guard let client else { return [] }
         return try await client.courses()
+    }
+
+    /// Truthful aggregate activity for the signed-in person, when this hub supports it.
+    func profileAnalytics() async throws -> ProfileAnalytics? {
+        guard let client else { return nil }
+        return try await client.profileAnalytics()
     }
 
     // MARK: - Avatar
@@ -178,6 +192,10 @@ final class AccountStore {
         store.hub = HubURL(parsing: "192.168.1.20:8000")
         return store
     }
+
+    /// Stable identity for the interactive `-demo` app. Creating this once avoids rebuilding the environment
+    /// store as SwiftUI recomputes the settings hierarchy.
+    static let demo = AccountStore.preview()
 }
 
 private extension AccountStore.Support {
@@ -194,7 +212,7 @@ struct AccountScope<Content: View>: View {
     @ViewBuilder var content: Content
 
     var body: some View {
-        let store = injected ?? AccountStore.shared
+        let store = injected ?? (model.isPreview ? AccountStore.demo : AccountStore.shared)
         content
             .environment(store)
             .task(id: model.hub) { if !model.isPreview { store.follow(model.hub) } }

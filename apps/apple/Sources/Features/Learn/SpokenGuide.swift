@@ -64,6 +64,29 @@ struct SpeechQueue: Equatable, Sendable {
     }
 }
 
+/// Invalidates asynchronous synthesizer callbacks when a lesson closes. AVSpeechSynthesizer may deliver the
+/// cancellation after another lesson has already queued speech, so queue state alone cannot identify stale work.
+struct SpeechCallbackGate: Equatable, Sendable {
+    private(set) var generation: UInt = 0
+
+    mutating func invalidate() { generation &+= 1 }
+    func accepts(_ callbackGeneration: UInt) -> Bool { callbackGeneration == generation }
+}
+
+/// Identifies the step that owns the current utterance. A new token means every line from the previous step is
+/// obsolete, including a line already inside AVSpeechSynthesizer and callbacks that arrive after cancellation.
+struct SpeechStepGate: Equatable, Sendable {
+    private(set) var token: String?
+
+    mutating func move(to token: String) -> Bool {
+        guard self.token != token else { return false }
+        self.token = token
+        return true
+    }
+
+    mutating func clear() { token = nil }
+}
+
 /// Spoken guidance for a learner wearing glasses or headphones (the glasses' open-ear speakers are a Bluetooth
 /// route). Speaks through whatever route is active with the best installed English voice, ducks other audio
 /// while it talks, and asks Learn to duck the clip so it never talks over the narration.
@@ -89,9 +112,16 @@ final class SpokenGuide: NSObject {
 
     private(set) var isSpeaking = false
     private(set) var bluetoothRoute: Route?
+    @ObservationIgnored private var lessonAudioActive = false
     @ObservationIgnored private var queue = SpeechQueue()
     @ObservationIgnored private let synth = AVSpeechSynthesizer()
     @ObservationIgnored private lazy var voice: AVSpeechSynthesisVoice? = Self.bestVoice()
+    /// Delegate callbacks from `AVSpeechSynthesizer` are asynchronous. Keep the generation that created each
+    /// utterance so a late cancellation from a lesson that just closed cannot advance a newly opened lesson's
+    /// queue or reactivate its audio session.
+    @ObservationIgnored private var callbackGate = SpeechCallbackGate()
+    @ObservationIgnored private var stepGate = SpeechStepGate()
+    @ObservationIgnored private var utteranceGenerations: [ObjectIdentifier: UInt] = [:]
 
     override init() {
         super.init()
@@ -125,6 +155,27 @@ final class SpokenGuide: NSObject {
         Verbosity(rawValue: UserDefaults.standard.string(forKey: Self.verbosityKey) ?? "") ?? .stepsAndMistakes
     }
 
+    /// Activates the lesson's playback session before AVPlayer starts. On iOS, `.allowBluetoothA2DP` plus no
+    /// speaker override intentionally keeps both the expert clip and guidance on connected Meta glasses.
+    func beginLessonAudio() {
+        lessonAudioActive = true
+        applyAudioPolicy()
+    }
+
+    /// Tears down speech and the shared playback session when Learn closes.
+    func endLessonAudio() {
+        lessonAudioActive = false
+        stepGate.clear()
+        stop()
+    }
+
+    /// Starts a new step-sized speech generation. This is called before the step's new lines are enqueued, so
+    /// an old step title, mistake, or result can never continue over the new expert clip.
+    func beginStep(_ token: String) {
+        guard stepGate.move(to: token) else { return }
+        stop()
+    }
+
     /// Queues a line if guidance is on and the verbosity allows it.
     func say(_ text: String, kind: SpeechQueue.Kind) {
         guard isEnabled else { return }
@@ -138,33 +189,47 @@ final class SpokenGuide: NSObject {
     }
 
     func stop() {
+        callbackGate.invalidate()
         queue.clear()
         synth.stopSpeaking(at: .immediate)
+        utteranceGenerations.removeAll()
         finish()
     }
 
     private func start(_ line: SpeechQueue.Line) {
-        #if os(iOS)
-        let session = AVAudioSession.sharedInstance()
-        try? session.setCategory(.playback, mode: .spokenAudio, options: [.duckOthers, .allowBluetoothA2DP])
-        try? session.setActive(true)
-        #endif
         isSpeaking = true
+        applyAudioPolicy()
         let utterance = AVSpeechUtterance(string: line.text)
         utterance.voice = voice
         utterance.prefersAssistiveTechnologySettings = true
+        utteranceGenerations[ObjectIdentifier(utterance)] = callbackGate.generation
         synth.speak(utterance)
     }
 
-    private func next() {
+    private func completed(_ utteranceID: ObjectIdentifier) {
+        guard let generation = utteranceGenerations.removeValue(forKey: utteranceID),
+              callbackGate.accepts(generation) else { return }
         if let line = queue.finished(at: Date()) { start(line) } else { finish() }
     }
 
     private func finish() {
-        guard isSpeaking else { return }
         isSpeaking = false
+        applyAudioPolicy()
+    }
+
+    private func applyAudioPolicy() {
         #if os(iOS)
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        let session = AVAudioSession.sharedInstance()
+        if isSpeaking {
+            try? session.setCategory(.playback, mode: .spokenAudio, options: [.duckOthers, .allowBluetoothA2DP])
+            try? session.setActive(true)
+        } else if lessonAudioActive {
+            try? session.setCategory(.playback, mode: .moviePlayback, options: [.allowBluetoothA2DP])
+            try? session.setActive(true)
+        } else {
+            try? session.setActive(false, options: .notifyOthersOnDeactivation)
+        }
+        refreshRoute()
         #endif
     }
 
@@ -193,15 +258,22 @@ final class SpokenGuide: NSObject {
         let n = name.lowercased()
         return n.contains("ray-ban") || n.contains("rayban") || n.contains("meta") || n.contains("glasses")
     }
+
+    nonisolated static func audioDestinationName(_ route: Route?, fallback: String) -> String {
+        guard let route else { return fallback }
+        return route.isGlasses ? "Glasses audio" : route.name
+    }
 }
 
 extension SpokenGuide: AVSpeechSynthesizerDelegate {
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
-        Task { @MainActor in self.next() }
+        let utteranceID = ObjectIdentifier(utterance)
+        Task { @MainActor in self.completed(utteranceID) }
     }
 
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
-        Task { @MainActor in self.next() }
+        let utteranceID = ObjectIdentifier(utterance)
+        Task { @MainActor in self.completed(utteranceID) }
     }
 }
 
@@ -212,28 +284,29 @@ struct SpokenGuideIndicator: View {
     @Environment(\.theme) private var theme
 
     var body: some View {
-        if let route = guide.bluetoothRoute {
-            Button {
-                Haptics.tap()
-                guide.isEnabled.toggle()
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: route.isGlasses ? "eyeglasses" : "headphones")
-                    Image(systemName: guide.isEnabled ? "speaker.wave.2.fill" : "speaker.slash")
-                }
-                .font(theme.fonts.badge)
-                .foregroundStyle(guide.isEnabled ? theme.colors.accentInk : theme.colors.ink2)
-                .padding(.horizontal, 8)
-                .frame(minHeight: HOSize.badge)
-                .background(guide.isEnabled ? theme.colors.accentSoft : theme.colors.well, in: Capsule())
-                .frame(minHeight: HOSize.touch)
-                .contentShape(Rectangle())
+        let route = guide.bluetoothRoute
+        let destination = SpokenGuide.audioDestinationName(route, fallback: "Device audio")
+        Button {
+            Haptics.tap()
+            guide.isEnabled.toggle()
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: route?.isGlasses == true ? "eyeglasses" : route == nil ? "speaker.wave.2" : "headphones")
+                Text(destination).lineLimit(1)
+                Image(systemName: guide.isEnabled ? "waveform" : "speaker.slash")
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel(guide.isEnabled ? "Spoken guidance on, through \(route.name)"
-                                : "Spoken guidance off, \(route.name) connected")
-            .accessibilityHint("Double tap to turn spoken guidance \(guide.isEnabled ? "off" : "on")")
+            .font(theme.fonts.badge)
+            .foregroundStyle(route != nil ? theme.colors.accentInk : theme.colors.ink2)
+            .padding(.horizontal, 8)
+            .frame(minHeight: HOSize.badge)
+            .background(route != nil ? theme.colors.accentSoft : theme.colors.well, in: Capsule())
+            .frame(minHeight: HOSize.touch)
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
+        .accessibilityLabel(guide.isEnabled ? "Spoken guidance on, through \(destination)"
+                            : "Spoken guidance off, \(destination)")
+        .accessibilityHint("Double tap to turn spoken guidance \(guide.isEnabled ? "off" : "on")")
     }
 }
 
