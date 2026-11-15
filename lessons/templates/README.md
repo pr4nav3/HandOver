@@ -5,7 +5,7 @@ Hand-written step plans for the two demo lessons. Use one when Gemini's step bou
 | File | Lesson | Steps | Manual steps |
 |---|---|---|---|
 | `fortune-teller.steps.json` | Origami fortune teller | 8 | 1, 3, 7 |
-| `front-wheel.steps.json` | Bike front wheel, quick release | 9 | 1, 6 |
+| `front-wheel.steps.json` | Bike front wheel check: out, skewer, rim, spokes, tire, back in | 11 | 1, 7 |
 
 Each file has the same shape as `Extraction` in `server/teach.py`: `transcript` (empty), `steps`, `safety`, `tools`. Every step has `start`, `end`, `title`, `check_question`, `prerequisites`, `ref_time` and `common_mistake`.
 
