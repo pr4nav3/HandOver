@@ -1,7 +1,10 @@
--- HandOver / Databricks: SYNTHETIC test data. OPTIONAL.
+-- HandOver / Databricks: SYNTHETIC test data. OPTIONAL, and not loaded in the live workspace.
+--
+-- Do not run this on demo day. It was used to build and lay out the dashboard and Genie space locally
+-- (Apache Spark) before real runs existed. The setup script never runs it.
 --
 -- ##########################################################################################################
--- #  DELETE BEFORE JUDGING. Run 04_cleanup_test_data.sql, then check it returns zeros.                     #
+-- #  If loaded: DELETE BEFORE JUDGING with scripts/databricks_setup.py --teardown-test-data (04).          #
 -- #  The demo must show real events only (docs/PLAN.md: done screen and data from real events).            #
 -- #  Never show a judge a chart while these rows exist.                                                    #
 -- ##########################################################################################################
