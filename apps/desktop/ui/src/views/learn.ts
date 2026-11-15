@@ -107,6 +107,9 @@ const TEMPLATE = html`<div class="learn">
           </div>
         </div>
       </div>
+    </section>
+  </main>
+  <footer class="learn-footer">
       <div class="step-info">
         <div class="step-meta-row"><p class="step-count" role="status" aria-live="polite">&nbsp;</p>
           <div class="step-actions">
@@ -122,21 +125,16 @@ const TEMPLATE = html`<div class="learn">
         <p class="step-evidence" aria-live="polite"></p>
       </div>
       <div class="controls">
+        <details class="steps-disclosure">
+          <summary>${icons.grid}<span>All Steps</span><span class="steps-summary-arrow" aria-hidden="true"></span></summary>
+          <div class="course-list scroll" aria-label="Steps"></div>
+        </details>
         <div class="next-wrap">
           <button class="back" type="button" title="Back (Left Arrow)">Back</button>
           <button class="next" type="button" title="Next (Right Arrow or Space)">Next</button>
         </div>
       </div>
-      <details class="steps-disclosure">
-        <summary>
-          <span class="steps-summary-icon">${icons.grid}</span>
-          <span class="steps-summary-copy"><strong>All lesson steps</strong><small>Jump to another step</small></span>
-          <span class="steps-summary-arrow" aria-hidden="true"></span>
-        </summary>
-        <div class="course-list scroll" aria-label="Steps"></div>
-      </details>
-    </section>
-  </main>
+  </footer>
   <div class="done-layer" hidden></div>
   <div class="learn-empty" hidden></div>
 </div>`;
