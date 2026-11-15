@@ -1,121 +1,23 @@
 {
-  "_note": "PLACEHOLDER TIMES: every start and end below is an even split, not the real take. Retime each step from the take before cutting (see README.md). check_type is for people: the CLI treats a step as manual when check_question is \"manual\".",
+  "_note": "PLACEHOLDER TIMES: even split, not the real take. Let the vision cuts (make_lesson.ps1 -NoSpeech) find the real ones with this list as the prior, or retime by hand. check_type is for people: the CLI treats a step as manual when check_question is \"manual\". Needs only a hub quick release, a rim brake, spokes, tire, valve, and a rag.",
   "transcript": [],
   "steps": [
-    {
-      "start": "00:00",
-      "end": "00:13",
-      "title": "Open the rim brake release",
-      "check_type": "manual",
-      "check_question": "manual",
-      "prerequisites": [],
-      "ref_time": "",
-      "common_mistake": "Open the brake release so the tire clears the pads."
-    },
-    {
-      "start": "00:13",
-      "end": "00:26",
-      "title": "Flip the quick release lever open",
-      "check_type": "camera",
-      "check_question": "Is the quick release lever swung open, standing out away from the fork blade?",
-      "prerequisites": [
-        1
-      ],
-      "ref_time": "",
-      "common_mistake": "Flip the lever open; do not unscrew it like a nut."
-    },
-    {
-      "start": "00:26",
-      "end": "00:39",
-      "title": "Unscrew the nut three to four turns",
-      "check_type": "camera",
-      "check_question": "Is the nut on the side opposite the lever backed off, with a gap between it and the fork end?",
-      "prerequisites": [
-        2
-      ],
-      "ref_time": "",
-      "common_mistake": "Turn the nut past the safety tabs on the fork ends."
-    },
-    {
-      "start": "00:39",
-      "end": "00:52",
-      "title": "Drop the wheel out of fork",
-      "check_type": "camera",
-      "check_question": "Is the wheel fully out of the fork, with both fork ends empty?",
-      "prerequisites": [
-        1,
-        3
-      ],
-      "ref_time": "",
-      "common_mistake": "Lift the bike and let the wheel drop straight down."
-    },
-    {
-      "start": "00:52",
-      "end": "01:05",
-      "title": "Lower the fork onto the axle",
-      "check_type": "camera",
-      "check_question": "Is the axle seated all the way into the slots of both fork ends, with the wheel centered between the fork blades?",
-      "prerequisites": [
-        4
-      ],
-      "ref_time": "",
-      "common_mistake": "Seat the axle fully in both fork ends."
-    },
-    {
-      "start": "01:05",
-      "end": "01:18",
-      "title": "Snug the nut until lever resists",
-      "check_type": "manual",
-      "check_question": "manual",
-      "prerequisites": [
-        5
-      ],
-      "ref_time": "",
-      "common_mistake": "Tighten the nut until the lever resists at halfway."
-    },
-    {
-      "start": "01:18",
-      "end": "01:31",
-      "title": "Close the lever flat along blade",
-      "check_type": "camera",
-      "check_question": "Is the quick release lever closed, lying flat along the fork blade?",
-      "prerequisites": [
-        6
-      ],
-      "ref_time": "",
-      "common_mistake": "Close the lever fully until it lies flat."
-    },
-    {
-      "start": "01:31",
-      "end": "01:44",
-      "title": "Close the brake release",
-      "check_type": "camera",
-      "check_question": "Are the brake arms closed in, with a pad near the rim on each side?",
-      "prerequisites": [
-        5
-      ],
-      "ref_time": "",
-      "common_mistake": "Close the brake release before riding."
-    },
-    {
-      "start": "01:44",
-      "end": "01:57",
-      "title": "Spin the wheel and squeeze brake",
-      "check_type": "camera",
-      "check_question": "Is a hand squeezing the brake lever on the handlebar?",
-      "prerequisites": [
-        7,
-        8
-      ],
-      "ref_time": "",
-      "common_mistake": "Squeeze the brake to check it grips the rim."
-    }
+    {"start": "00:00", "end": "00:14", "title": "Squeeze the front brake and watch the pads meet the rim", "check_type": "manual", "check_question": "manual", "prerequisites": [], "ref_time": "", "common_mistake": "Squeeze the lever once before you start, so you know how the brake felt."},
+    {"start": "00:14", "end": "00:28", "title": "Flip the quick release lever open and unwind the nut three turns", "check_type": "camera", "check_question": "Is the quick release lever swung open, standing out away from the fork blade?", "prerequisites": [1], "ref_time": "", "common_mistake": "Flip the lever open first; do not unscrew it like a nut."},
+    {"start": "00:28", "end": "00:42", "title": "Lift the front of the bike and drop the wheel out", "check_type": "camera", "check_question": "Are both fork ends empty, with no wheel between the fork blades?", "prerequisites": [2], "ref_time": "", "common_mistake": "Lift the bike and let the wheel drop straight down out of the fork."},
+    {"start": "00:42", "end": "00:56", "title": "Pull the skewer out and check both springs sit narrow end inward", "check_type": "camera", "check_question": "Is the skewer pulled out of the wheel, held or lying apart from the hub?", "prerequisites": [3], "ref_time": "", "common_mistake": "Keep both springs; each one points its narrow end toward the hub."},
+    {"start": "00:56", "end": "01:10", "title": "Wipe the braking surface of the rim all the way round", "check_type": "camera", "check_question": "Is a cloth pressed against the rim edge of a wheel held off the bike?", "prerequisites": [3], "ref_time": "", "common_mistake": "Wipe the flat metal track the pads touch, not the tire."},
+    {"start": "01:10", "end": "01:24", "title": "Pinch pairs of spokes around the wheel to find a loose one", "check_type": "camera", "check_question": "Is a hand pinching two spokes together on a wheel held off the bike?", "prerequisites": [3], "ref_time": "", "common_mistake": "Squeeze two spokes at a time; a loose one gives more than its neighbors."},
+    {"start": "01:24", "end": "01:38", "title": "Turn the wheel and look along the tire for cuts and glass, then check the valve stands straight", "check_type": "manual", "check_question": "manual", "prerequisites": [3], "ref_time": "", "common_mistake": "Turn the wheel a full circle; look at the tread and both sidewalls."},
+    {"start": "01:38", "end": "01:52", "title": "Slide the skewer back through the hub, lever on the left, springs narrow end in", "check_type": "camera", "check_question": "Is the skewer through the hub with its lever on one side of the wheel and the nut on the other?", "prerequisites": [4, 5, 6, 7], "ref_time": "", "common_mistake": "The lever goes on the left side of the bike, away from the chain."},
+    {"start": "01:52", "end": "02:06", "title": "Lower the fork onto the axle so it seats in both slots", "check_type": "camera", "check_question": "Is the axle seated all the way into the slots of both fork ends, with the wheel centered between the fork blades?", "prerequisites": [8], "ref_time": "", "common_mistake": "Press the bike down so the axle reaches the top of both slots."},
+    {"start": "02:06", "end": "02:20", "title": "Snug the nut, then close the lever flat along the fork blade", "check_type": "camera", "check_question": "Is the quick release lever closed, lying flat along the fork blade and pointing up or back?", "prerequisites": [9], "ref_time": "", "common_mistake": "Fold the lever back along the fork. A lever pointing forward can catch on something and open."},
+    {"start": "02:20", "end": "02:34", "title": "Squeeze the brake and spin the wheel to check it runs clear of the pads", "check_type": "camera", "check_question": "Is a hand squeezing the brake lever on the handlebar with the wheel in the fork?", "prerequisites": [10], "ref_time": "", "common_mistake": "Squeeze the brake once and spin the wheel before you ride."}
   ],
   "safety": [
-    "Lever must be fully closed and flat before riding",
-    "Close the brake release before riding",
-    "Seat the axle fully in both fork ends before riding",
-    "Squeeze the brake to test it before riding"
+    "The quick release lever must be fully closed and flat along the fork before riding",
+    "The axle must sit at the top of both fork slots before closing the lever",
+    "Squeeze the brake and spin the wheel to test it before riding"
   ],
-  "tools": []
+  "tools": ["a clean rag"]
 }
