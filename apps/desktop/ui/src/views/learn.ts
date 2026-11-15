@@ -55,8 +55,6 @@ export interface LearnActions {
   finished: (s: RunSummary) => void;
 }
 
-type Badge = "watching" | "verified" | "manual" | "done" | "offline" | "nocamera" | "held";
-
 interface StepRun {
   ms: number;
   how: "camera" | "hand" | "skipped" | null;
@@ -88,20 +86,8 @@ const TEMPLATE = html`<div class="learn">
       </div>
       <div class="placeholder live-ph"></div>
       <span class="live-chip" hidden></span>
+      <span class="badge watching camera-verdict" role="status" aria-live="polite" aria-atomic="true"><span class="badge-dot"></span><span class="badge-label">Getting ready</span></span>
     </section>
-    <div class="badge-wrap feedback-card idle" role="status" aria-live="polite" aria-atomic="true">
-      <div class="feedback-head">
-        <span class="badge watching"><span class="badge-dot"></span><span class="badge-label">Getting ready</span></span>
-        <span class="feedback-metric"></span>
-      </div>
-      <div class="check-meta">
-        <strong class="meta-top">Loading this step</strong>
-        <span class="check-reason meta-bottom">The tutorial will begin in a moment.</span>
-      </div>
-      <div class="feedback-foot">
-        <span class="feedback-audio" title="Desktop audio follows the output selected in system sound settings">${icons.sound}<span>Audio · System output</span></span>
-      </div>
-    </div>
     <div class="mistake-card" role="alert" hidden></div>
     </div>
     <button class="learn-divider" type="button" role="separator" aria-orientation="vertical" aria-label="Resize camera and tutorial panels" aria-valuemin="24" aria-valuemax="62"><span></span></button>
@@ -132,6 +118,8 @@ const TEMPLATE = html`<div class="learn">
           </div>
         </div>
         <h1 class="step-title">&nbsp;</h1>
+        <p class="step-instruction">Do this step. HandOver moves on when it sees it done.</p>
+        <p class="step-evidence" aria-live="polite"></p>
       </div>
       <div class="controls">
         <div class="next-wrap">
@@ -745,25 +733,20 @@ export class LearnView {
       list.querySelector<HTMLElement>(".step-row.current")?.scrollIntoView({ block: "nearest" });
     }
 
-    // Large live feedback: what HandOver is doing, followed by one clear next action.
-    let badge: Badge = "watching";
-    if (isDone) badge = "done";
-    else if (s?.held) badge = "held";
-    else if (this.flashVerified || s?.status === "verified") badge = "verified";
-    else if (s?.status === "manual" || step?.check_type === "manual") badge = "manual";
-    else if (s?.check_offline) badge = "offline";
-    else if (step && s && !s.camera_connected) badge = "nocamera";
+    // The verdict belongs to the learner's picture; evidence stays beside the current instruction.
     const feedback = learnFeedback(s, step, this.flashVerified);
-    const feedbackCard = this.q<HTMLElement>(".feedback-card");
-    feedbackCard.className = `badge-wrap feedback-card ${feedback.tone} phase-${feedback.phase}`;
-    feedbackCard.hidden = !step || !!manualStep || (!showLive && !s?.camera_connected && !s?.check_offline);
     const b = this.q<HTMLElement>(".badge");
-    // "is-live", not "live": the camera pane owns the `.live` class and its width rules.
-    b.className = `badge ${badge === "nocamera" ? "watching" : badge}${s?.camera_connected ? " is-live" : ""}`;
-    this.q(".badge-label").textContent = feedback.label;
-    this.q(".meta-top").textContent = feedback.title;
-    this.q(".meta-bottom").textContent = feedback.action;
-    this.q(".feedback-metric").textContent = feedback.metric;
+    b.className = `badge camera-verdict ${activeMistake ? "caution" : feedback.tone} phase-${feedback.phase}`;
+    b.hidden = !step;
+    this.q(".badge-label").textContent = activeMistake ? "Mistake caught" : feedback.label;
+    livePane.classList.toggle("verdict-good", feedback.phase === "verified");
+    this.q(".step-instruction").textContent = manualStep
+      ? "Complete this step, then use Next."
+      : "Do this step. HandOver moves on when it sees it done.";
+    const check = s?.last_check;
+    this.q(".step-evidence").textContent = check && !manualStep
+      ? `Last check ${(check.latency_ms / 1000).toFixed(1)} s${s?.check_reason || check.reason ? ` · ${s?.check_reason || check.reason}` : ""}`
+      : manualStep ? "" : feedback.action;
 
     const can = !!s?.lesson_id && !down;
     const nextBtn = this.q<HTMLButtonElement>(".next");

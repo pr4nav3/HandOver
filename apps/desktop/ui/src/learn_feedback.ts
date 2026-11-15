@@ -40,7 +40,7 @@ export function learnFeedback(state: HubState | null, step: Step | null, flashVe
 
   if (!state || !step) return result("idle", "Getting ready", "Loading this step", "The tutorial will begin in a moment.", "idle");
   if (state.status === "done") return result("done", "Complete", "Lesson finished", "Your progress has been saved.", "good");
-  if (state.held) return result("held", "Step held", "Take your time", "Feedback stays live. Release Hold when you want automatic advance.", "caution");
+  if (state.held) return result("held", "Step held", "Take your time", "Feedback stays live. Release Hold when you want automatic advance.", "idle");
   if (flashVerified || state.status === "verified" || state.observation?.phase === "verified")
     return result("verified", "Verified", "That looks right", "The next step is coming up.", "good");
   if (state.status === "manual" || step.check_type === "manual")
@@ -48,7 +48,7 @@ export function learnFeedback(state: HubState | null, step: Step | null, flashVe
   if (state.check_offline)
     return result("offline", "Checks off", "Keep following the tutorial", offlineAction(state), "caution");
   if (!state.camera_connected || state.observation?.phase === "waiting_camera")
-    return result("waiting_camera", "No camera", "Connect a camera", "Use your phone, computer, or Meta glasses to get live feedback.", "caution");
+    return result("waiting_camera", "No camera", "Connect a camera", "Use your phone, computer, or Meta glasses to get live feedback.", "idle");
 
   switch (state.observation?.phase) {
     case "waiting_frame":

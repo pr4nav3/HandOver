@@ -40,7 +40,7 @@ test("Learn layout and tutorial controls expose keyboard and assistive semantics
   assert.match(learn, /class="tutorial-scrubber"[^>]+aria-label="Tutorial position"/);
   assert.match(learn, /class="tutorial-cc on"[^>]+aria-pressed="true"/);
   assert.match(learn, /class="hold-step"[^>]+aria-pressed="false"/);
-  assert.match(learn, /class="badge-wrap feedback-card[^>]+role="status"[^>]+aria-live="polite"/);
+  assert.match(learn, /class="badge watching camera-verdict"[^>]+role="status"[^>]+aria-live="polite"/);
   assert.match(learn, /<details class="steps-disclosure">/);
   assert.match(learn, /class="step-count" role="status" aria-live="polite"/);
   assert.doesNotMatch(learn, /class="progress" role="progressbar"/);
@@ -67,7 +67,7 @@ test("Learn keeps waiting and manual states compact", async () => {
   const css = await readFile(new URL("../src/styles/app.css", import.meta.url), "utf8");
   assert.match(learn, /livePane\.hidden = !!manualStep/);
   assert.match(learn, /classList\.toggle\("manual-focus", !!manualStep\)/);
-  assert.match(learn, /feedbackCard\.hidden = !step \|\| !!manualStep/);
+  assert.doesNotMatch(learn, /class="badge-wrap feedback-card/);
   assert.match(css, /\.live\.waiting\s*{[^}]*flex:\s*0 0 auto/);
   assert.match(css, /\.live\.waiting \.placeholder/);
 });

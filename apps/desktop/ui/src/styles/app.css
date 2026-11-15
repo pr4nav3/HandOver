@@ -2526,6 +2526,48 @@ button.option-card:hover {
   min-height: 0;
 }
 
+.live::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border: 2px solid transparent;
+  border-radius: inherit;
+  transition: border-color 0.9s ease-out;
+}
+
+.live.verdict-good::after {
+  border-color: var(--green);
+}
+
+.camera-verdict {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  z-index: 2;
+}
+
+.camera-verdict.good {
+  color: var(--green);
+  border-color: var(--green);
+  background: var(--panel);
+}
+
+.camera-verdict.good .badge-dot { background: var(--green); }
+.camera-verdict.caution { color: var(--amber); border-color: var(--amber); }
+.camera-verdict.caution .badge-dot { background: var(--amber); }
+.camera-verdict.phase-checking { color: var(--accent-ink); }
+
+.step-instruction,
+.step-evidence {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.4;
+  margin-top: 5px;
+}
+
+.step-evidence:empty { display: none; }
+
 /* Before there is a picture the pane is an instruction, not a pretend feed: it keeps its own height. */
 .live.waiting {
   flex: 0 0 auto;
@@ -3218,9 +3260,9 @@ button.back {
 .next {
   min-width: 128px;
   padding: 0 26px;
-  border: 0;
-  background: var(--accent);
-  color: var(--on-accent);
+  border: 1px solid var(--border-strong);
+  background: var(--panel);
+  color: var(--text);
   font-size: 17px;
 }
 
