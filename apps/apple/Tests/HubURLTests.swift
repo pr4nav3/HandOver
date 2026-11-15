@@ -59,6 +59,19 @@ struct HubURLTests {
         #expect(HubURL(parsing: hub.link.absoluteString) == hub)
     }
 
+    @Test func pairingLinkCarriesACameraIntent() throws {
+        let glasses = try #require(URL(string: "handover://connect?hub=http%3A%2F%2F10.1.2.3%3A8000&camera=glasses"))
+        let phone = try #require(URL(string: "handover://connect?hub=http%3A%2F%2F10.1.2.3%3A8000&camera=phone"))
+        let plain = try #require(URL(string: "handover://connect?hub=http%3A%2F%2F10.1.2.3%3A8000"))
+        #expect(HubURL(parsing: glasses.absoluteString)?.displayName == "10.1.2.3:8000")
+        #expect(CameraLaunchIntent(url: glasses) == .glasses)
+        #expect(CameraLaunchIntent(url: phone) == .phone)
+        #expect(CameraLaunchIntent(url: plain) == nil)
+        let hub = try #require(HubURL(parsing: "10.1.2.3:8000"))
+        #expect(CameraLaunchIntent(url: hub.cameraLink(.glasses)) == .glasses)
+        #expect(HubURL(parsing: hub.cameraLink(.glasses).absoluteString) == hub)
+    }
+
     @Test func codableAsPlainString() throws {
         let hub = try #require(HubURL(parsing: "10.1.2.3"))
         let data = try JSONEncoder().encode([hub])

@@ -101,8 +101,8 @@ struct ConnectStatusView: View {
     private var title: String {
         switch phase {
         case .idle: "Connecting"
-        case .testing(let hub): "Connecting to \(hub.host)"
-        case .connected(let hub, _): "Connected to \(hub.host)"
+        case .testing: "Connecting"
+        case .connected: "Connected"
         case .failed(let hub, let result): Self.failure(result).title(hub.host)
         }
     }
@@ -135,7 +135,7 @@ struct ConnectStatusView: View {
             Failure(symbol: "lock", title: { _ in "Local network is off for HandOver" },
                     message: "Turn on Local Network for HandOver in Settings > Privacy & Security > Local Network.")
         case .unreachable, .hub:
-            Failure(symbol: "wifi.exclamationmark", title: { "Cannot reach \($0)" },
+            Failure(symbol: "wifi.exclamationmark", title: { _ in "Cannot reach your hub" },
                     message: "Make sure this device and the hub are on the same Wi-Fi, and that the hub is running.")
         }
     }

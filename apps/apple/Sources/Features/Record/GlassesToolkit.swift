@@ -12,15 +12,21 @@ import Foundation
 import CoreImage
 import MWDATCamera
 import MWDATCore
+import OSLog
 import UIKit
 
 @MainActor
 enum GlassesToolkitHooks {
     private static var configured = false
+    private(set) static var configurationError: String?
+    private static var bridges: [WeakGlassesBridge] = []
 
     static func makeBridge() -> GlassesToolkitBridge? {
         configure()
-        return MWDATGlasses()
+        let bridge = MWDATGlasses()
+        bridges.removeAll { $0.value == nil }
+        bridges.append(WeakGlassesBridge(bridge))
+        return bridge
     }
 
     /// `Wearables.configure()` must run once before any other toolkit call.
@@ -29,17 +35,45 @@ enum GlassesToolkitHooks {
         configured = true
         do {
             try Wearables.configure()
+            configurationError = nil
         } catch {
             configured = false
+            configurationError = "Meta toolkit setup failed: \(Self.describe(error))"
         }
     }
 
     nonisolated static func handle(_ url: URL) {
         Task { @MainActor in
             configure()
-            _ = try? await Wearables.shared.handleUrl(url)
+            guard configurationError == nil else {
+                notifyCallback(configurationError)
+                return
+            }
+            do {
+                let handled = try await Wearables.shared.handleUrl(url)
+                if !handled { notifyCallback("Meta AI returned a callback HandOver could not recognize.") }
+                else { notifyCallback(nil) }
+            } catch {
+                notifyCallback("Meta AI callback failed: \(describe(error))")
+            }
         }
     }
+
+    private static func notifyCallback(_ error: String?) {
+        bridges.removeAll { $0.value == nil }
+        for bridge in bridges { bridge.value?.registrationCallbackFinished(error: error) }
+    }
+
+    private static func describe(_ error: any Error) -> String {
+        if let dat = error as? any DatError { return dat.description }
+        return error.localizedDescription
+    }
+}
+
+@MainActor
+private final class WeakGlassesBridge {
+    weak var value: MWDATGlasses?
+    init(_ value: MWDATGlasses) { self.value = value }
 }
 
 extension GlassesTransport {
@@ -55,7 +89,10 @@ extension GlassesTransport {
 /// AVAssetWriter (HEVC).
 @MainActor
 final class MWDATGlasses: GlassesToolkitBridge {
+    private static let log = Logger(subsystem: "com.soham109.handover", category: "MetaGlasses")
+    private weak var controller: GlassesController?
     private var session: DeviceSession?
+    private var camera: MWDATCamera.Camera?
     private var stream: MWDATCamera.Stream?
     private var tokens: [any AnyListenerToken] = []
     private var watchTask: Task<Void, Never>?
@@ -65,6 +102,11 @@ final class MWDATGlasses: GlassesToolkitBridge {
     private let ciContext = CIContext()
 
     func connect(_ controller: GlassesController) {
+        self.controller = controller
+        if let error = GlassesToolkitHooks.configurationError {
+            controller.set(state: .failed(error))
+            return
+        }
         connectTask?.cancel()
         connectTask = Task { [weak self, weak controller] in
             guard let self, let controller else { return }
@@ -74,13 +116,15 @@ final class MWDATGlasses: GlassesToolkitBridge {
     }
 
     func allowCamera(_ controller: GlassesController) {
+        self.controller = controller
+        controller.set(state: .waitingForMetaAI)
         Task { [weak self, weak controller] in
             guard let self, let controller else { return }
             do {
                 let status = try await Wearables.shared.requestPermission(.camera)
                 if status == .granted { await self.run(controller) } else { controller.set(state: .permissionNeeded) }
-            } catch {
-                controller.set(state: .failed(error.localizedDescription))
+            } catch let error {
+                controller.set(state: Self.state(for: error))
             }
         }
     }
@@ -92,6 +136,8 @@ final class MWDATGlasses: GlassesToolkitBridge {
         Task { for token in old { await token.cancel() } }
         stream?.stop()
         stream = nil
+        camera?.stop()
+        camera = nil
         session?.stop()
         session = nil
         controller.set(frame: nil)
@@ -129,6 +175,7 @@ final class MWDATGlasses: GlassesToolkitBridge {
     }
 
     private func run(_ controller: GlassesController) async {
+        self.controller = controller
         let wearables = Wearables.shared
         if wearables.registrationState != .registered {
             controller.set(state: .waitingForMetaAI)
@@ -139,7 +186,7 @@ final class MWDATGlasses: GlassesToolkitBridge {
                 case .configurationInvalid: controller.set(state: .developerModeOff)
                 case .metaAINotInstalled: controller.set(state: .metaAIMissing)
                 case .alreadyRegistered: break
-                default: controller.set(state: .failed(error.localizedDescription))
+                default: controller.set(state: .failed("Meta registration failed: \(error.description)"))
                 }
                 if error != .alreadyRegistered { return }
             }
@@ -153,18 +200,18 @@ final class MWDATGlasses: GlassesToolkitBridge {
                 return
             }
         }
-        guard let device = wearables.devices.first.flatMap({ wearables.deviceForIdentifier($0) }) else {
+        guard let device = await waitForDevice(wearables) else {
             controller.set(state: .noDevice)
             return
         }
         controller.set(device: device.name, battery: device.batteryLevel)
         do {
-            if try await wearables.checkPermissionStatus(.camera) != .granted {
+            if try await checkCameraPermission(wearables) != MWDATCore.PermissionStatus.granted {
                 controller.set(state: .permissionNeeded)
                 return
             }
-        } catch {
-            controller.set(state: .failed(error.localizedDescription))
+        } catch let error {
+            controller.set(state: Self.state(for: error))
             return
         }
         controller.set(state: .connecting)
@@ -172,24 +219,65 @@ final class MWDATGlasses: GlassesToolkitBridge {
             let session = try wearables.createSession(deviceSelector: AutoDeviceSelector(wearables: wearables))
             self.session = session
             try session.start()
+            guard await waitForStarted(session) else {
+                controller.set(state: session.state == .stopped ? .lost : .failed("The glasses session timed out before it started."))
+                return
+            }
             try startStream(session: session, controller: controller)
         } catch let error as DeviceSessionError {
             controller.set(state: Self.state(for: error))
         } catch {
-            controller.set(state: .failed(error.localizedDescription))
+            controller.set(state: .failed("Glasses session failed: \(Self.describe(error))"))
         }
     }
 
+    private func waitForDevice(_ wearables: any WearablesInterface) async -> Device? {
+        for _ in 0..<40 {
+            if let device = wearables.devices.first.flatMap({ wearables.deviceForIdentifier($0) }) { return device }
+            try? await Task.sleep(for: .milliseconds(250))
+            if Task.isCancelled { return nil }
+        }
+        return nil
+    }
+
+    /// Meta AI may return before its accessory connection is ready. Retry the transient permission errors
+    /// briefly instead of turning the SDK's one-frame handoff race into a permanent "Internal error" card.
+    private func checkCameraPermission(_ wearables: any WearablesInterface) async throws(PermissionError) -> MWDATCore.PermissionStatus {
+        var last: PermissionError?
+        for attempt in 0..<8 {
+            do {
+                return try await wearables.checkPermissionStatus(.camera)
+            } catch let error {
+                last = error
+                let transient = error == .noDevice || error == .noDeviceWithConnection || error == .connectionError || error == .internalError
+                guard transient, attempt < 7 else { throw error }
+                try? await Task.sleep(for: .milliseconds(500))
+            }
+        }
+        throw last ?? .internalError
+    }
+
+    private func waitForStarted(_ session: DeviceSession) async -> Bool {
+        for _ in 0..<120 {
+            if session.state == .started { return true }
+            if session.state == .stopped { return false }
+            try? await Task.sleep(for: .milliseconds(100))
+            if Task.isCancelled { return false }
+        }
+        return false
+    }
+
     private func startStream(session: DeviceSession, controller: GlassesController) throws {
-        var camera: MWDATCamera.Camera?
+        var madeCamera: MWDATCamera.Camera?
         for (resolution, rate) in GlassesTransport.current.attempts {
             if let made = try? session.addCamera(config: StreamConfiguration(videoCodec: .raw, resolution: resolution, frameRate: rate)) {
-                camera = made
+                madeCamera = made
                 break
             }
         }
-        guard let camera else { throw RecorderError.failed("The glasses have no camera to share.") }
-        let stream = camera.stream
+        guard let madeCamera else { throw RecorderError.failed("The glasses have no camera to share.") }
+        camera = madeCamera
+        let stream = madeCamera.stream
         self.stream = stream
         meter.reset()
         let writer = self.writer
@@ -224,6 +312,36 @@ final class MWDATGlasses: GlassesToolkitBridge {
         }
         tokens = [frameToken, stateToken, errorToken]
         stream.start()
+    }
+
+    func registrationCallbackFinished(error: String?) {
+        guard let controller else { return }
+        if let error {
+            Self.log.error("Registration callback failed: \(error, privacy: .public)")
+            controller.set(state: .failed(error))
+            return
+        }
+        Self.log.info("Registration callback handled; state=\(Wearables.shared.registrationState.description, privacy: .public)")
+        if Wearables.shared.registrationState == .registered, !controller.state.isStreaming {
+            connect(controller)
+        }
+    }
+
+    private static func state(for error: PermissionError) -> GlassesState {
+        switch error {
+        case .noDevice, .noDeviceWithConnection: .noDevice
+        case .connectionError: .lost
+        case .metaAINotInstalled: .metaAIMissing
+        case .requestInProgress: .waitingForMetaAI
+        case .requestTimeout: .failed("Meta AI camera approval timed out. Try Allow again.")
+        case .internalError: .failed("Meta AI returned an internal camera-permission error. Reopen Meta AI, confirm Developer Mode is on, then try again.")
+        @unknown default: .failed("Meta AI returned an unknown camera-permission error (\(error.rawValue)).")
+        }
+    }
+
+    private static func describe(_ error: any Error) -> String {
+        if let dat = error as? any DatError { return dat.description }
+        return error.localizedDescription
     }
 
     private static func state(for error: StreamError) -> GlassesState {
@@ -344,6 +462,7 @@ private final class GlassesWriter: @unchecked Sendable {
 
 @MainActor
 enum GlassesToolkitHooks {
+    static func configure() {}
     static func makeBridge() -> GlassesToolkitBridge? { nil }
     nonisolated static func handle(_ url: URL) {}
 }

@@ -183,5 +183,10 @@ struct RecordSigningConfigTests {
         #expect((plist["UISupportedExternalAccessoryProtocols"] as? [String]) == ["com.meta.ar.wearable"])
         let modes = plist["UIBackgroundModes"] as? [String] ?? []
         #expect(modes.contains("bluetooth-peripheral") && modes.contains("external-accessory"))
+        let mwdat = plist["MWDAT"] as? [String: Any]
+        #expect(mwdat?["AppLinkURLScheme"] as? String == "handover://")
+        #expect(mwdat?["MetaAppID"] as? String == "0")
+        #expect(mwdat?["ClientToken"] as? String == "0")
+        #expect(mwdat?["TeamID"] as? String == "$(DEVELOPMENT_TEAM)")
     }
 }

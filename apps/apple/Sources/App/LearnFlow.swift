@@ -91,6 +91,8 @@ final class LearnFlow {
     private(set) var hasChosenCamera: Bool
     /// The camera sheet is open; with `pending`, its button starts that lesson.
     var showCameraSheet = false
+    /// A pairing QR can send the app straight to the requested Be the Camera mode. CameraView consumes it.
+    private(set) var cameraLaunchIntent: CameraLaunchIntent?
     private(set) var pending: PendingStart?
     /// The glasses, made the first time they are picked and kept so setup survives closing the sheet.
     private(set) var glasses: GlassesController?
@@ -129,6 +131,16 @@ final class LearnFlow {
     func changeCamera() {
         pending = nil
         showCameraSheet = true
+    }
+
+    /// Opens Be the Camera after a purpose-built desktop QR is scanned.
+    func openCamera(_ intent: CameraLaunchIntent) {
+        cameraLaunchIntent = intent
+        section = .camera
+    }
+
+    func consumeCameraLaunch(_ intent: CameraLaunchIntent) {
+        if cameraLaunchIntent == intent { cameraLaunchIntent = nil }
     }
 
     /// The sheet's button: saves the camera, closes the sheet, and starts the pending lesson if any.

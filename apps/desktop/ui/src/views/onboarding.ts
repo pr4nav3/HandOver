@@ -2,12 +2,13 @@
 // choose a role, pick a look. Also the Connect page alone when no hub is paired.
 // The welcome pages use the bundled sample lesson (synthetic fortune teller, rendered).
 
-import { call, type Connected, type Settings } from "../api";
+import { call, invoke, type Connected, type Settings } from "../api";
 import { orgAvatar, personAvatar, ring, HUES, HUE_NAMES } from "../components";
 import { icons } from "../icons";
 import { app, errorText, go, prefs, rerender, signedIn } from "../state";
 import { applyTheme, lookOf } from "../themes";
 import { ago, html, paint, type Raw } from "../util";
+import { hubRequiresAccount } from "../pairing";
 import { refreshMe, setupOwner, signIn } from "./profile";
 import { joinSheet, loadOrgs } from "./orgs";
 
@@ -38,11 +39,11 @@ export function startOnboarding(connectOnly: boolean) {
 
 /** The steps after Connect that this person will actually see. */
 function laterSteps(): Page[] {
-  if (ob.connectOnly) return app.library && !signedIn() ? ["account"] : [];
+  if (ob.connectOnly) return hubRequiresAccount(app.me) ? ["account"] : [];
   const out: Page[] = [];
-  if (app.library) out.push("account");
-  if (app.library && ob.accountMode === "setup") out.push("profile");
-  if (app.library) out.push("join");
+  if (hubRequiresAccount(app.me)) out.push("account");
+  if (app.library && signedIn() && ob.accountMode === "setup") out.push("profile");
+  if (app.library && signedIn()) out.push("join");
   out.push("role", "theme");
   return out;
 }
@@ -179,12 +180,12 @@ function connectPage(): Raw {
     const n = ob.connected.lessons.length;
     return chrome(
       html`<div class="ob-result"><span class="ob-check">${icons.checkFill}</span>
-        <h1 class="ob-title">Connected to ${ob.connected.label}</h1>
+        <h1 class="ob-title">Connected</h1>
         <p class="ob-line">${n ? `${n} ${n === 1 ? "lesson" : "lessons"} on this hub.` : "No lessons on this hub yet."}</p></div>`,
     );
   }
   if (ob.connecting)
-    return chrome(html`<div class="ob-result"><span class="spinner large"></span><h1 class="ob-title">Connecting to ${ob.connecting}</h1>
+    return chrome(html`<div class="ob-result"><span class="spinner large"></span><h1 class="ob-title">Connecting</h1>
       <p class="ob-line">Checking that a HandOver hub is there.</p></div>`);
   if (ob.fail)
     return chrome(
@@ -197,12 +198,14 @@ function connectPage(): Raw {
   return chrome(
     html`<div class="ob-mark">${icons.mark}</div>
       <h1 class="ob-title">Connect to your hub</h1>
-      <p class="ob-line">The hub is HandOver running on a computer near you. It keeps your lessons.</p>
+      <p class="ob-line">This Mac can run the hub and keep your lessons here.</p>
+      <button class="primary large ob-primary" data-act="ob-local">Use This Mac</button>
+      <p class="hint">Or connect to HandOver running on another computer.</p>
       <form class="ob-form" id="ob-connect" autocomplete="off">
         <label class="field"><span>Hub address</span>
           <input id="ob-address" name="address" placeholder="192.168.1.20:8000" spellcheck="false" autocapitalize="off" value="${ob.typed}" /></label>
         <p class="hint">If the hub runs on this computer, type localhost. HandOver uses port 8000 unless you set another.</p>
-        <button class="primary large" type="submit">Connect</button>
+        <button class="secondary large" type="submit">Connect to Another Hub</button>
       </form>
       ${recent.length
         ? html`<div class="recent"><p class="field-label">Recent</p>${recent.map(
@@ -369,6 +372,7 @@ export async function onboardingAction(act: string, t: HTMLElement) {
     } else if (ob.page === "theme") finish();
     else nextPage();
   } else if (act === "ob-recent") void doConnect(t.dataset.base!);
+  else if (act === "ob-local") void useThisMac();
   else if (act === "ob-forget") {
     app.snap.recent = await call("forgetHub", { base: t.dataset.base });
     rerender();
@@ -389,6 +393,20 @@ export async function onboardingAction(act: string, t: HTMLElement) {
     rerender();
   } else if (act === "ob-appearance") void setSettings({ appearance: t.dataset.appearance as Settings["appearance"] });
   else if (act === "ob-theme") void setSettings({ theme: t.dataset.theme });
+}
+
+async function useThisMac() {
+  ob.connecting = "this Mac";
+  ob.fail = null;
+  rerender();
+  try {
+    const local = await invoke<{ address: string }>("ensure_local_hub");
+    await doConnect(local.address);
+  } catch (e) {
+    ob.connecting = "";
+    ob.fail = { title: "Could not start the hub", message: errorText(e) };
+    rerender();
+  }
 }
 
 async function doConnect(address: string) {

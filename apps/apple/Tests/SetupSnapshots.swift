@@ -162,7 +162,11 @@ struct SetupSnapshots {
                                     stepLine: "Step 4 of 8: Fold all four corners to center", status: .watching,
                                     canStep: true, canBack: true, throttled: false, sourceName: "Back Camera")
         try await shoot("camera-mode", dark: true) { CameraModeScreen(onClose: {}, preview: info).environment(app) }
-        try await shoot("camera-start") { NavigationStack { CameraView() }.environment(app) }
+        try await shoot("camera-start") {
+            NavigationStack { CameraView() }
+                .environment(app)
+                .environment(LearnFlow())
+        }
         try await shoot("settings") { NavigationStack { SettingsView() }.environment(app).environment(accounts) }
         try await shoot("theme-picker") { NavigationStack { ThemePickerView() }.environment(app) }
         try await shoot("theme-picker-dark", dark: true) { NavigationStack { ThemePickerView() }.environment(app) }

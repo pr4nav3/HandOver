@@ -33,6 +33,7 @@ struct RootView: View {
                 // A late null from our own End, after Start on a new lesson, is ignored (see hubLessonChanged).
                 if flow.hubLessonChanged(to: new), model.connection.isConnected, !model.isPreview { flow.end() }
             }
+            .onOpenURL(perform: open)
     }
 
     @ViewBuilder private var shell: some View {
@@ -77,6 +78,18 @@ struct RootView: View {
     /// The sidebar always has one place selected.
     private var selection: Binding<AppSection?> {
         Binding { flow.section } set: { if let new = $0 { flow.section = new } }
+    }
+
+    /// Deep links are handled beside the navigation state they affect. A desktop pairing QR may include a
+    /// camera intent, so the same scan both connects to the hub and opens the requested live source.
+    private func open(_ url: URL) {
+        if GlassesLink.isMetaCallback(url) {
+            GlassesController.handle(url: url)
+            return
+        }
+        guard url.host() != "join", let hub = HubURL(parsing: url.absoluteString) else { return }
+        model.connect(to: hub)
+        if let intent = CameraLaunchIntent(url: url) { flow.openCamera(intent) }
     }
 }
 

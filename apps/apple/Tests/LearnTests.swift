@@ -48,6 +48,21 @@ struct CaptionCuesTests {
 }
 
 @MainActor
+struct ClipControllerTests {
+    @Test func stopClearsVisiblePlaybackState() {
+        let clips = ClipController.still(caption: "Fold the corner.")
+        #expect(clips.phase == .playing)
+        #expect(clips.caption == "Fold the corner.")
+        clips.isDucked = true
+        clips.stop()
+        #expect(clips.phase == .idle)
+        #expect(clips.caption == nil)
+        #expect(clips.slots.allSatisfy { $0 == nil })
+        #expect(!clips.isDucked)
+    }
+}
+
+@MainActor
 struct StatusBadgeTests {
     func state(_ status: HubState.Status = .watching, camera: Bool = true, offline: Bool = false,
                mode: HubState.CheckMode? = .gemini, step: Int = 1) -> HubState {

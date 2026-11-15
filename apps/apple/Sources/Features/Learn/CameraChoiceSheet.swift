@@ -99,16 +99,7 @@ struct CameraChoiceSheet: View {
 
     @ViewBuilder private var glassesDetails: some View {
         if LearnCamera.glassesAvailable, let glasses = flow.glasses {
-            VStack(alignment: .leading, spacing: HOSpace.m) {
-                if !glasses.state.isStreaming {
-                    SetupSteps(title: "Set up once", steps: [
-                        "Install the Meta AI app and pair your glasses.",
-                        "In Meta AI, open Settings, then App Info. Tap the version 5 times and turn on Developer Mode.",
-                        "Tap Connect Glasses below and approve HandOver in Meta AI.",
-                    ])
-                }
-                RecordGlassesCard(controller: glasses) { choice = .thisDevice }
-            }
+            RecordGlassesCard(controller: glasses) { choice = .thisDevice }
         } else if !LearnCamera.glassesAvailable {
             HOBanner(symbol: "eyeglasses", tone: .neutral,
                      text: "Meta glasses work with the iPhone app. On \(DeviceWord.this), pick another camera.")
@@ -164,7 +155,7 @@ enum OtherDeviceKind: String, CaseIterable, Identifiable {
 
     var steps: [String] {
         switch self {
-        case .phone: ["Scan this code with the second phone.", "In HandOver, tap Be the Camera.", "Point it at your hands."]
+        case .phone: ["Scan this code with the second phone.", "HandOver opens its camera automatically.", "Point it at your hands."]
         case .browser: ["Open this link in a browser.", "Allow the camera and point it at your hands."]
         }
     }
@@ -173,14 +164,14 @@ enum OtherDeviceKind: String, CaseIterable, Identifiable {
     /// camera, so it uses the hub's https port).
     func link(hub: HubURL) -> URL {
         switch self {
-        case .phone: return hub.link
+        case .phone: return hub.cameraLink(.phone)
         case .browser: return CaptureLink.url(hub: hub)
         }
     }
 
     func shownLink(hub: HubURL) -> String {
         switch self {
-        case .phone: return "Hub \(hub.displayName)"
+        case .phone: return "Opens HandOver and connects automatically"
         case .browser: return CaptureLink.url(hub: hub).absoluteString
         }
     }

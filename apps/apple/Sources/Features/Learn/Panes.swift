@@ -190,16 +190,22 @@ struct ClipPane: View {
                 CaptionBar(text: caption).padding(HOSpace.m).padding(.bottom, captionBottomInset)
             }
         }
-        if showControls && !isTile {
+        if !isTile, clips.phase == .playing {
             VStack {
                 HStack {
                     Spacer()
-                    ClipControls(clips: clips)
+                    if showControls {
+                        ClipControls(clips: clips)
+                            .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .trailing)))
+                    } else {
+                        ReplayClipButton(clips: clips)
+                            .transition(.opacity)
+                    }
                 }
                 Spacer()
             }
             .padding(HOSpace.s)
-            .transition(.opacity)
+            .animation(HOMotion.resolve(HOMotion.snappy, reduceMotion: reduceMotion), value: showControls)
         }
     }
 }
@@ -211,8 +217,8 @@ struct ClipControls: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            Button { Haptics.tap(); clips.replay() } label: { Image(systemName: "gobackward") }
-                .accessibilityLabel("Replay")
+            Button { Haptics.tap(); clips.replay() } label: { Image(systemName: "arrow.counterclockwise") }
+                .accessibilityLabel("Replay this step")
             Button { Haptics.tap(); clips.isMuted.toggle() } label: {
                 Image(systemName: clips.isMuted ? "speaker.slash" : "speaker.wave.2")
             }
@@ -227,6 +233,40 @@ struct ClipControls: View {
         .font(.body.weight(.medium))
         .padding(.horizontal, HOSpace.xs)
         .hoGlassCapsule(interactive: true)
+    }
+}
+
+/// A visible replay affordance even before the learner taps the clip. It gives one restrained turn when used,
+/// then yields to the full Replay/Mute/Captions capsule when the video itself is tapped.
+private struct ReplayClipButton: View {
+    var clips: ClipController
+    @Environment(\.theme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var turns = 0
+
+    var body: some View {
+        Button {
+            Haptics.tap()
+            withAnimation(HOMotion.resolve(.spring(response: 0.36, dampingFraction: 0.82), reduceMotion: reduceMotion)) {
+                turns += 1
+            }
+            clips.replay()
+        } label: {
+            Label {
+                Text("Replay").font(theme.fonts.badge)
+            } icon: {
+                Image(systemName: "arrow.counterclockwise")
+                    .font(.footnote.weight(.semibold))
+                    .rotationEffect(.degrees(reduceMotion ? 0 : Double(turns) * -360))
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, HOSpace.s)
+            .frame(minHeight: HOSize.touch)
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .hoGlassCapsule(interactive: true)
+        .accessibilityLabel("Replay this step")
     }
 }
 

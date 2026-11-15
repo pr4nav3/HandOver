@@ -113,17 +113,9 @@ struct RecordGlassesCard: View {
                     .frame(width: HOSize.tile + 4, height: HOSize.tile + 4)
                     .background(theme.colors.well, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                 VStack(alignment: .leading, spacing: HOSpace.xxs) {
-                    HStack(spacing: HOSpace.s) {
-                        Text(state == .notRegistered || state == .unavailable ? (controller.deviceName ?? "Ray-Ban Meta") : state.title)
-                            .font(theme.fonts.headline)
-                            .foregroundStyle(theme.colors.ink)
-                        Text(GlassesFeature.experimentalLabel)
-                            .font(theme.fonts.badge)
-                            .foregroundStyle(theme.colors.ink2)
-                            .padding(.horizontal, HOSpace.xs + 2)
-                            .padding(.vertical, 2)
-                            .overlay(Capsule().strokeBorder(theme.colors.line, lineWidth: HOLine.width))
-                    }
+                    Text(state == .notRegistered || state == .unavailable ? (controller.deviceName ?? "Ray-Ban Meta") : state.title)
+                        .font(theme.fonts.headline)
+                        .foregroundStyle(theme.colors.ink)
                     HStack(spacing: HOSpace.xs) {
                         if state.isBusy { ProgressView().controlSize(.mini) } else {
                             Circle().fill(dot(state)).frame(width: 7, height: 7)
@@ -143,9 +135,6 @@ struct RecordGlassesCard: View {
                 }
             }
             actions(state)
-            Text(GlassesFeature.requirement)
-                .font(theme.fonts.caption)
-                .foregroundStyle(theme.colors.ink2)
         }
         .padding(HOSpace.l)
         .background(theme.colors.raised, in: RoundedRectangle(cornerRadius: HORadius.card, style: .continuous))

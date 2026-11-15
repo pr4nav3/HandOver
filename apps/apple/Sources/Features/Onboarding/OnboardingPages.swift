@@ -119,7 +119,7 @@ struct ConnectPage: View {
                         .hoFont(.largeTitle, theme)
                         .foregroundStyle(theme.colors.ink)
                         .multilineTextAlignment(.center)
-                    Text("The hub is the HandOver app running on a laptop near you. It keeps your lessons.")
+                    Text("Open HandOver on your Mac, then scan its pairing code.")
                         .font(theme.fonts.body)
                         .foregroundStyle(theme.colors.ink2)
                         .multilineTextAlignment(.center)
@@ -131,20 +131,13 @@ struct ConnectPage: View {
             .padding(.horizontal, HOSpace.l)
             Spacer(minLength: short ? HOSpace.l : HOSpace.xxl)
             VStack(spacing: HOSpace.s) {
-                // The hub shows no QR code of its own (run_server.sh prints the address), so typing comes first.
-                Button { open(address: true) } label: { Text("Enter Address") }
-                    .buttonStyle(HOButtonStyle(.primary, size: .large, fullWidth: true))
-                    .keyboardShortcut(.defaultAction)
                 if CameraCapture.isAvailable {
                     Button { open(address: false) } label: { Label("Scan a Code", systemImage: "qrcode.viewfinder") }
-                        .buttonStyle(HOButtonStyle(.secondary, size: .large, fullWidth: true))
+                        .buttonStyle(HOButtonStyle(.primary, size: .large, fullWidth: true))
+                        .keyboardShortcut(.defaultAction)
                 }
-                Text("No hub yet? Start HandOver on a laptop on the same Wi-Fi, then tap Enter Address.")
-                    .font(theme.fonts.footnote)
-                    .foregroundStyle(theme.colors.ink2)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.top, HOSpace.xs)
+                Button { open(address: true) } label: { Text("Enter Address Instead") }
+                    .buttonStyle(HOButtonStyle(.secondary, size: .large, fullWidth: true))
             }
             .padding(.horizontal, HOSpace.l)
             .padding(.bottom, HOSpace.l)
