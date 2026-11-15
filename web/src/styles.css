@@ -310,16 +310,30 @@ a {
   gap: var(--pad);
 }
 
-.live {
+/* The grid cell; the panel inside is sized to the camera's aspect (Learn.tsx)
+   and sits at the top so it lines up with the clip. */
+.live-cell {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+}
+
+.panel.live {
   position: relative;
+  width: 100%;
+  height: 100%;
+  flex: none;
   overflow: hidden;
   background: var(--panel);
   display: grid;
   place-items: center;
 }
 
-.live:has(img:not(.hidden)) {
-  background: #000;
+/* Any sliver left by rounding shows a calm surface, not black bars. */
+.panel.live:has(img:not(.hidden)) {
+  background: var(--panel-2);
 }
 
 .live img {
@@ -432,7 +446,7 @@ a {
   flex: none;
   position: relative;
   overflow: hidden;
-  background: #000;
+  background: var(--panel-2);
   display: grid;
   place-items: center;
 }
@@ -490,25 +504,33 @@ video::cue {
   overflow: hidden;
 }
 
-/* The catch. Floats over the top of the clip so nothing below it moves. */
+/* The catch. A card inset over the top of the clip, so nothing below it moves
+   and the clip keeps its rounded corners. */
 .mistake-banner {
   position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
+  top: 12px;
+  left: 12px;
+  right: 12px;
   z-index: 3;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-  padding: 12px 14px 12px 18px;
+  gap: 12px;
+  padding: 10px 12px 10px 14px;
   border-radius: var(--radius-sm);
-  background: rgba(40, 28, 8, 0.94);
-  border: 1px solid rgba(255, 179, 64, 0.45);
+  background: rgba(30, 24, 14, 0.86);
+  backdrop-filter: blur(20px) saturate(140%);
+  -webkit-backdrop-filter: blur(20px) saturate(140%);
+  border: 1px solid rgba(255, 179, 64, 0.35);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
   color: var(--amber);
 }
 
+.mistake-icon {
+  flex: none;
+}
+
 .mistake-text {
+  flex: 1 1 auto;
   margin: 0;
   font-size: clamp(16px, 1.3vw, 22px);
   font-weight: 600;
@@ -549,7 +571,8 @@ video::cue {
   border: 1px solid var(--border);
   background: var(--panel);
   color: var(--muted);
-  transition: background 0.3s, color 0.3s, border-color 0.3s;
+  /* No color transition: the label changes at once, so the colors do too.
+     A fade made Verified look grey on the way in and left Manual green on the way out. */
 }
 
 .badge-wrap {
@@ -591,7 +614,6 @@ video::cue {
   height: 8px;
   border-radius: 50%;
   background: var(--grey);
-  transition: background 0.3s;
 }
 
 /* One steady pulse while the camera is watching. Checking and watching share
@@ -612,13 +634,19 @@ video::cue {
   }
 }
 
+/* A filled check, a stronger fill and weight: distinct from Watching at a glance. */
 .badge.verified {
   color: var(--green);
-  background: rgba(48, 209, 88, 0.12);
-  border-color: rgba(48, 209, 88, 0.3);
+  background: rgba(48, 209, 88, 0.16);
+  border-color: rgba(48, 209, 88, 0.5);
+  font-weight: 600;
 }
 
-.badge.verified .badge-dot,
+.badge-check {
+  flex: none;
+  margin-left: -2px;
+}
+
 .badge.done .badge-dot {
   background: var(--green);
 }
@@ -1081,78 +1109,79 @@ video::cue {
   }
 }
 
-/* Done screen, shown in place of the clip */
+/* Done screen, shown in place of the clip. The panel keeps the clip's size
+   (min-height set in Learn.tsx) and grows with a long step list up to the room
+   in the column; past that the table scrolls. */
 
-.finish {
-  position: absolute;
-  inset: 0;
+.clip.finished {
+  flex: 0 1 auto;
+  aspect-ratio: auto;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 16px 20px;
   background: var(--panel);
-  text-align: center;
 }
 
-.finish svg {
-  color: var(--green);
-}
-
-.finish-title {
-  margin: 0;
-  font-size: clamp(20px, 1.6vw, 28px);
-  font-weight: 600;
-  letter-spacing: -0.01em;
+.finish {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 22px;
+  padding: clamp(20px, 2vw, 32px);
 }
 
 .finish-stats {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  column-gap: clamp(18px, 2vw, 36px);
-  row-gap: 6px;
-  margin: 2px 0 4px;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 1px;
+  margin: 0;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: var(--border);
+  flex: none;
 }
 
 .finish-stats div {
   display: flex;
   flex-direction: column-reverse;
-  gap: 2px;
+  gap: 4px;
+  padding: 12px 14px;
+  background: var(--panel-2);
+  min-width: 0;
 }
 
 .finish-stats dt {
   font-size: 12px;
   color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .finish-stats dd {
   margin: 0;
-  font-size: 20px;
-  font-weight: 500;
+  font-size: clamp(20px, 1.6vw, 26px);
+  font-weight: 600;
+  letter-spacing: -0.01em;
   font-variant-numeric: tabular-nums;
 }
 
-.finish .restart {
-  padding: 7px 16px;
-  font-size: 14px;
-}
-
-/* Per-step times on the done screen; the body scrolls inside the card if long. */
+/* Per-step table; the body scrolls inside the card if the lesson is long. */
 .finish-steps {
   flex: 0 1 auto;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  width: min(100%, 460px);
+  width: 100%;
   border-collapse: collapse;
-  font-size: 13px;
+  font-size: 14px;
   font-variant-numeric: tabular-nums;
 }
 
 .finish-steps thead,
-.finish-steps tbody {
+.finish-steps tr {
   display: table;
   width: 100%;
   table-layout: fixed;
@@ -1164,56 +1193,67 @@ video::cue {
   min-height: 0;
 }
 
-.finish-steps tr {
-  display: table;
-  width: 100%;
-  table-layout: fixed;
-}
-
 .finish-steps th {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
   color: var(--faint);
   text-align: right;
-  padding: 0 6px 2px;
+  padding: 0 8px 8px;
 }
 
-.finish-steps th:nth-child(2) {
-  text-align: left;
+.finish-steps td {
+  padding: 10px 8px;
+  text-align: right;
+  border-top: 1px solid var(--border);
 }
 
 .finish-steps th:first-child,
 .finish-steps td:first-child {
-  width: 26px;
+  text-align: left;
+  padding-left: 0;
+}
+
+.finish-steps th:last-child,
+.finish-steps td:last-child {
+  padding-right: 0;
+}
+
+.finish-steps th:nth-child(2),
+.finish-steps td:nth-child(2) {
+  width: 108px;
+  text-align: left;
 }
 
 .finish-steps th:nth-child(3),
 .finish-steps th:nth-child(4),
 .finish-steps td:nth-child(3),
 .finish-steps td:nth-child(4) {
-  width: 64px;
-}
-
-.finish-steps td {
-  padding: 3px 6px;
-  text-align: right;
-  border-top: 1px solid var(--border);
-}
-
-.finish-steps td.how svg {
-  display: block;
-  margin: 0 auto;
-  color: var(--muted);
+  width: 68px;
 }
 
 .finish-steps td.name {
-  text-align: left;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .finish-steps .num {
+  display: inline-block;
+  min-width: 1.6em;
   color: var(--faint);
-  margin-right: 4px;
 }
+
+.finish-steps td.how {
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.finish-steps td.how svg {
+  vertical-align: -2px;
+  margin-right: 6px;
+}
+
+.faint {
+  color: var(--faint);
+}
+
