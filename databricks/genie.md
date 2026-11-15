@@ -10,7 +10,7 @@ This file is what is live, saved through the Genie API (serialized space version
 - Description: "Learner runs of HandOver lessons. An expert recorded each task once; HandOver cut it into steps, and a camera checks each step before the next clip plays. Ask where learners get stuck, which steps they pass with Next instead of the camera, and what mistakes the camera caught. Live runs only; test lessons are left out unless you ask."
 - Warehouse: the one Free Edition warehouse.
 - Data: `workspace.handover.events_real`, `workspace.handover.runs_real`, `workspace.handover.lessons`, `workspace.handover.steps`. The raw `events` and `runs` tables are not in the space, so answers never include replay, mock or selftest runs.
-- Sample questions (shown as buttons): "Which step do people get stuck on?"; "How long does each step take learners compared with the expert?"; "Which camera steps do learners skip with Next most often?"; "How many runs finished, and how long did a finished run take?"; "How fast is the camera check?".
+- Sample questions (shown as buttons, in this order as the API returns them): "Which step do people get stuck on?"; "How fast is the camera check?"; "How many runs finished, and how long did a finished run take?"; "Which camera steps do learners skip with Next most often?"; "How long does each step take learners compared with the expert?".
 
 ## Joins
 
@@ -31,6 +31,8 @@ HandOver data. An expert recorded a task once; HandOver cut it into numbered ste
 Tables. Use events_real and runs_real for anything about learner runs: they are the events and runs tables without replay runs (recorded video), mock checks and selftest rows. Use lessons and steps for the lesson and its expert timing. Do not query the raw events or runs tables.
 
 Test lessons. Leave out every lesson whose lesson_id starts with synthetic-, test-, TEST- or e2e-, and lesson_id selftest, unless the user asks about test or synthetic data. Filter with lower(lesson_id) NOT RLIKE '^(synthetic-|test-|e2e-|selftest)'. If nothing is left after the filter, say there are no real learner runs yet for that question, and offer to show the test data.
+
+Lessons. fortune-teller-v2 (9 steps, a new take of the same fold) is the live demo lesson; fortune-teller-v1 is the older take of the same fold. front-wheel-v1 (bike front wheel check) is a recorded showcase and may have no rows; if a lesson the user names has no rows yet, say so plainly instead of guessing.
 
 Lesson names. Users name lessons in words ("the fortune teller", "the bike wheel"). Match them with lessons.title or lesson_id LIKE '%fortune-teller%' (or '%front-wheel%'), not one exact id. When several versions match (fortune-teller-v1, fortune-teller-v2), use the newest version that has runs in runs_real and say which lesson_id you used.
 
@@ -291,7 +293,7 @@ Run through the conversation API while the only runs were 5 synthetic test runs,
 | How fast is the camera check? | Q6 without the test-lesson filter | "For lesson ID synthetic-fortune-teller-v1, the camera check had a median speed of 1109.0 ms and a 90th percentile speed of 1290.0 ms across 16 checks. The timeout rate was 0.0% ... This data is based on synthetic lesson data only." |
 | How many people finished the fortune teller? | Q4, filtered to `fortune-teller-v1` | "There were 0 people who finished the lesson with lesson_id 'fortune-teller-v1'. This count excludes any test or synthetic data." |
 
-After this, the "Lesson names" paragraph was added to the instructions, so "the fortune teller" now matches `fortune-teller-v2` once it has runs.
+After this, the "Lesson names" paragraph was added to the instructions, so "the fortune teller" now matches `fortune-teller-v2` once it has runs. On Sunday about 3 AM a "Lessons" paragraph was added above it: `fortune-teller-v1` is the one lesson in the `lessons` table now; `fortune-teller-v2` and `front-wheel-v1` arrive when the hub uploads them, and Genie should say a named lesson has no rows yet rather than guess. Three examples (Q1 stuck, Q7 give up, Q2 time per step) were re-run against the warehouse then and succeed; Q2 returns all 9 v1 steps with expert seconds and no learner runs yet.
 
 ## Checking Genie on real runs
 
