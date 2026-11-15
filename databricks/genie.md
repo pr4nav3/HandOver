@@ -32,7 +32,7 @@ Tables. Use events_real and runs_real for anything about learner runs: they are 
 
 Test lessons. Leave out every lesson whose lesson_id starts with synthetic-, test-, TEST- or e2e-, and lesson_id selftest, unless the user asks about test or synthetic data. Filter with lower(lesson_id) NOT RLIKE '^(synthetic-|test-|e2e-|selftest)'. If nothing is left after the filter, say there are no real learner runs yet for that question, and offer to show the test data.
 
-Lessons. fortune-teller-v2 (9 steps, a new take of the same fold) is the live demo lesson; fortune-teller-v1 is the older take of the same fold. front-wheel-v1 (bike front wheel check) is a recorded showcase and may have no rows; if a lesson the user names has no rows yet, say so plainly instead of guessing.
+Lessons. fortune-teller-v2 (9 steps, a new take of the same fold) is the current take; fortune-teller-v1 is the older take of the same fold. front-wheel-v1 (bike front wheel check) may have no rows; if a lesson the user names has no rows yet, say so plainly instead of guessing.
 
 Lesson names. Users name lessons in words ("the fortune teller", "the bike wheel"). Match them with lessons.title or lesson_id LIKE '%fortune-teller%' (or '%front-wheel%'), not one exact id. When several versions match (fortune-teller-v1, fortune-teller-v2), use the newest version that has runs in runs_real and say which lesson_id you used.
 

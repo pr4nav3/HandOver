@@ -77,9 +77,9 @@ One meaning per color, the same in every widget.
 - Every widget field exists in its dataset (checked against `information_schema`); all 15 dataset queries run.
 - The PATCH saved: a fresh GET returns the same JSON, and the publish has `embed_credentials: true`.
 - Every per-step bar chart is horizontal (steps on the y axis, full "05 Title" labels), because 9 long step titles were cut off on a vertical x axis. Steps per run stays vertical (short time labels). Legend titles: Who, Passed by, Kind, Answer, Latency.
-- Not checked in a browser: the rendering itself (the `MEDIAN` counter, the order of steps on the y axis). Open the published link once before judging; that also warms the warehouse.
+- Not checked in a browser: the rendering itself (the `MEDIAN` counter, the order of steps on the y axis). Open the published link once first; that also warms the warehouse.
 
-## Before judging
+## Before showing it
 
 1. Open the published link. Pick the real lesson in the Lesson filter on page 1.
 2. Read the numbers off the screen. With few runs, say "in our runs today".
