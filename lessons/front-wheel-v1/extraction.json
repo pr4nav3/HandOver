@@ -3,16 +3,7 @@
   "steps": [
     {
       "start": "00:00",
-      "end": "00:07.1",
-      "title": "Squeeze the front brake and watch the pads meet the rim",
-      "check_question": "manual",
-      "prerequisites": [],
-      "ref_time": "",
-      "common_mistake": "Squeeze the lever once before you start, so you know how the brake felt."
-    },
-    {
-      "start": "00:07.1",
-      "end": "00:19.0",
+      "end": "00:09.5",
       "title": "Turn the bike over, open the quick release and drop the wheel out",
       "check_question": "Are both fork ends empty, with no wheel between the fork blades?",
       "prerequisites": [
@@ -22,8 +13,8 @@
       "common_mistake": "Flip the lever open first, then lift the frame so the wheel drops out."
     },
     {
-      "start": "00:19.0",
-      "end": "00:46.0",
+      "start": "00:09.5",
+      "end": "00:36.5",
       "title": "Unscrew the nut off the end of the skewer",
       "check_question": "Is the nut off the skewer, held apart from the hub?",
       "prerequisites": [
@@ -33,8 +24,8 @@
       "common_mistake": "Hold the lever still and turn the nut; it comes off in a few turns."
     },
     {
-      "start": "00:46.0",
-      "end": "01:12.4",
+      "start": "00:36.5",
+      "end": "01:02.9",
       "title": "Pull the skewer out and check both springs sit narrow end inward",
       "check_question": "Is the skewer pulled out of the wheel, held apart from the hub?",
       "prerequisites": [
@@ -44,8 +35,8 @@
       "common_mistake": "Keep both springs; each one points its narrow end toward the hub."
     },
     {
-      "start": "01:12.4",
-      "end": "01:30.0",
+      "start": "01:02.9",
+      "end": "01:20.5",
       "title": "Hold the wheel up, spin it and look over the tire and spokes",
       "check_question": "manual",
       "prerequisites": [
@@ -55,8 +46,8 @@
       "common_mistake": "Turn the wheel a full circle; look at the tread and both sidewalls."
     },
     {
-      "start": "01:30.0",
-      "end": "01:41.0",
+      "start": "01:20.5",
+      "end": "01:31.5",
       "title": "Set the wheel back between the fork blades",
       "check_question": "Is the wheel sitting between the fork blades with the axle in the fork ends?",
       "prerequisites": [
@@ -66,8 +57,8 @@
       "common_mistake": "Lower the fork onto the axle so it reaches the top of both slots."
     },
     {
-      "start": "01:41.0",
-      "end": "01:56.0",
+      "start": "01:31.5",
+      "end": "01:46.5",
       "title": "Run your fingers round the rim's braking track and the tire",
       "check_question": "manual",
       "prerequisites": [
@@ -77,8 +68,8 @@
       "common_mistake": "Feel the flat metal band the pads touch, all the way round."
     },
     {
-      "start": "01:56.0",
-      "end": "02:05.0",
+      "start": "01:46.5",
+      "end": "01:55.5",
       "title": "Check the brake pads line up with the rim",
       "check_question": "manual",
       "prerequisites": [
@@ -88,8 +79,8 @@
       "common_mistake": "Each pad should meet the flat braking track, not the tire."
     },
     {
-      "start": "02:05.0",
-      "end": "02:36.0",
+      "start": "01:55.5",
+      "end": "02:26.5",
       "title": "Slide the skewer back through the hub and thread the nut on",
       "check_question": "Is the skewer through the hub with the lever on one side and the nut on the other?",
       "prerequisites": [
@@ -99,8 +90,8 @@
       "common_mistake": "The lever goes on the left side of the bike, away from the chain."
     },
     {
-      "start": "02:36.0",
-      "end": "03:03.1",
+      "start": "02:26.5",
+      "end": "02:53.6",
       "title": "Snug the nut, then close the lever flat along the fork",
       "check_question": "Is the quick release lever closed, lying flat along the fork blade?",
       "prerequisites": [
@@ -110,8 +101,8 @@
       "common_mistake": "Fold the lever back along the fork. A lever pointing forward can catch and open."
     },
     {
-      "start": "03:03.1",
-      "end": "03:18.6",
+      "start": "02:53.6",
+      "end": "03:09.1",
       "title": "Turn the bike upright, spin the wheel and squeeze the brake",
       "check_question": "Is the bike upright with the front wheel in the fork?",
       "prerequisites": [

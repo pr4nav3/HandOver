@@ -13,12 +13,12 @@
     {
       "n": 1,
       "title": "Turn the bike over, open the quick release and drop the wheel out",
-      "start": "00:07.1",
-      "end": "00:19",
+      "start": "00:00",
+      "end": "00:09.5",
       "check_type": "camera",
       "check_question": "Are both fork ends empty, with no wheel between the fork blades?",
       "prerequisites": [],
-      "ref_time": "00:18.5",
+      "ref_time": "00:09",
       "common_mistake": "Flip the lever open first, then lift the frame so the wheel drops out.",
       "clip": "clips_produced/01.mp4",
       "captions": "clips_produced/01.vtt",
@@ -27,14 +27,14 @@
     {
       "n": 2,
       "title": "Take the skewer out: nut off, slide it out, springs narrow end in",
-      "start": "00:19",
-      "end": "01:13",
+      "start": "00:09.5",
+      "end": "01:03.5",
       "check_type": "camera",
       "check_question": "Is the skewer out of the wheel, held apart from the hub?",
       "prerequisites": [
         1
       ],
-      "ref_time": "01:12.5",
+      "ref_time": "01:03",
       "common_mistake": "Keep both springs; each one points its narrow end toward the hub.",
       "clip": "clips_produced/02.mp4",
       "captions": "clips_produced/02.vtt",
@@ -43,14 +43,14 @@
     {
       "n": 3,
       "title": "Spin the wheel and run your fingers round the braking track",
-      "start": "01:13",
-      "end": "01:31",
+      "start": "01:03.5",
+      "end": "01:21.5",
       "check_type": "manual",
       "check_question": "",
       "prerequisites": [
         2
       ],
-      "ref_time": "01:27.4",
+      "ref_time": "01:17.9",
       "common_mistake": "Feel the flat metal band the pads touch, all the way round.",
       "clip": "clips_produced/03.mp4",
       "captions": "clips_produced/03.vtt",
@@ -59,14 +59,14 @@
     {
       "n": 4,
       "title": "Check the brake calipers and pads from above",
-      "start": "01:31",
-      "end": "01:40",
+      "start": "01:21.5",
+      "end": "01:30.5",
       "check_type": "manual",
       "check_question": "",
       "prerequisites": [
         3
       ],
-      "ref_time": "01:38.6",
+      "ref_time": "01:29.1",
       "common_mistake": "Each pad should face the braking track, not the tire.",
       "clip": "clips_produced/04.mp4",
       "captions": "clips_produced/04.vtt",
@@ -75,14 +75,14 @@
     {
       "n": 5,
       "title": "Set the wheel back in the fork with the tread arrow pointing forward, then check the rear tire the same way",
-      "start": "01:40",
-      "end": "02:05",
+      "start": "01:30.5",
+      "end": "01:55.5",
       "check_type": "camera",
       "check_question": "Is the wheel sitting between the fork blades with the axle in the fork ends?",
       "prerequisites": [
         4
       ],
-      "ref_time": "01:44.5",
+      "ref_time": "01:35",
       "common_mistake": "The arrow on the sidewall points the way the bike rolls.",
       "clip": "clips_produced/05.mp4",
       "captions": "clips_produced/05.vtt",
@@ -91,14 +91,14 @@
     {
       "n": 6,
       "title": "Slide the skewer back through the hub and thread the nut on",
-      "start": "02:05",
-      "end": "02:36",
+      "start": "01:55.5",
+      "end": "02:26.5",
       "check_type": "camera",
       "check_question": "Is the skewer through the hub with the lever on one side and the nut on the other?",
       "prerequisites": [
         5
       ],
-      "ref_time": "02:35.5",
+      "ref_time": "02:26",
       "common_mistake": "The lever goes on the left side of the bike, away from the chain.",
       "clip": "clips_produced/06.mp4",
       "captions": "clips_produced/06.vtt",
@@ -107,14 +107,14 @@
     {
       "n": 7,
       "title": "Snug the nut and close the lever flat along the fork",
-      "start": "02:36",
-      "end": "03:03.1",
+      "start": "02:26.5",
+      "end": "02:53.6",
       "check_type": "camera",
       "check_question": "Is the quick release lever folded closed, lying flat along the fork blade?",
       "prerequisites": [
         6
       ],
-      "ref_time": "03:03",
+      "ref_time": "02:53.5",
       "common_mistake": "Fold the lever back along the fork. A lever pointing forward can catch and open.",
       "clip": "clips_produced/07.mp4",
       "captions": "clips_produced/07.vtt",
@@ -123,14 +123,14 @@
     {
       "n": 8,
       "title": "Spin the wheel and squeeze the brake",
-      "start": "03:03.1",
-      "end": "03:18.6",
+      "start": "02:53.6",
+      "end": "03:09.1",
       "check_type": "camera",
       "check_question": "Is the bike upright on its wheels with the front wheel in the fork?",
       "prerequisites": [
         7
       ],
-      "ref_time": "03:18",
+      "ref_time": "03:08.5",
       "common_mistake": "Spin the wheel once and squeeze the brake before you ride.",
       "clip": "clips_produced/08.mp4",
       "captions": "clips_produced/08.vtt",
@@ -154,28 +154,28 @@
         "tracks": [
           [
             [
-              8.8,
+              6.4,
               0.08,
               0.48,
               0.5,
               0.78
             ],
             [
-              10.0,
+              7.6,
               0.3,
               0.58,
               0.72,
               0.88
             ],
             [
-              11.0,
+              8.6,
               0.32,
               0.58,
               0.68,
               0.86
             ],
             [
-              11.7,
+              9.3,
               0.25,
               0.62,
               0.6,
@@ -763,20 +763,20 @@
       "cover": "produced/cover.jpg",
       "chapters": "produced/chapters.vtt",
       "captions": "produced/course.vtt",
-      "seconds": 149.2,
+      "seconds": 146.8,
       "steps": 8,
       "assist": "none",
       "sources": {
-        "1": "5001288:1794740666",
-        "2": "8112455:1794740670",
-        "3": "8781079:1794740673",
-        "4": "3521525:1794740675",
-        "5": "9219259:1794740678",
-        "6": "10103626:1794740680",
-        "7": "9378934:1794740683",
-        "8": "5681121:1794740684"
+        "1": "3767228:1794743746",
+        "2": "8112490:1794743751",
+        "3": "8780476:1794743753",
+        "4": "3521127:1794743755",
+        "5": "9220037:1794743758",
+        "6": "10103777:1794743760",
+        "7": "9377733:1794743763",
+        "8": "5682336:1794743765"
       },
-      "rendered_at": "2026-11-15T05:05:54-0600"
+      "rendered_at": "2026-11-15T05:57:11-0600"
     },
     "step_label": false,
     "accent": null,
