@@ -1,6 +1,6 @@
-// Learn (section 7, desktop layout): the live camera on the left, fitted to the frame's own
-// shape on the panel surface; on the right the step's clip with captions, the step title, the
-// course step list, and the badge with Back and Next anchored at the bottom. Then Done
+// Learn (section 7, desktop layout): the live camera on the left, filling its column inside a
+// panel; on the right the step's clip with captions filling its column the same way, then the
+// step title, the course step list, and the badge with Back and Next. Then Done
 // (section 8) with the score, best and weakest step, a tip and the steps breakdown, all from
 // this run's real events (section 20).
 
@@ -89,14 +89,6 @@ const TEMPLATE = html`<div class="learn">
       <div class="placeholder live-ph"></div>
       <span class="live-chip" hidden></span>
     </section>
-    <section class="goal panel" aria-label="What done looks like" hidden>
-      <div class="goal-img"><img alt="The finished state of this step" /></div>
-      <div class="goal-text">
-        <p class="eyebrow">When this step is done</p>
-        <p class="goal-question"></p>
-        <p class="goal-reason"></p>
-      </div>
-    </section>
     <div class="badge-wrap feedback-card idle" role="status" aria-live="polite" aria-atomic="true">
       <div class="feedback-head">
         <span class="badge watching"><span class="badge-dot"></span><span class="badge-label">Getting ready</span></span>
@@ -112,7 +104,7 @@ const TEMPLATE = html`<div class="learn">
     </div>
     <div class="mistake-card" role="alert" hidden></div>
     </div>
-    <button class="learn-divider" type="button" role="separator" aria-orientation="vertical" aria-label="Resize camera and tutorial panels" aria-valuemin="24" aria-valuemax="76"><span></span></button>
+    <button class="learn-divider" type="button" role="separator" aria-orientation="vertical" aria-label="Resize camera and tutorial panels" aria-valuemin="24" aria-valuemax="62"><span></span></button>
     <section class="side">
       <div class="clip-box">
         <div class="clip">
@@ -179,8 +171,6 @@ export class LearnView {
   };
   private hasFrame = false;
   private stale = false;
-  private liveAspect = 16 / 9;
-  private tutorialAspect = 16 / 9;
   private mistake: Mistake | null = null;
   /** The last mistake said aloud. */
   private spoken = "";
@@ -209,19 +199,10 @@ export class LearnView {
   ) {
     paint(el, TEMPLATE);
     this.live = new LiveCanvas(this.q(".live-canvas"), frameUrl);
-    this.live.onDraw = (w, h) => this.frameDrawn(w, h);
+    this.live.onDraw = () => this.frameDrawn();
     this.video = this.q(".clip video");
     this.localVideo = this.q(".local-preview");
-    this.localVideo.addEventListener("loadedmetadata", () => {
-      const v = this.localVideo;
-      if (v.videoWidth && v.videoHeight) this.setAspect(v.videoWidth / v.videoHeight);
-    });
-    this.video.addEventListener("loadedmetadata", () => {
-      const v = this.video;
-      if (v.videoWidth && v.videoHeight) this.tutorialAspect = v.videoWidth / v.videoHeight;
-      this.syncTutorialTimeline();
-      this.fit();
-    });
+    this.video.addEventListener("loadedmetadata", () => this.syncTutorialTimeline());
     this.video.addEventListener("timeupdate", () => this.syncTutorialTimeline());
     this.video.addEventListener("durationchange", () => this.syncTutorialTimeline());
     this.video.addEventListener("play", () => this.syncTutorialPlayback());
@@ -278,8 +259,6 @@ export class LearnView {
       else if (act === "camera-change") this.actions.chooseCamera();
       else if (act === "camera-retry") this.actions.retryCamera();
     });
-    new ResizeObserver(() => this.fit()).observe(this.q(".live-col"));
-    new ResizeObserver(() => this.fit()).observe(this.q(".side"));
     this.applyLayout();
     this.syncCaptionsControl();
     this.syncTutorialPlayback();
@@ -299,7 +278,6 @@ export class LearnView {
     const swap = this.q<HTMLButtonElement>(".layout-swap");
     swap.setAttribute("aria-label", this.layout.tutorialFirst ? "Move tutorial to the right" : "Move tutorial to the left");
     grid.classList.add("layout-ready");
-    this.fit();
   }
 
   private commitLayout() {
@@ -527,72 +505,14 @@ export class LearnView {
     this.live.offer(n);
   }
 
-  private setAspect(a: number) {
-    if (Math.abs(a - this.liveAspect) > 0.01) {
-      this.liveAspect = a;
-      this.fit();
-    }
-  }
-
-  private frameDrawn(w: number, h: number) {
-    if (w && h) this.setAspect(w / h);
+  private frameDrawn() {
     const first = !this.hasFrame;
     this.hasFrame = true;
-    if (first) this.fit();
     // Only a change of state needs a render; plain new frames are already on the canvas. A frame
     // still on its way when the camera went does not clear the camera lost state.
     if (first) this.render();
   }
 
-  /** Fits both media panes around the controls that must stay visible. Waiting states are
-   *  deliberately compact; they are instructions, not pretend camera feeds. */
-  private fit() {
-    const col = this.q<HTMLElement>(".live-col");
-    const pane = this.q<HTMLElement>(".live");
-    const box = this.q<HTMLElement>(".live-frame");
-    const goal = this.q<HTMLElement>(".goal");
-    const feedback = this.q<HTMLElement>(".feedback-card");
-    const mistake = this.q<HTMLElement>(".mistake-card");
-    const steps = this.model.lesson?.steps ?? [];
-    const step = steps[Math.max(0, Math.min(this.model.state?.step ?? 0, steps.length - 1))];
-    const showGoal = !!step && step.check_type !== "manual" && col.clientHeight >= 390;
-    goal.hidden = !showGoal;
-
-    const supporting = [goal, feedback, mistake].filter((element) => !element.hidden);
-    const gap = Number.parseFloat(getComputedStyle(col).gap) || 0;
-    const reserved = supporting.reduce((height, element) => height + element.offsetHeight, 0) + gap * supporting.length;
-    const W = col.clientWidth;
-    const available = Math.max(120, col.clientHeight - reserved);
-    if (!W || !available) return;
-    const hasPicture = !this.q<HTMLElement>(".live-frame").classList.contains("hidden");
-    const h = hasPicture
-      ? Math.min(W / this.liveAspect, available, col.clientHeight * 0.58)
-      : Math.min(190, Math.max(138, col.clientHeight * 0.21));
-    const w = hasPicture ? Math.min(W, h * this.liveAspect) : W;
-    pane.style.flex = `0 0 ${Math.floor(h)}px`;
-    pane.style.height = `${Math.floor(h)}px`;
-    pane.classList.toggle("snug", this.hasFrame);
-    box.style.width = `${Math.floor(w)}px`;
-    box.style.height = `${Math.floor(h)}px`;
-
-    const side = this.q<HTMLElement>(".side");
-    const clipBox = this.q<HTMLElement>(".clip-box");
-    const clip = this.q<HTMLElement>(".clip");
-    const sideParts = [this.q<HTMLElement>(".step-info"), this.q<HTMLElement>(".steps-disclosure"), this.q<HTMLElement>(".controls")].filter(
-      (element) => !element.hidden,
-    );
-    const sideGap = Number.parseFloat(getComputedStyle(side).gap) || 0;
-    const sideReserved = sideParts.reduce((height, element) => height + element.offsetHeight, 0) + sideGap * sideParts.length;
-    const clipAvailable = Math.max(160, side.clientHeight - sideReserved);
-    const clipW = Math.min(side.clientWidth, clipAvailable * this.tutorialAspect);
-    const clipH = clipW / this.tutorialAspect;
-    if (clipW && clipH) {
-      clipBox.style.flex = `0 0 ${Math.floor(clipH)}px`;
-      clipBox.style.height = `${Math.floor(clipH)}px`;
-      clip.style.width = `${Math.floor(clipW)}px`;
-      clip.style.height = `${Math.floor(clipH)}px`;
-    }
-  }
 
   onAdvance(a: Advance) {
     const steps = this.model.lesson?.steps ?? [];
@@ -760,18 +680,6 @@ export class LearnView {
     chip.hidden = !camName;
     chip.textContent = camName ?? "";
 
-    // What done looks like: the step's reference frame and its check question.
-    if (lesson && step) {
-      const img = this.q<HTMLImageElement>(".goal-img img");
-      const src = lessonUrl(lesson.id, step.ref_frame, s?.rev);
-      if (img.getAttribute("src") !== src) img.src = src;
-      this.q(".goal-question").textContent =
-        step.check_type === "manual" ? "Match your work to this reference, then use Next." : step.check_question || "Is this step finished?";
-      this.q<HTMLElement>(".goal").classList.toggle("manual", step.check_type === "manual");
-      const lc2 = s?.last_check;
-      this.q(".goal-reason").textContent =
-        step.check_type !== "manual" && !down && s?.camera_connected && lc2 && s?.check_reason ? `The camera sees: ${s.check_reason}` : "";
-    }
     // Mistake card, directly above the list (section 7.2).
     const card = this.q<HTMLElement>(".mistake-card");
     card.hidden = !activeMistake;
@@ -850,7 +758,8 @@ export class LearnView {
     feedbackCard.className = `badge-wrap feedback-card ${feedback.tone} phase-${feedback.phase}`;
     feedbackCard.hidden = !step || !!manualStep || (!showLive && !s?.camera_connected && !s?.check_offline);
     const b = this.q<HTMLElement>(".badge");
-    b.className = `badge ${badge === "nocamera" ? "watching" : badge}${s?.camera_connected ? " live" : ""}`;
+    // "is-live", not "live": the camera pane owns the `.live` class and its width rules.
+    b.className = `badge ${badge === "nocamera" ? "watching" : badge}${s?.camera_connected ? " is-live" : ""}`;
     this.q(".badge-label").textContent = feedback.label;
     this.q(".meta-top").textContent = feedback.title;
     this.q(".meta-bottom").textContent = feedback.action;
@@ -878,9 +787,6 @@ export class LearnView {
           ? empty(icons.filmBig, "No lesson running", "Pick a lesson to start learning.", html`<button class="primary" data-act="pick">Pick a Lesson</button>`)
           : html`<div class="empty-state"><span class="spinner"></span><p class="empty-message">Starting the lesson</p></div>`,
       );
-    window.requestAnimationFrame(() => {
-      if (this.active) this.fit();
-    });
   }
 
   /** What the live pane says before there is a picture: depends on the chosen camera. */

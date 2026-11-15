@@ -49,12 +49,17 @@ test("Learn layout and tutorial controls expose keyboard and assistive semantics
   assert.match(main, /key\.toLowerCase\(\) === "c"/);
 });
 
-test("Learn camera media is top-stacked instead of centered in leftover column height", async () => {
+test("Learn videos fill their columns inside flat panels and there is no goal card", async () => {
   const learn = await readFile(new URL("../src/views/learn.ts", import.meta.url), "utf8");
   const css = await readFile(new URL("../src/styles/app.css", import.meta.url), "utf8");
-  assert.match(learn, /const supporting = \[goal, feedback, mistake\]/);
-  assert.match(learn, /pane\.style\.flex = `0 0 \$\{Math\.floor\(h\)\}px`/);
-  assert.match(css, /\.live\s*{[\s\S]*?align-self:\s*flex-start/);
+  assert.doesNotMatch(learn, /class="goal panel"/);
+  assert.doesNotMatch(learn, /When this step is done/);
+  const live = css.match(/\n\.live\s*{[^}]*}/)?.[0] ?? "";
+  const clip = css.match(/\n\.clip\s*{[^}]*}/)?.[0] ?? "";
+  assert.match(live, /flex:\s*1 1 auto/);
+  assert.match(clip, /flex:\s*1 1 auto/);
+  assert.doesNotMatch(clip, /aspect-ratio/);
+  assert.match(clip, /background:\s*var\(--panel\)/);
 });
 
 test("Learn keeps waiting and manual states compact", async () => {
@@ -63,6 +68,6 @@ test("Learn keeps waiting and manual states compact", async () => {
   assert.match(learn, /livePane\.hidden = !!manualStep/);
   assert.match(learn, /classList\.toggle\("manual-focus", !!manualStep\)/);
   assert.match(learn, /feedbackCard\.hidden = !step \|\| !!manualStep/);
-  assert.match(learn, /Math\.min\(190, Math\.max\(138, col\.clientHeight \* 0\.21\)\)/);
+  assert.match(css, /\.live\.waiting\s*{[^}]*flex:\s*0 0 auto/);
   assert.match(css, /\.live\.waiting \.placeholder/);
 });
