@@ -392,6 +392,10 @@ def mistake_parallel() -> bool:
     return config.env_bool("HANDOVER_MISTAKE_PARALLEL", True)
 
 
+OVERRIDE_MIN_SECONDS = 8.0
+"""understand_override also needs its streak of confident check yes answers to span this long."""
+
+
 def _tunable(kind: str, name: str, default: Any, lo: Any = None, hi: Any = None) -> Any:
     """A HANDOVER_* value through server/config.py once it is registered there; until then the same default
     and bounds are applied here, so registering it later changes nothing."""
@@ -641,6 +645,7 @@ class Engine:
         self.mock_tick_at = 0.0  # last time the mock mistake hook was looked at
         self.ahead_streak = 0  # confirmed ahead verdicts in a row on this step (HANDOVER_AHEAD_CONFIRM_N)
         self.override_streak = 0  # check yes, understanding not yes, in a row (HANDOVER_UNDERSTAND_OVERRIDE_N)
+        self.override_since = 0.0  # when that streak started (it must also span OVERRIDE_MIN_SECONDS)
         self.gated_at = -1e9  # when the motion gate last looked at a frame (GATE_MIN_INTERVAL)
         self.gate_wake_booked = False
         self.frame_event = asyncio.Event()
@@ -804,6 +809,7 @@ class Engine:
         self.watch.reset()
         self.ahead_streak = 0
         self.override_streak = 0
+        self.override_since = 0.0
         self.checking = False
         self.verified = False
         self.last_check = None
@@ -1048,7 +1054,7 @@ class Engine:
         if len(data) > MAX_FRAME_BYTES or data[:2] != b"\xff\xd8":
             metrics["frames_ignored"] += 1
             return
-        if now - cam.last_frame < config.env_float("HANDOVER_MIN_FRAME_GAP", 0.05, 0, 5):
+        if now - cam.last_frame < config.env_float("HANDOVER_MIN_FRAME_GAP", 0.03, 0, 5):
             metrics["frames_too_fast"] += 1
             return
         cam.last_frame = now
@@ -1258,15 +1264,20 @@ class Engine:
         """Bounded fallback for HANDOVER_UNDERSTAND=1: count confident check yes answers (at
         HANDOVER_UNDERSTAND_OVERRIDE_CONF) given while understanding did not say yes. Any check answer that is not
         such a yes resets the count; a result where both say yes leaves it alone (the debounce handles that one).
-        True once the count reaches HANDOVER_UNDERSTAND_OVERRIDE_N (0 never)."""
+        True once the count reaches HANDOVER_UNDERSTAND_OVERRIDE_N (0 never) AND the streak spans at least
+        OVERRIDE_MIN_SECONDS, so a confident understanding "no" costs several seconds of agreement, not one extra
+        check."""
         need = understand_override_n()
         if res.done != "yes" or res.confidence < understand_override_conf():
             self.override_streak = 0
             return False
         if und.done == "yes":
             return False
+        now = time.monotonic()
+        if self.override_streak == 0:
+            self.override_since = now
         self.override_streak += 1
-        return need > 0 and self.override_streak >= need
+        return need > 0 and self.override_streak >= need and now - self.override_since >= OVERRIDE_MIN_SECONDS
 
     def _apply_understanding(self, und: "understand.Understanding") -> bool:
         """progress, stage and (with HANDOVER_LIVE_MISTAKES) live mistakes from one understanding result.
@@ -1410,7 +1421,10 @@ class Engine:
         (behind, same step, too unsure, unconfirmed) resets the count. When HANDOVER_AHEAD_CONFIRM_N verdicts in a
         row agree, the step moves to k+1, never further, with reason ahead_confirm. True when it moved."""
         need = ahead_confirm_n()
-        if not confirmed_ahead or confidence < ahead_confirm_conf():
+        own = self.last_check if job.index == self.step else None
+        own_says_no = own is not None and own.get("done") == "no" and float(own.get("confidence") or 0) >= 0.8
+        if not confirmed_ahead or confidence < ahead_confirm_conf() or own_says_no:
+            # A confident "no" from this step's own check means step k was skipped, not missed: no recovery.
             self.ahead_streak = 0
             return False
         self.ahead_streak += 1
@@ -1525,7 +1539,7 @@ class Engine:
                 self.broadcast(frame)
                 continue
             try:
-                small = await asyncio.to_thread(check.downscale_jpeg, frame, UI_FRAME_MAX_SIDE, 75)
+                small = await asyncio.to_thread(check.downscale_jpeg, frame, UI_FRAME_MAX_SIDE, 75, True)
             except Exception as e:
                 log.debug("bad camera frame skipped: %s", e)
                 metrics["frames_undecodable"] += 1
@@ -1670,7 +1684,13 @@ def hub_info() -> dict:
     hub = f"http://{ip}:{http_port}" if ip else None
     return {"lan_ip": ip, "http_port": http_port, "https_port": https_port, "hub_url": hub,
             "pair_link": f"handover://connect?hub={quote(hub, safe='')}" if hub else None,
-            "capture_url": f"https://{ip}:{https_port}/capture" if ip else None}
+            "capture_url": f"https://{ip}:{https_port}/capture" if ip and has_certs() else None}
+
+
+def has_certs() -> bool:
+    """True when the hub serves https (the phone browser camera page needs it)."""
+    certs = Path(os.environ.get("HANDOVER_CERTS") or REPO / "certs")
+    return (certs / "cert.pem").is_file() and (certs / "key.pem").is_file()
 
 
 @app.get("/api/lessons")
@@ -2037,7 +2057,14 @@ def handle_ui_message(client: UIClient, text: str) -> None:
         except HTTPException as e:
             client.push({"type": "error", "message": e.detail})
     elif kind == "end_lesson":
-        engine.end_lesson()
+        # A stale End (a screen still showing an older lesson or run) must not unload what someone else started.
+        want_lesson, want_run = msg.get("lesson_id"), msg.get("run_id")
+        current_run = engine.run_id()  # the id clients see in state.run_id
+        if (want_lesson is not None and want_lesson != engine.lesson_id) or \
+                (want_run is not None and current_run is not None and want_run != current_run):
+            log.info("ignored stale end_lesson for %s / %s", want_lesson, want_run)
+        else:
+            engine.end_lesson()
     elif engine.lesson is None:
         client.push({"type": "error", "message": "no lesson selected"})
     elif kind in ("next", "back"):

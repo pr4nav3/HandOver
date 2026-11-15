@@ -454,9 +454,10 @@ def _max_side() -> int:
     return int(config.get("HANDOVER_CHECK_MAX_SIDE"))  # type: ignore[arg-type]
 
 
-def downscale_jpeg(data: bytes, max_side: Optional[int] = None, quality: int = 80) -> bytes:
+def downscale_jpeg(data: bytes, max_side: Optional[int] = None, quality: int = 80, fast: bool = False) -> bytes:
     """Return a JPEG whose long side is at most max_side (None: HANDOVER_CHECK_MAX_SIDE or 640).
-    Small images pass through."""
+    Small images pass through. fast=True (the live feed to screens) decodes at reduced size and uses bilinear,
+    so a large camera frame costs a fraction of a full decode."""
     from PIL import Image
 
     if max_side is None:
@@ -465,8 +466,10 @@ def downscale_jpeg(data: bytes, max_side: Optional[int] = None, quality: int = 8
     with Image.open(io.BytesIO(data)) as im:
         if max(im.size) <= max_side and im.format == "JPEG":
             return data
+        if fast:
+            im.draft("RGB", (max_side, max_side))
         im = im.convert("RGB")
-        im.thumbnail((max_side, max_side), Image.Resampling.LANCZOS)
+        im.thumbnail((max_side, max_side), Image.Resampling.BILINEAR if fast else Image.Resampling.LANCZOS)
         buf = io.BytesIO()
         im.save(buf, format="JPEG", quality=quality)
         return buf.getvalue()
