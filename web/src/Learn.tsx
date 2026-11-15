@@ -726,8 +726,18 @@ export function Learn() {
 
         <section className={`learn-stage ${sideLayout ? 'side' : ''}`} ref={stageRef}>
           <div className="panes">
-            <div className={`frame pane live ${showLive ? 'on' : ''}`} style={paneStyle} aria-label="You, live camera">
+            <div
+              className={`frame pane live ${showLive ? 'on' : ''} ${showLive && badge === 'verified' ? 'verified' : ''} ${showLive && activeMistake && badge !== 'verified' ? 'caught' : ''}`}
+              style={paneStyle}
+              aria-label="You, live camera"
+            >
               <canvas ref={liveRef} role="img" aria-label="Live camera" className={showLive ? (cameraLost ? 'lost' : '') : 'hidden'} />
+              {/* The verdict, on the picture it was made from: a green stamp for the flash after a camera pass. */}
+              {showLive && badge === 'verified' && !isDone && (
+                <span className="verdict" aria-hidden="true">
+                  <Caps>Step done</Caps>
+                </span>
+              )}
               {showLive && (
                 <span className="tab cobalt pane-tab">
                   {!recording && !cameraLost && <i />}
@@ -783,7 +793,7 @@ export function Learn() {
           </div>
 
           <div className="under" ref={underRef}>
-            <div className="step-info">
+            <div className="step-info" key={step ? idx : -1}>
               <p className="eyebrow step-count">{step ? <Caps show={`Step ${pad2(idx + 1)} of ${pad2(total)}`}>{`Step ${idx + 1} of ${total}`}</Caps> : ' '}</p>
               <h1 className="display step-title">{step ? step.title : ' '}</h1>
               <p className="step-do">{doNow}</p>

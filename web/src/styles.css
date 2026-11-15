@@ -338,7 +338,14 @@ code {
 .primary:active:not(:disabled),
 .secondary:active:not(:disabled),
 .ghost:active:not(:disabled) {
-  transform: translateY(1px);
+  transform: translateY(1px) scale(0.98);
+}
+
+.btn,
+.primary,
+.secondary,
+.ghost {
+  transition: transform 0.12s ease, background 0.15s ease;
 }
 
 .btn.primary,

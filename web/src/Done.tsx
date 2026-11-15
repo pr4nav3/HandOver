@@ -101,7 +101,7 @@ export function Done({ summary: s, onRestart, onBack, disabled }: { summary: Don
           </span>
         </h2>
         <ol className="breakdown finish-steps">
-          {s.rows.map((r) => (
+          {s.rows.map((r, i) => (
             <li key={r.n} className="bd-row">
               <span className="bd-num">{pad2(r.n)}</span>
               <div className="bd-main">
@@ -119,7 +119,7 @@ export function Done({ summary: s, onRestart, onBack, disabled }: { summary: Don
                 <span className="tb exp" style={{ width: `${(r.expertS / maxT) * 100}%` }} />
                 <span
                   className={`tb you ${r.how === 'camera' && !s.mock ? 'good' : ''}`}
-                  style={{ width: r.yourS === null ? 0 : `${(r.yourS / maxT) * 100}%` }}
+                  style={{ width: r.yourS === null ? 0 : `${(r.yourS / maxT) * 100}%`, animationDelay: `${i * 60}ms` }}
                 />
               </div>
               <span className="bd-times">
