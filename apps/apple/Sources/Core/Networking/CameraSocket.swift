@@ -50,6 +50,14 @@ actor CameraSocket {
 
     var framesSent: Int { get async { await socket.framesSent } }
 
+    /// True when `send(frame:)` would send now (connected, idle, and the gap since the last frame passed).
+    var canSendFrame: Bool {
+        get async {
+            if let lastFrameAt, clock.now - lastFrameAt < Self.minFrameGap { return false }
+            return await socket.canSendFrame
+        }
+    }
+
     /// `next` from the phone, with the same `from` guard as the web app.
     @discardableResult
     func next() async -> Bool {

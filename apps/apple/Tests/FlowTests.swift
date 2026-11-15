@@ -48,6 +48,28 @@ struct LearnFlowTests {
         #expect(flow.section == .library)
     }
 
+    /// A late `lesson_id: null` from our own End can land after Start on a new lesson; it must not end it. Once
+    /// the hub answers with the new lesson, or the wait runs out, a null ends Learn again.
+    @Test func lateNullAfterStartDoesNotEndTheNewLesson() {
+        let model = AppModel.preview()
+        let flow = LearnFlow(defaults: Self.defaults())
+        flow.choose(.thisDevice)
+        let t0 = Date(timeIntervalSince1970: 1_000)
+        flow.start("bike", model: model, now: t0)
+        #expect(!flow.hubLessonChanged(to: nil, now: t0.addingTimeInterval(0.3)), "late null while select waits")
+        #expect(flow.isRunning)
+        #expect(!flow.hubLessonChanged(to: "bike", now: t0.addingTimeInterval(0.5)))
+        #expect(flow.pendingSelect == nil)
+        #expect(flow.hubLessonChanged(to: nil, now: t0.addingTimeInterval(9)), "a real unload ends Learn")
+
+        // No answer at all: after the window, a null counts again.
+        flow.start("wheel", model: model, now: t0)
+        #expect(flow.hubLessonChanged(to: nil, now: t0.addingTimeInterval(LearnFlow.selectAnswerWindow + 1)))
+        flow.end()
+        #expect(flow.pendingSelect == nil)
+        #expect(!flow.hubLessonChanged(to: nil), "nothing running, nothing to end")
+    }
+
     @Test func changeCameraOnlyNeverStartsALesson() {
         let model = AppModel.preview()
         let flow = LearnFlow(defaults: Self.defaults())
@@ -118,9 +140,24 @@ private actor BusySink: FrameSink {
     private(set) var accepted = 0
     private(set) var attempts = 0
 
+    /// Readiness checks, each one before a frame would be encoded.
+    private(set) var checks = 0
+    /// When true, isReady says yes but the send still fails (the socket closed in between).
+    var failSends = false
+
     func setBusy(_ value: Bool) { busy = value }
+    func setFailSends(_ value: Bool) { failSends = value }
+
+    func isReady() async -> Bool {
+        checks += 1
+        return !busy
+    }
 
     func trySend(_ jpeg: Data) async -> Bool {
+        if failSends {
+            attempts += 1
+            return false
+        }
         attempts += 1
         guard !busy else { return false }
         accepted += 1
@@ -151,17 +188,58 @@ struct FrameDropTests {
                                           didDrop: { await tally.drop() }, minGap: { .zero })
         }
         slot.put(try #require(Self.frame(width: 320, height: 240)))
-        try await waitUntil { await sink.attempts == 1 }
-        #expect(await tally.dropped == 1)
+        try await waitUntil { await tally.dropped == 1 }
+        #expect(await sink.attempts == 0, "a frame is not encoded or sent while the socket is busy")
         #expect(await sink.accepted == 0)
 
         await sink.setBusy(false)
-        try? await Task.sleep(for: .milliseconds(100))
-        #expect(await sink.attempts == 1, "the dropped frame is never retried")
+        try? await Task.sleep(for: .milliseconds(150))
+        #expect(await sink.attempts == 0, "the dropped frame is never retried")
 
         slot.put(try #require(Self.frame(width: 640, height: 360)))
         try await waitUntil { await sink.accepted == 1 }
         #expect(await tally.sent == [CGSize(width: 640, height: 360)])
+        slot.close()
+        await loop.value
+    }
+
+    /// While the socket is not open (a reconnect), frames from a fast camera are dropped before encoding, and the
+    /// loop waits a frame interval after each drop instead of spinning through every frame.
+    @Test func waitsAfterADropInsteadOfSpinning() async throws {
+        let sink = BusySink()
+        let tally = Tally()
+        let slot = LatestFrameSlot<CameraFrameImage>()
+        let frame = try #require(Self.frame(width: 320, height: 240))
+        let loop = Task.detached {
+            await CameraStreamer.sendLoop(sink: sink, slot: slot, didSend: { await tally.send($0) },
+                                          didDrop: { await tally.drop() }, retryDelay: .milliseconds(66),
+                                          minGap: { .zero })
+        }
+        // A camera putting a frame every 5 ms for 330 ms: about 66 frames.
+        let feeder = Task.detached {
+            for _ in 0..<66 {
+                slot.put(frame)
+                try? await Task.sleep(for: .milliseconds(5))
+            }
+        }
+        await feeder.value
+        let checks = await sink.checks
+        #expect(checks >= 2 && checks <= 12, "\(checks) readiness checks in 330 ms; one per 66 ms expected")
+        #expect(await sink.attempts == 0)
+
+        // Ready but the send fails: the loop also waits before the next try.
+        await sink.setBusy(false)
+        await sink.setFailSends(true)
+        let before = await sink.attempts
+        let feeder2 = Task.detached {
+            for _ in 0..<66 {
+                slot.put(frame)
+                try? await Task.sleep(for: .milliseconds(5))
+            }
+        }
+        await feeder2.value
+        let failed = await sink.attempts - before
+        #expect(failed >= 1 && failed <= 12, "\(failed) failed sends in 330 ms; one per 66 ms expected")
         slot.close()
         await loop.value
     }

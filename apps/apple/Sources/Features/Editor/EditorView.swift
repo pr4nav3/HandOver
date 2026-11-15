@@ -127,10 +127,20 @@ private struct EditorScreen: View {
     }
 
     private var compact: some View {
+        GeometryReader { geo in
+            compactList(short: HOLayout.isShort(geo.size.height), height: geo.size.height)
+        }
+    }
+
+    /// On a short screen (iPhone landscape) the player keeps to 60% of the height, so the timeline and the steps
+    /// are in view without scrolling past a screen-sized video.
+    private func compactList(short: Bool, height: CGFloat) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: HOSpace.l) {
                 guide
                 player
+                    .frame(maxHeight: short ? height * 0.6 : nil)
+                    .frame(maxWidth: .infinity)
                 EditorTimeline(store: store, playhead: $playhead)
                 stepActions
                 Text("Steps").sectionHeaderStyle(theme)

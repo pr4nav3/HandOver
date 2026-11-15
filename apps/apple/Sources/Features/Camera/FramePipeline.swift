@@ -174,9 +174,13 @@ struct SendRate: Sendable {
 /// Where encoded frames go. `trySend` returns false when the frame was dropped because the sink is busy (the
 /// previous frame is still going out), not connected, or the frame came too soon. Dropped frames are never retried.
 protocol FrameSink: Sendable {
+    /// True when a frame sent now would go out: connected, the previous frame finished, the gap passed. Checked
+    /// before encoding, so no frame is encoded only to be thrown away (during a reconnect, for example).
+    func isReady() async -> Bool
     func trySend(_ jpeg: Data) async -> Bool
 }
 
 extension CameraSocket: FrameSink {
+    func isReady() async -> Bool { await canSendFrame }
     func trySend(_ jpeg: Data) async -> Bool { await send(frame: jpeg) }
 }

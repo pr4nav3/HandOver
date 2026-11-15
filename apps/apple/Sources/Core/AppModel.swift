@@ -164,9 +164,17 @@ final class AppModel {
         Task { await socket?.dismissMistake() }
     }
 
-    /// Tells the hub to stop the run and unload the lesson (end_lesson), for every viewer.
-    func endLesson() {
-        Task { await socket?.endLesson() }
+    /// Tells the hub to stop the run and unload the lesson (end_lesson), for every viewer. It names the lesson
+    /// (and the run, when the hub is on that lesson), so the hub ignores it if someone has moved on since.
+    func endLesson(lessonId: String? = nil) {
+        let ids = Self.endIds(lessonId: lessonId, state: state)
+        Task { await socket?.endLesson(lessonId: ids.lessonId, runId: ids.runId) }
+    }
+
+    /// The ids end_lesson carries: the given lesson (else the hub's current one) and the run when it belongs to it.
+    nonisolated static func endIds(lessonId: String?, state: HubState) -> (lessonId: String?, runId: String?) {
+        let lesson = lessonId ?? state.lessonId
+        return (lesson, lesson != nil && lesson == state.lessonId ? state.runId : nil)
     }
 
     func clearError() {

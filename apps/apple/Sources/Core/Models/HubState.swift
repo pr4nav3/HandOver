@@ -90,6 +90,8 @@ struct HubState: Codable, Hashable, Sendable {
     var checkMode: CheckMode?
     /// The next step's clip, sent once this step has a confident yes, so it can be preloaded.
     var nextClip: String?
+    /// The current run, from the hub; sent back with end_lesson so a stale End is ignored.
+    var runId: String?
 
     enum CodingKeys: String, CodingKey {
         case lessonId = "lesson_id"
@@ -102,6 +104,7 @@ struct HubState: Codable, Hashable, Sendable {
         case mistake
         case checkMode = "check_mode"
         case nextClip = "next_clip"
+        case runId = "run_id"
     }
 
     static let empty = HubState()
@@ -109,7 +112,7 @@ struct HubState: Codable, Hashable, Sendable {
     init(lessonId: String? = nil, rev: Int = 0, step: Int = 0, total: Int = 0, status: Status = .watching,
          lastCheck: LastCheck? = nil, cameraConnected: Bool = false, camera: CameraInfo? = nil,
          checkOffline: Bool = false, checkOfflineReason: OfflineReason? = nil, mistake: MistakeMessage? = nil,
-         checkMode: CheckMode? = nil, nextClip: String? = nil) {
+         checkMode: CheckMode? = nil, nextClip: String? = nil, runId: String? = nil) {
         self.lessonId = lessonId
         self.rev = rev
         self.step = step
@@ -123,6 +126,7 @@ struct HubState: Codable, Hashable, Sendable {
         self.mistake = mistake
         self.checkMode = checkMode
         self.nextClip = nextClip
+        self.runId = runId
     }
 
     init(from decoder: any Decoder) throws {
@@ -141,6 +145,7 @@ struct HubState: Codable, Hashable, Sendable {
         mistake = (try? c.decodeIfPresent(MistakeMessage.self, forKey: .mistake)) ?? nil
         checkMode = (try? c.decodeIfPresent(CheckMode.self, forKey: .checkMode)) ?? nil
         nextClip = (try? c.decodeIfPresent(String.self, forKey: .nextClip)) ?? nil
+        runId = (try? c.decodeIfPresent(String.self, forKey: .runId)) ?? nil
     }
 
     var hasLesson: Bool { lessonId != nil }
