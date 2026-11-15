@@ -47,7 +47,7 @@ final class HubConnector {
             accounts.follow(hub)
             phase = .connected(hub, lessons: lessons)
             Haptics.success()
-            AccessibilityNotificationPoster.announce("Connected to \(hub.host).")
+            AccessibilityNotificationPoster.announce("Connected to your hub.")
             try? await Task.sleep(for: .seconds(1.2))
             guard !Task.isCancelled else { return }
             await then(me)

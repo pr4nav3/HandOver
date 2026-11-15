@@ -16,11 +16,13 @@ struct DoneView: View {
     var isStill = false
     @Environment(AppModel.self) private var model
     @Environment(\.theme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var hubScore: HubRunScore?
     @State private var showRating = false
     @State private var showParts = false
     @State private var practiceStep: Int?
     @State private var toast: ToastItem?
+    @State private var entered = false
 
     private var canAct: Bool { model.connection.isConnected || isStill }
 
@@ -45,13 +47,16 @@ struct DoneView: View {
                     HStack(alignment: .top, spacing: HOSpace.xl) {
                         VStack(spacing: HOSpace.l) { summaryColumn }
                             .frame(width: 380)
-                        breakdown.frame(maxWidth: .infinity)
+                        breakdown
+                            .frame(maxWidth: .infinity)
+                            .modifier(DoneReveal(visible: isStill || entered, reduceMotion: reduceMotion, delay: 0.12))
                     }
                     .padding(HOSpace.xl)
                 } else {
                     VStack(spacing: HOSpace.l) {
                         summaryColumn
                         breakdown
+                            .modifier(DoneReveal(visible: isStill || entered, reduceMotion: reduceMotion, delay: 0.12))
                     }
                     .padding(HOSpace.l)
                 }
@@ -59,6 +64,14 @@ struct DoneView: View {
         }
         .hoPaperBackground()
         .hoToast($toast)
+        .onAppear {
+            guard !entered else { return }
+            if isStill || reduceMotion {
+                entered = true
+            } else {
+                withAnimation(.spring(response: 0.48, dampingFraction: 0.84)) { entered = true }
+            }
+        }
         .task {
             guard !isStill else { return }
             Haptics.success()
@@ -102,7 +115,11 @@ struct DoneView: View {
     private var summaryColumn: some View {
         VStack(spacing: HOSpace.s) {
             Button { if !summary.scoreParts.isEmpty { showParts = true } } label: {
-                ScoreRing(score: shownScore, label: shownLabel, animateIn: !isStill)
+                ZStack {
+                    CompletionHalo(active: entered && !isStill)
+                    ScoreRing(score: shownScore, label: shownLabel, animateIn: !isStill)
+                }
+                .frame(width: 156, height: 156)
             }
             .buttonStyle(.plain)
             .disabled(summary.scoreParts.isEmpty || hubScore?.score != nil)
@@ -118,11 +135,12 @@ struct DoneView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.top, HOSpace.l)
+        .modifier(DoneReveal(visible: isStill || entered, reduceMotion: reduceMotion, delay: 0))
 
-        stats
-        bestAndWeakest
-        tipCard
-        buttons
+        stats.modifier(DoneReveal(visible: isStill || entered, reduceMotion: reduceMotion, delay: 0.07))
+        bestAndWeakest.modifier(DoneReveal(visible: isStill || entered, reduceMotion: reduceMotion, delay: 0.13))
+        tipCard.modifier(DoneReveal(visible: isStill || entered, reduceMotion: reduceMotion, delay: 0.18))
+        buttons.modifier(DoneReveal(visible: isStill || entered, reduceMotion: reduceMotion, delay: 0.22))
     }
 
     private var stats: some View {
@@ -240,21 +258,30 @@ struct DoneView: View {
 
     private var buttons: some View {
         VStack(spacing: HOSpace.s) {
-            if let weakest {
-                Button("Practice the Weakest Step") { onGoto(weakest) }
-                    .buttonStyle(HOButtonStyle(.primary, size: .large, fullWidth: true))
-                Button("Start Over") { onStartOver() }
-                    .buttonStyle(HOButtonStyle(.secondary, size: .large, fullWidth: true))
-            } else {
-                Button("Start Over") { onStartOver() }
-                    .buttonStyle(HOButtonStyle(.primary, size: .large, fullWidth: true))
+            Group {
+                if let weakest {
+                    Button("Practice the Weakest Step") { onGoto(weakest) }
+                        .buttonStyle(HOButtonStyle(.primary, size: .large, fullWidth: true))
+                    Button("Start Over") { onStartOver() }
+                        .buttonStyle(HOButtonStyle(.secondary, size: .large, fullWidth: true))
+                } else {
+                    Button("Start Over") { onStartOver() }
+                        .buttonStyle(HOButtonStyle(.primary, size: .large, fullWidth: true))
+                }
             }
+            .disabled(!canAct)
             if let onLibrary {
                 Button("Back to Library") { onLibrary() }
                     .buttonStyle(HOButtonStyle(.quiet))
             }
+            if !canAct {
+                Label("Reconnect to your hub to practice again.", systemImage: "wifi.slash")
+                    .font(theme.fonts.footnote)
+                    .foregroundStyle(theme.colors.ink2)
+                    .multilineTextAlignment(.center)
+                    .padding(.top, HOSpace.xxs)
+            }
         }
-        .disabled(!canAct)
     }
 
     // MARK: - Breakdown
@@ -267,14 +294,27 @@ struct DoneView: View {
                 .foregroundStyle(theme.colors.ink2)
                 .padding(.horizontal, HOSpace.l)
                 .padding(.vertical, HOSpace.s)
-            ForEach(summary.lines) { line in
-                Button { Haptics.tap(); practiceStep = line.index } label: {
-                    breakdownRow(line, longest: longest)
+            if summary.lines.isEmpty {
+                HStack(spacing: HOSpace.s) {
+                    Image(systemName: "list.bullet.rectangle")
+                        .foregroundStyle(theme.colors.ink2)
+                        .accessibilityHidden(true)
+                    Text("No step breakdown was recorded for this run.")
+                        .font(theme.fonts.callout)
+                        .foregroundStyle(theme.colors.ink2)
+                    Spacer(minLength: 0)
                 }
-                .buttonStyle(HORowButtonStyle())
-                .disabled(!canAct)
-                if line.index < summary.lines.count - 1 {
-                    Rectangle().fill(theme.colors.line).frame(height: HOLine.width).padding(.leading, HOSpace.l)
+                .padding(HOSpace.l)
+            } else {
+                ForEach(summary.lines) { line in
+                    Button { Haptics.tap(); practiceStep = line.index } label: {
+                        breakdownRow(line, longest: longest)
+                    }
+                    .buttonStyle(HORowButtonStyle())
+                    .disabled(!canAct)
+                    if line.index < summary.lines.count - 1 {
+                        Rectangle().fill(theme.colors.line).frame(height: HOLine.width).padding(.leading, HOSpace.l)
+                    }
                 }
             }
         }
@@ -313,6 +353,48 @@ struct DoneView: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Step \(line.n). \(TimeBar.spoken(yours: line.yours, expert: line.expert)) \(line.how.word). "
                             + (line.mistakes == 0 ? "No mistakes." : "\(line.mistakes) mistake\(line.mistakes == 1 ? "" : "s")."))
+    }
+}
+
+/// The completion moment is celebratory without confetti: a soft ring and eight small rays bloom behind the
+/// score, then stay quiet. With Reduce Motion it simply fades in without the bloom.
+private struct CompletionHalo: View {
+    var active: Bool
+    @Environment(\.theme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .stroke(theme.colors.good.opacity(0.16), lineWidth: 1)
+                .frame(width: 146, height: 146)
+            ForEach(0..<8, id: \.self) { index in
+                Capsule()
+                    .fill(index.isMultiple(of: 2) ? theme.colors.good : theme.colors.accent)
+                    .frame(width: 3, height: index.isMultiple(of: 2) ? 10 : 7)
+                    .offset(y: -78)
+                    .rotationEffect(.degrees(Double(index) * 45))
+            }
+        }
+        .opacity(active ? 0.48 : 0)
+        .scaleEffect(active ? 1 : (reduceMotion ? 1 : 0.72))
+        .animation(HOMotion.resolve(.spring(response: 0.56, dampingFraction: 0.72), reduceMotion: reduceMotion),
+                   value: active)
+        .accessibilityHidden(true)
+    }
+}
+
+private struct DoneReveal: ViewModifier {
+    var visible: Bool
+    var reduceMotion: Bool
+    var delay: Double
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(visible ? 1 : 0)
+            .offset(y: reduceMotion || visible ? 0 : 12)
+            .animation(HOMotion.resolve(.spring(response: 0.42, dampingFraction: 0.88).delay(delay),
+                                        reduceMotion: reduceMotion), value: visible)
     }
 }
 

@@ -64,6 +64,13 @@ struct HubURL: Hashable, Codable, Sendable, CustomStringConvertible {
         return c.url ?? base
     }
 
+    /// A one-scan pairing link that also opens the requested camera on the phone.
+    func cameraLink(_ intent: CameraLaunchIntent) -> URL {
+        guard var c = URLComponents(url: link, resolvingAgainstBaseURL: false) else { return link }
+        c.queryItems = (c.queryItems ?? []) + [URLQueryItem(name: "camera", value: intent.rawValue)]
+        return c.url ?? link
+    }
+
     private func socketURL(path: String) -> URL {
         var c = URLComponents(url: base, resolvingAgainstBaseURL: false) ?? URLComponents()
         c.scheme = isSecure ? "wss" : "ws"
@@ -125,5 +132,20 @@ struct HubURL: Hashable, Codable, Sendable, CustomStringConvertible {
     func encode(to encoder: any Encoder) throws {
         var c = encoder.singleValueContainer()
         try c.encode(base.absoluteString)
+    }
+}
+
+/// An optional action carried beside the hub address in a pairing QR. The desktop app uses this so one scan
+/// can connect the phone and open the right camera instead of making the person find Be the Camera afterward.
+enum CameraLaunchIntent: String, Equatable, Sendable {
+    case phone
+    case glasses
+
+    init?(url: URL) {
+        guard url.scheme?.lowercased() == HubURL.linkScheme,
+              url.host()?.lowercased() == "connect",
+              let value = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?
+                .first(where: { $0.name == "camera" })?.value else { return nil }
+        self.init(rawValue: value.lowercased())
     }
 }

@@ -162,6 +162,10 @@ final class ClipController {
         for slot in slots { slot?.tearDown() }
         slots = [nil, nil]
         phase = .idle
+        caption = nil
+        wanted = nil
+        paused = false
+        isDucked = false
     }
 
     private func startTicker() {

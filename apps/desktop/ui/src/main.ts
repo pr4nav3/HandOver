@@ -568,6 +568,9 @@ window.addEventListener("keydown", (e) => {
   } else if (e.key === "ArrowLeft") {
     e.preventDefault();
     learn.back();
+  } else if (e.key.toLowerCase() === "r") {
+    e.preventDefault();
+    learn.replay();
   }
 });
 
@@ -578,7 +581,16 @@ async function boot() {
   app.state = app.snap.state;
   await onHub(onEvent as (e: HubEvent) => void);
   const launch = await invoke<{ hub: string | null; lesson: string | null }>("launch");
-  const target = launch.hub ?? (app.snap.settings.reopen_last_hub && localStorage.getItem("handover.welcomed") === "1" ? app.snap.recent[0]?.base : null);
+  let target = launch.hub ?? (app.snap.settings.reopen_last_hub && localStorage.getItem("handover.welcomed") === "1" ? app.snap.recent[0]?.base : null);
+  // Once this Mac has been chosen as the hub, later launches bring that hub back before reconnecting. A remote
+  // hub is never started or changed by this app.
+  if (target && /^(https?:\/\/)?(localhost|127\.0\.0\.1)(:|\/|$)/i.test(target)) {
+    try {
+      target = (await invoke<{ address: string }>("ensure_local_hub")).address;
+    } catch {
+      // connectHub owns the visible recovery screen and its plain-language error.
+    }
+  }
   if (app.link.link !== "idle") {
     await refreshMe();
     go({ name: "home" }, false);

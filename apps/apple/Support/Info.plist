@@ -43,6 +43,12 @@
 	<dict>
 		<key>AppLinkURLScheme</key>
 		<string>handover://</string>
+		<key>ClientToken</key>
+		<string>0</string>
+		<key>MetaAppID</key>
+		<string>0</string>
+		<key>TeamID</key>
+		<string>$(DEVELOPMENT_TEAM)</string>
 	</dict>
 	<key>NSAppTransportSecurity</key>
 	<dict>
@@ -51,6 +57,8 @@
 	</dict>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>HandOver uses Bluetooth to reach your Meta glasses, to record a lesson or to follow one with their camera.</string>
+	<key>NSBluetoothPeripheralUsageDescription</key>
+	<string>HandOver uses Bluetooth to receive live video from your Meta glasses.</string>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_bonjour._tcp</string>
@@ -72,6 +80,7 @@
 	</dict>
 	<key>UIBackgroundModes</key>
 	<array>
+		<string>processing</string>
 		<string>bluetooth-central</string>
 		<string>bluetooth-peripheral</string>
 		<string>external-accessory</string>

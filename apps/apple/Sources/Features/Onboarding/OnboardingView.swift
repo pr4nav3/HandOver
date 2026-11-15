@@ -4,7 +4,6 @@ import SwiftUI
 /// choice and the theme. Progress is saved after every step; quitting resumes where it stopped.
 struct OnboardingView: View {
     let flow: OnboardingModel
-    @Environment(AppModel.self) private var app
     @Environment(AccountStore.self) private var accounts
     @Environment(\.theme) private var theme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -37,7 +36,7 @@ struct OnboardingView: View {
         case .connect:
             ConnectPage(flow: flow)
         case .ownerSetup:
-            OnboardingPage(stepLabel: flow.progress.stepLabel, title: "Set up \(hubName)",
+            OnboardingPage(stepLabel: flow.progress.stepLabel, title: "Set up this hub",
                            line: "You are the first person here, so you become the hub owner. Owners manage accounts and organizations.") {
                 OwnerSetupForm(hubName: hubName, onDone: {
                     Task { await flow.signedIn(madeAccount: true, accounts: accounts) }
@@ -46,7 +45,7 @@ struct OnboardingView: View {
                 EmptyView()
             }
         case .account:
-            OnboardingPage(stepLabel: flow.progress.stepLabel, title: "Sign in to \(hubName)",
+            OnboardingPage(stepLabel: flow.progress.stepLabel, title: "Sign in",
                            line: "Your account lives on this hub. There is no HandOver cloud account.") {
                 SignInForm(showsFooter: false) {
                     Task { await flow.signedIn(madeAccount: false, accounts: accounts) }
@@ -79,7 +78,7 @@ struct OnboardingView: View {
         }
     }
 
-    private var hubName: String { app.hub?.host ?? "your hub" }
+    private var hubName: String { "this hub" }
 
     private func topBar(_ step: OnboardingStep) -> some View {
         HStack {

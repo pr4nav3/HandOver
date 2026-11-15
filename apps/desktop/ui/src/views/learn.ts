@@ -106,6 +106,7 @@ const TEMPLATE = html`<div class="learn">
       <div class="clip-box">
         <div class="clip">
           <video loop playsinline preload="auto" crossorigin="anonymous"></video>
+          <button class="replay-clip" type="button" title="Replay this step (R)">${icons.refresh}<span>Replay</span></button>
           <button class="unmute" type="button" hidden>${icons.sound}<span>Turn on sound</span></button>
           <span class="result-moment" hidden></span>
           <div class="placeholder clip-ph" hidden><span class="spinner"></span></div>
@@ -190,6 +191,7 @@ export class LearnView {
     });
     this.q(".next").addEventListener("click", () => this.next());
     this.q("button.back").addEventListener("click", () => this.back());
+    this.q(".replay-clip").addEventListener("click", () => this.replay());
     this.q(".unmute").addEventListener("click", () => {
       this.video.muted = false;
       this.q<HTMLElement>(".unmute").hidden = true;
@@ -233,12 +235,26 @@ export class LearnView {
   }
 
   setActive(on: boolean) {
+    if (this.active === on) return;
     this.active = on;
     if (!on) {
       this.video.pause();
+      this.video.currentTime = 0;
+      window.speechSynthesis?.cancel();
+      window.clearTimeout(this.flashTimer);
+      window.clearTimeout(this.resultTimer);
+      this.flashVerified = false;
+      this.q<HTMLElement>(".result-moment").hidden = true;
       this.live.stop();
     }
     this.render();
+  }
+
+  /** Starts the current expert step from the beginning without changing course progress. */
+  replay() {
+    if (!this.video.src) return;
+    this.video.currentTime = 0;
+    if (this.active) this.play();
   }
 
   private run(i: number): StepRun {

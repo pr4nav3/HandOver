@@ -82,6 +82,17 @@ struct LearnFlowTests {
         #expect(flow.pending == nil && !flow.showCameraSheet)
     }
 
+    @Test func pairingQRCodeOpensAndConsumesTheRequestedCamera() {
+        let flow = LearnFlow(defaults: Self.defaults())
+        flow.openCamera(.glasses)
+        #expect(flow.section == .camera)
+        #expect(flow.cameraLaunchIntent == .glasses)
+        flow.consumeCameraLaunch(.phone)
+        #expect(flow.cameraLaunchIntent == .glasses)
+        flow.consumeCameraLaunch(.glasses)
+        #expect(flow.cameraLaunchIntent == nil)
+    }
+
     @Test func reconnectsOnlyWhenTheFramesSettingFlips() {
         let flow = LearnFlow(defaults: Self.defaults())
         var reconnects = 0
@@ -111,7 +122,7 @@ struct LearnFlowTests {
     @Test func captureLinkUsesTheHubsHTTPSPort() throws {
         let hub = try #require(HubURL(parsing: "192.168.1.20:8000"))
         #expect(CaptureLink.url(hub: hub).absoluteString == "https://192.168.1.20:8443/capture")
-        #expect(OtherDeviceKind.phone.link(hub: hub) == hub.link)
+        #expect(OtherDeviceKind.phone.link(hub: hub) == hub.cameraLink(.phone))
     }
 
     @Test func metaCallbackLinksGoToTheGlasses() throws {

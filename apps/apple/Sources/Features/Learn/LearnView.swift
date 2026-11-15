@@ -133,8 +133,10 @@ struct LearnView: View {
                 }
                 if let doneSummary {
                     DoneView(summary: doneSummary, lessonId: state.lessonId, runId: nil,
-                             onGoto: { model.goto(step: $0) }, onStartOver: { model.goto(step: 0) },
-                             onLibrary: onLibrary, isStill: clips.isStill)
+                             onGoto: { step in stopMedia(); model.goto(step: step) },
+                             onStartOver: { stopMedia(); model.goto(step: 0) },
+                             onLibrary: onLibrary.map { action in { stopMedia(); action() } },
+                             isStill: clips.isStill)
                         .transition(reduceMotion ? .opacity : .move(edge: .bottom))
                         .zIndex(2)
                 }
@@ -152,7 +154,10 @@ struct LearnView: View {
         .navigationTitle(lesson?.title ?? "Learn")
         .sheet(isPresented: $showSteps) { stepsSheet }
         .confirmationDialog("End this lesson?", isPresented: $confirmClose, titleVisibility: .visible) {
-            Button("End Lesson", role: .destructive) { onClose?() }
+            Button("End Lesson", role: .destructive) {
+                stopMedia()
+                onClose?()
+            }
             Button("Keep Going", role: .cancel) {}
         } message: {
             Text("You go back to Home. You can start it again any time.")
@@ -194,8 +199,7 @@ struct LearnView: View {
             #if os(iOS)
             UIApplication.shared.isIdleTimerDisabled = false
             #endif
-            clips.stop()
-            guide.stop()
+            stopMedia()
         }
     }
 
@@ -462,7 +466,12 @@ struct LearnView: View {
     private func closeButton(_ close: @escaping () -> Void, onVideo: Bool) -> some View {
         Button {
             Haptics.tap()
-            if hasLesson && !state.isDone { confirmClose = true } else { close() }
+            if hasLesson && !state.isDone {
+                confirmClose = true
+            } else {
+                stopMedia()
+                close()
+            }
         } label: { Image(systemName: "xmark") }
             .buttonStyle(HOIconButtonStyle(onVideo: onVideo))
             .keyboardShortcut(.cancelAction)
@@ -494,6 +503,13 @@ struct LearnView: View {
         .menuIndicator(.hidden)
         .buttonStyle(.plain)
         .accessibilityLabel("More")
+    }
+
+    /// Stops every sound source synchronously before navigation begins. `onDisappear` is intentionally a
+    /// second line of defense: a route transition can keep the old SwiftUI tree alive for part of its animation.
+    private func stopMedia() {
+        clips.stop()
+        guide.stop()
     }
 
     private func swapVideos() {

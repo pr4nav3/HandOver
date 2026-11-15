@@ -6,6 +6,7 @@
 import { call, type Pairing } from "../api";
 import { closeSheet, drawSheet, openSheet, sheetOpen } from "../components";
 import { icons } from "../icons";
+import { pairedCamera, type PairingCamera } from "../pairing";
 import { app, errorText, prefs, rerender, toast, type CameraChoice } from "../state";
 import { html, raw, type Raw } from "../util";
 
@@ -17,18 +18,39 @@ export const CAMERA_WORD: Record<CameraChoice, string> = {
 
 let pairing: Pairing | null = null;
 let pairingHub = "";
+let pairingCamera: "phone" | "glasses" = "phone";
 let pairingError = "";
 let loadingPairing = false;
 /** Which of this file's sheets is open, so hub changes can redraw it. */
 let open: "" | "pair" | "camera" = "";
+let expectedCamera: PairingCamera = "phone";
+let pairingConnected = false;
+let pairedTimer = 0;
+let pairedAction: (() => void) | null = null;
 
-async function loadPairing(force = false) {
-  if (loadingPairing || (!force && pairing && pairingHub === app.link.hub)) return;
+function watchPairing(camera: PairingCamera, action: () => void) {
+  window.clearTimeout(pairedTimer);
+  pairedTimer = 0;
+  expectedCamera = camera;
+  pairingConnected = pairedCamera(app.state, camera);
+  pairedAction = action;
+}
+
+function stopWatching() {
+  window.clearTimeout(pairedTimer);
+  pairedTimer = 0;
+  pairingConnected = false;
+  pairedAction = null;
+}
+
+async function loadPairing(force = false, camera: "phone" | "glasses" = "phone") {
+  if (loadingPairing || (!force && pairing && pairingHub === app.link.hub && pairingCamera === camera)) return;
   loadingPairing = true;
   pairingError = "";
   try {
-    pairing = await call<Pairing>("pairing");
+    pairing = await call<Pairing>("pairing", { camera });
     pairingHub = app.link.hub;
+    pairingCamera = camera;
   } catch (e) {
     pairing = null;
     pairingError = errorText(e);
@@ -39,6 +61,12 @@ async function loadPairing(force = false) {
 
 /** The QR code with the address under it, or what to do when there is no address. */
 function qrBlock(): Raw {
+  if (pairingConnected)
+    return html`<div class="pair-success" role="status" aria-live="polite">
+      <span class="pair-success-ring">${icons.check}</span>
+      <p class="pair-success-title">Connected</p>
+      <p class="pair-success-line">${app.state?.camera?.name ?? (expectedCamera === "glasses" ? "Meta glasses" : "iPhone camera")}</p>
+    </div>`;
   if (pairingError || (!pairing && !loadingPairing && app.link.link === "idle"))
     return html`<div class="qr-empty"><p class="empty-title">Not connected to a hub</p>
       <p class="empty-message">${pairingError || "Connect to a hub first, then pair a phone with it."}</p></div>`;
@@ -51,8 +79,8 @@ function qrBlock(): Raw {
   const svg = pairing.svg.replace(/^<\?xml[^>]*>\s*/, "");
   return html`<div class="qr-block">
     <div class="qr" role="img" aria-label="QR code for ${pairing.label}">${raw(svg)}</div>
-    <div class="qr-address"><code>${pairing.label}</code>
-      <button class="quiet small" data-act="pair-copy" title="Copy the hub address">${icons.copy}<span>Copy</span></button></div>
+    <div class="qr-address">
+      <button class="quiet small" data-act="pair-copy" title="Copy a fallback address">${icons.copy}<span>Copy fallback address</span></button></div>
   </div>`;
 }
 
@@ -61,17 +89,21 @@ function cameraStatus(): Raw {
   const s = app.state;
   if (app.link.link !== "connected") return html``;
   return s?.camera_connected
-    ? html`<p class="cam-status ok"><span class="dot ok"></span>Camera connected${s.camera?.name ? html`: ${s.camera.name}` : ""}</p>`
-    : html`<p class="cam-status"><span class="dot"></span>No camera connected yet</p>`;
+    ? html`<p class="cam-status ok"><span class="dot ok"></span>${pairingConnected ? "Ready on this Mac" : "Another camera is connected"}${s.camera?.name ? html`: ${s.camera.name}` : ""}</p>`
+    : html`<p class="cam-status waiting"><span class="pair-radar"><span></span></span>Waiting for the scan</p>`;
 }
 
 const steps = (items: string[]) => html`<ol class="pair-steps">${items.map((t, i) => html`<li><span class="pair-num">${i + 1}</span><span>${t}</span></li>`)}</ol>`;
 
-const PHONE_STEPS = ["On the phone, open HandOver.", "Scan this code to connect to this hub.", "Tap Be the Camera and point the phone at your work."];
+const PHONE_STEPS = [
+  "Scan this code with the iPhone Camera app.",
+  "HandOver opens, connects, and starts Be the Camera.",
+  "Point the phone at the work. The live picture appears here.",
+];
 const GLASSES_STEPS = [
-  "On the phone, open HandOver and scan this code.",
-  "Tap Be the Camera, then choose Glasses.",
-  "Follow the steps to connect your Ray-Ban Meta glasses through the Meta AI app.",
+  "Scan this code with the iPhone Camera app.",
+  "HandOver opens the Meta glasses setup automatically.",
+  "Approve the Meta AI handoff, then wear the glasses. The live picture appears here.",
 ];
 
 function onPairAction(act: string) {
@@ -86,7 +118,11 @@ function onPairAction(act: string) {
 /** Pair a Phone: the QR and how to use it. From Home and Settings. */
 export function pairSheet() {
   open = "pair";
-  void loadPairing();
+  watchPairing("phone", () => {
+    closeSheet();
+    toast("iPhone camera connected");
+  });
+  void loadPairing(false, "phone");
   openSheet({
     title: "Pair a Phone",
     wide: true,
@@ -101,7 +137,10 @@ export function pairSheet() {
       </div>
     </div>`,
     onAction: onPairAction,
-    onClose: () => (open = ""),
+    onClose: () => {
+      open = "";
+      stopWatching();
+    },
   });
 }
 
@@ -112,12 +151,14 @@ export function pairSheet() {
 export function cameraSheet(opts: { then?: () => void; step?: CameraChoice } = {}) {
   let step: "choose" | CameraChoice = opts.step && opts.step !== "computer" ? opts.step : "choose";
   open = "camera";
-  void loadPairing();
+  if (step === "phone" || step === "glasses") void loadPairing(false, step);
   const done = () => {
     closeSheet();
     if (opts.then) opts.then();
     else rerender();
   };
+  if (step === "phone" || step === "glasses") watchPairing(step, done);
+  else stopWatching();
   const option = (v: CameraChoice, icon: Raw, title: string, line: string, tag = "") =>
     html`<button class="role-card camera-option ${prefs.camera === v ? "on" : ""}" data-act="cam-pick" data-cam="${v}" role="radio" aria-checked="${prefs.camera === v}">
       <span class="tile">${icon}</span>
@@ -162,7 +203,10 @@ export function cameraSheet(opts: { then?: () => void; step?: CameraChoice } = {
       } else if (act === "cam-done") done();
       else onPairAction(act);
     },
-    onClose: () => (open = ""),
+    onClose: () => {
+      open = "";
+      stopWatching();
+    },
   });
   // The sheet's width depends on the step, so it is opened again rather than redrawn.
   function reopen() {
@@ -172,7 +216,24 @@ export function cameraSheet(opts: { then?: () => void; step?: CameraChoice } = {
 
 /** Redraws an open pairing or camera sheet when the hub's state changes. */
 export function pairLive() {
-  if (open && sheetOpen()) drawSheet();
+  if (!open || !sheetOpen()) return;
+  const connected = pairedCamera(app.state, expectedCamera);
+  if (connected !== pairingConnected) {
+    pairingConnected = connected;
+    window.clearTimeout(pairedTimer);
+    pairedTimer = 0;
+    drawSheet();
+    if (connected && pairedAction) {
+      pairedTimer = window.setTimeout(() => {
+        pairedTimer = 0;
+        const action = pairedAction;
+        pairedAction = null;
+        action?.();
+      }, 900);
+    }
+    return;
+  }
+  drawSheet();
 }
 
 /** "Camera: A phone, Change", for the lesson page and Settings. */

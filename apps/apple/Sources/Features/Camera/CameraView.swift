@@ -5,9 +5,14 @@ import SwiftUI
 /// On the Mac the source can also be a window, such as a WhatsApp call showing the learner's glasses.
 struct CameraView: View {
     @Environment(AppModel.self) private var model
+    @Environment(LearnFlow.self) private var flow
     @Environment(\.theme) private var theme
     @State private var running = false
     @State private var askCamera = false
+    #if os(iOS)
+    @State private var runningGlasses = false
+    @State private var glasses = GlassesController.make()
+    #endif
     #if os(macOS)
     @State private var pickingWindow = false
     @State private var askScreen = false
@@ -31,6 +36,9 @@ struct CameraView: View {
         .navigationTitle("Be the Camera")
         #if os(iOS)
         .fullScreenCover(isPresented: $running) { CameraModeScreen { running = false }.environment(model) }
+        .fullScreenCover(isPresented: $runningGlasses) {
+            GlassesCameraModeScreen(glasses: glasses) { runningGlasses = false }.environment(model)
+        }
         #endif
         .sheet(isPresented: $askCamera) {
             PermissionCard(permission: .camera) { allowed in
@@ -55,40 +63,54 @@ struct CameraView: View {
             .frame(minWidth: 640, minHeight: 520)
         }
         #endif
+        .onChange(of: flow.cameraLaunchIntent, initial: true) { _, intent in
+            guard let intent, model.hub != nil else { return }
+            switch intent {
+            case .phone: begin()
+            #if os(iOS)
+            case .glasses: beginGlasses()
+            #else
+            case .glasses: break
+            #endif
+            }
+            flow.consumeCameraLaunch(intent)
+        }
     }
 
     private var start: some View {
         ScrollView {
-            VStack(spacing: HOSpace.xl) {
-                VStack(spacing: HOSpace.m) {
-                    SymbolTile(symbol: "video.circle", side: 64)
-                    Text("Be the Camera")
+            VStack(spacing: HOSpace.l) {
+                VStack(spacing: HOSpace.s) {
+                    SymbolTile(symbol: "viewfinder", side: 56)
+                    Text("Choose a camera")
                         .hoFont(.display, theme).foregroundStyle(theme.colors.ink).multilineTextAlignment(.center)
-                    Text("Use \(DeviceWord.this) as the camera for someone else's lesson.")
+                    Text("Your live view appears on the laptop. Nothing is recorded.")
                         .font(theme.fonts.body).foregroundStyle(theme.colors.ink2).multilineTextAlignment(.center)
-                        .frame(maxWidth: 400)
+                        .frame(maxWidth: 360)
                 }
                 .padding(.top, HOSpace.xl)
-                hubStatus.frame(maxWidth: 400)
-                SetupSteps(title: "How to use it", steps: Self.steps)
-                .frame(maxWidth: 400)
+                hubStatus.frame(maxWidth: 420)
                 VStack(spacing: HOSpace.s) {
-                    Button { begin() } label: { Label("Start Camera", systemImage: "video.fill") }
+                    #if os(iOS)
+                    Button { beginGlasses() } label: { Label("Meta Glasses", systemImage: "eyeglasses") }
+                        .buttonStyle(HOButtonStyle(.primary, size: .large, fullWidth: true))
+                        .disabled(model.hub == nil || !GlassesFeature.toolkitLinked)
+                    Button { begin() } label: { Label("This iPhone", systemImage: "iphone") }
+                        .buttonStyle(HOButtonStyle(.secondary, size: .large, fullWidth: true))
+                        .disabled(model.hub == nil)
+                    if !GlassesFeature.toolkitLinked { Text("Meta glasses are unavailable in this build.").font(theme.fonts.footnote).foregroundStyle(theme.colors.ink2) }
+                    #else
+                    Button { begin() } label: { Label("This Mac's Camera", systemImage: "video.fill") }
                         .buttonStyle(HOButtonStyle(.primary, size: .large, fullWidth: true))
                         .disabled(model.hub == nil)
+                    #endif
                     #if os(macOS)
                     Button { beginWindow() } label: { Label("From a Window", systemImage: "macwindow") }
                         .buttonStyle(HOButtonStyle(.secondary, size: .large, fullWidth: true))
                         .disabled(model.hub == nil)
-                    Text("Wearing Ray-Ban Meta glasses? Video call this Mac from your iPhone in WhatsApp or Messenger, switch the call to the glasses camera, then pick the call window here.")
-                        .font(theme.fonts.footnote).foregroundStyle(theme.colors.ink2).multilineTextAlignment(.center)
-                        .padding(.top, HOSpace.xs)
                     #endif
-                    Text("Frames go to your hub only and are never saved.")
-                        .font(theme.fonts.footnote).foregroundStyle(theme.colors.ink2).multilineTextAlignment(.center)
-                        .padding(.top, HOSpace.xs)
                 }
-                .frame(maxWidth: 400)
+                .frame(maxWidth: 420)
             }
             .padding(HOSpace.l)
             .frame(maxWidth: .infinity)
@@ -96,25 +118,14 @@ struct CameraView: View {
         .hoPaperBackground()
     }
 
-    private static var steps: [String] {
-        #if os(macOS)
-        ["Point this Mac's camera at the learner's hands.", "Click Start Camera.",
-         "Start the lesson on the learner's screen. This screen shows the step and Next."]
-        #else
-        ["Prop \(DeviceWord.this) up so the back camera sees the learner's hands.", "Tap Start Camera.",
-         "Start the lesson on the learner's screen. This screen shows the step and Next."]
-        #endif
-    }
-
     /// Which hub the frames go to, or what to do first.
     @ViewBuilder private var hubStatus: some View {
-        if let hub = model.hub {
+        if model.hub != nil {
             HOBanner(symbol: model.connection.isConnected ? "checkmark.circle.fill" : "arrow.clockwise",
                      tone: model.connection.isConnected ? .good : .caution,
-                     text: model.connection.isConnected ? "Connected to the hub at \(hub.displayName)."
-                         : "Connecting to the hub at \(hub.displayName).")
+                     text: model.connection.isConnected ? "Connected to your hub" : "Connecting to your hub")
         } else {
-            HOBanner(symbol: "wifi.exclamationmark", text: "Connect to a hub in Settings first.")
+            HOBanner(symbol: "qrcode.viewfinder", text: "Scan the pairing code on your Mac first.")
         }
     }
 
@@ -126,6 +137,13 @@ struct CameraView: View {
         }
     }
 
+    #if os(iOS)
+    private func beginGlasses() {
+        Haptics.tap()
+        runningGlasses = true
+    }
+    #endif
+
     #if os(macOS)
     private func beginWindow() {
         Haptics.tap()
@@ -133,6 +151,101 @@ struct CameraView: View {
     }
     #endif
 }
+
+#if os(iOS)
+/// Ray-Ban Meta camera mode: the toolkit's newest raw frame is previewed here and fed into the same
+/// newest-frame JPEG sender as the iPhone camera. The sender identifies itself as `source: glasses`, so the
+/// laptop's YOU pane and the live checker need no special path.
+struct GlassesCameraModeScreen: View {
+    var glasses: GlassesController
+    var onClose: () -> Void
+
+    @Environment(AppModel.self) private var model
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var streamer = CameraStreamer()
+
+    var body: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+            if glasses.state.isStreaming, let frame = glasses.frame {
+                Image(decorative: frame, scale: 1)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .ignoresSafeArea()
+                CameraChrome(info: info, onClose: close,
+                             onNext: { Task { await streamer.next() } },
+                             onBack: { Task { await streamer.back() } }) {
+                    VideoPill(symbol: "eyeglasses", text: "Meta glasses", tone: .neutral)
+                }
+            } else {
+                VStack(spacing: HOSpace.l) {
+                    HStack {
+                        Button(action: close) { Image(systemName: "xmark").font(.body.weight(.semibold)) }
+                            .buttonStyle(HOIconButtonStyle(onVideo: true))
+                            .accessibilityLabel("Stop Camera")
+                        Spacer()
+                    }
+                    Spacer()
+                    RecordGlassesCard(controller: glasses, usePhone: close)
+                        .frame(maxWidth: 520)
+                    if streamer.connection.isConnected {
+                        Text("Connected. Waiting for glasses video.")
+                            .font(.footnote).foregroundStyle(.white.opacity(0.7)).multilineTextAlignment(.center)
+                    }
+                    Spacer()
+                }
+                .padding(HOSpace.l)
+            }
+        }
+        .environment(\.colorScheme, .dark)
+        .task(id: scenePhase) {
+            if scenePhase == .active {
+                await start()
+            } else if scenePhase == .background {
+                suspendForBackground()
+            }
+        }
+        .onDisappear { stop() }
+        .sensoryFeedback(trigger: model.lastAdvance) { _, new in new?.reason == .camera ? .success : nil }
+        .sensoryFeedback(.warning, trigger: model.mistake?.message)
+    }
+
+    private func start() async {
+        let sender = streamer
+        glasses.onFrame = { sender.push($0) }
+        await streamer.startPushing { model.makeCameraSocket(source: .glasses) }
+        if let frame = glasses.frame { streamer.push(frame) }
+        if !glasses.state.isStreaming && !glasses.state.isBusy { glasses.connect() }
+    }
+
+    private func stop() {
+        glasses.onFrame = nil
+        streamer.stop()
+        glasses.stop()
+    }
+
+    /// Meta AI necessarily backgrounds HandOver for registration and camera permission. Do not cancel that
+    /// in-flight SDK task: it owns the callback that brings us back. An active video session is still stopped,
+    /// matching Meta's sample lifecycle, and `start()` creates a fresh one on return.
+    private func suspendForBackground() {
+        glasses.onFrame = nil
+        streamer.stop()
+        if glasses.state.isStreaming { glasses.stop() }
+    }
+
+    private func close() {
+        stop()
+        onClose()
+    }
+
+    private var info: CameraChromeInfo {
+        CameraChromeInfo.make(hub: model.hub, lesson: model.lesson, state: streamer.state ?? model.state,
+                              connection: streamer.connection, sending: streamer.isSending, fps: streamer.sentFPS,
+                              size: streamer.frameSize, active: streamer.isActiveCamera,
+                              throttled: streamer.isThrottled, sourceName: "Meta glasses")
+    }
+}
+#endif
 
 /// The live camera with its chrome. Starts streaming on appear, stops on disappear and in the background.
 struct CameraModeScreen: View {
@@ -318,9 +431,9 @@ struct CameraChrome<Source: View>: View {
             if info.reconnecting {
                 VideoPill(symbol: "arrow.clockwise", text: "Reconnecting", tone: .caution)
             } else if info.connecting {
-                VideoPill(symbol: "antenna.radiowaves.left.and.right", text: "Connecting to \(info.hubName)", tone: .neutral)
+                VideoPill(symbol: "antenna.radiowaves.left.and.right", text: "Connecting", tone: .neutral)
             } else if info.sending {
-                VideoPill(symbol: "dot.radiowaves.left.and.right", text: "Sending to \(info.hubName)", tone: .bad, recordDot: true)
+                VideoPill(symbol: "dot.radiowaves.left.and.right", text: "Sending live", tone: .bad, recordDot: true)
             } else {
                 VideoPill(symbol: "pause.fill", text: "Paused", tone: .idle)
             }
@@ -422,5 +535,6 @@ struct CameraProblem: View {
         size: CGSize(width: 960, height: 540), active: true, stepLine: "Step 4 of 8: Fold all four corners to center",
         status: .watching, canStep: true, canBack: true, throttled: false, sourceName: "Back Camera"))
         .environment(AppModel.preview())
+        .environment(LearnFlow())
         .handOverTheme(.system, dark: true)
 }
