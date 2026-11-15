@@ -8,6 +8,8 @@ burned in as MM:SS.s, the same format lesson.json uses.
 
 Lesson mode: one row per step with four frames taken from the lesson's norm.mp4: the step's first frame, its
 middle, the reference frame the camera check compares against (frames/NN.jpg, at ref_time) and its last frame.
+When lessons/<id>/review/boundaries.json exists (vision boundaries), each step that ends at a model-chosen cut gets
+a strip of the +-2 s frames around it under its row, the chosen frame outlined in red, with the model's reason.
 Each row is labelled with the step number, title, start to end, check type and question, so a person can see a
 boundary that is early or late, move start and end in lesson.json and recut. Default output:
 lessons/<id>/review/sheet.jpg.
@@ -159,6 +161,60 @@ def grid_sheet(video: Path, every: float, cols: int, width: int, t_from: float, 
 
 # ---------------------------------------------------------------- lesson mode
 
+def window_frames(video: Path, times: list[float], height: int) -> list[Image.Image]:
+    """Frames at evenly spaced times (one ffmpeg call from the first time at the same rate)."""
+    if len(times) < 2:
+        return []
+    step = times[1] - times[0]
+    with tempfile.TemporaryDirectory(prefix="handover-sheet-") as tmp:
+        subprocess.run([_bin("ffmpeg"), "-v", "error", "-y", "-ss", f"{times[0]:.3f}", "-i", str(video),
+                        "-t", f"{times[-1] - times[0] + step / 2:.3f}", "-vf", f"fps={1 / step:.6f},scale=-2:{height}",
+                        "-q:v", "4", str(Path(tmp) / "w%04d.jpg")], capture_output=True)
+        out = []
+        for f in sorted(Path(tmp).glob("w*.jpg"))[:len(times)]:
+            with Image.open(f) as im:
+                out.append(im.convert("RGB"))
+        return out
+
+
+def cut_strips(lesson_dir: Path, video: Path, width: int) -> dict:
+    """From review/boundaries.json (vision boundaries): per step n, a strip of the +-2 s frames around its cut
+    with the chosen frame outlined, plus a caption line. {} when there is no log."""
+    path = lesson_dir / "review" / "boundaries.json"
+    if not path.is_file():
+        return {}
+    try:
+        log = json.loads(path.read_text(encoding="utf-8"))
+    except ValueError:
+        return {}
+    model = (log.get("pass2") or {}).get("model") or (log.get("pass1") or {}).get("model") or "?"
+    out = {}
+    for b in (log.get("pass2") or {}).get("boundaries") or []:
+        times = b.get("frames") or []
+        frames = window_frames(video, times, 150)
+        if not frames:
+            continue
+        tw = max(40, (width - 4) // len(frames) - 4)
+        frames = [im.resize((tw, round(im.height * tw / im.width))) for im in frames]
+        th = frames[0].height
+        strip = Image.new("RGB", (width, th + 30), BG)
+        d = ImageDraw.Draw(strip)
+        chosen = min(range(len(times)), key=lambda i: abs(times[i] - b.get("done_s", -1)))
+        for i, im in enumerate(frames):
+            x = 4 + i * (tw + 4)
+            strip.paste(im, (x, 26))
+            if i == chosen:
+                d.rectangle((x - 3, 23, x + tw + 2, 26 + th + 2), outline=ACCENT, width=4)
+                d.text((x, 2), "cut", font=font(16, bold=True), fill=ACCENT)
+            elif i % 4 == 0:
+                d.text((x, 6), fmt(times[i]), font=font(12), fill=MUTED)
+        caption = (f"vision cut {b.get('done_s', 0):.2f} s (pass 1 {b.get('coarse_s', 0):.2f} s, {model}): "
+                   f"{b.get('reason', '')}")
+        out[int(b["boundary"])] = (strip, caption)
+    return out
+
+
+
 COLUMNS = ("first", "middle", "reference", "last")
 
 
@@ -201,7 +257,10 @@ def lesson_sheet(lesson_dir: Path, width: int) -> Image.Image:
         rows.append((s, a, b, tiles))
     th = max(t.height for _, _, _, ts in rows for t in ts if t is not None)
     W = label_w + len(COLUMNS) * (width + gap) + gap
-    sheet = Image.new("RGB", (W, head + len(rows) * (th + gap) + gap), BG)
+    strips = cut_strips(lesson_dir, video, W - 2 * gap)
+    heights = [th + (strips[s.get("n", r + 1)][0].height + 24 if s.get("n", r + 1) in strips else 0)
+               for r, (s, _, _, _) in enumerate(rows)]
+    sheet = Image.new("RGB", (W, head + sum(h + gap for h in heights) + gap), BG)
     d = ImageDraw.Draw(sheet)
     d.text((gap, 10), f"{lesson.get('id', lesson_dir.name)}  {lesson.get('title', '')}", font=font(24, bold=True),
            fill=INK)
@@ -209,9 +268,9 @@ def lesson_sheet(lesson_dir: Path, width: int) -> Image.Image:
            font=font(14), fill=MUTED)
     f_big, f_small = font(22, bold=True), font(15)
     for r, (s, a, b, tiles) in enumerate(rows):
-        y = head + r * (th + gap)
+        y = head + sum(h + gap for h in heights[:r])
         if r % 2:
-            d.rectangle((0, y - gap // 2, W, y + th + gap // 2), fill=(242, 237, 226))
+            d.rectangle((0, y - gap // 2, W, y + heights[r] + gap // 2), fill=(242, 237, 226))
         n = s.get("n", r + 1)
         d.text((gap, y + 4), f"{n}", font=font(40, bold=True), fill=ACCENT)
         x0 = gap + 56
@@ -233,6 +292,11 @@ def lesson_sheet(lesson_dir: Path, width: int) -> Image.Image:
         for c, tile in enumerate(tiles):
             x = label_w + c * (width + gap)
             sheet.paste(tile if tile is not None else placeholder(width, th, "no frame"), (x, y))
+        got = strips.get(s.get("n", r + 1))
+        if got:
+            strip, caption = got
+            d.text((gap, y + th + 4), textwrap.shorten(caption, 150), font=font(15), fill=INK)
+            sheet.paste(strip, (gap, y + th + 24))
     return sheet
 
 

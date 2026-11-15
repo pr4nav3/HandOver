@@ -256,6 +256,13 @@ REGISTRY: tuple[Tunable, ...] = (
       "Claude model for step extraction (frames only, no audio)"),
     T("HANDOVER_SELFTEST_TIMEOUT", 10.0, "float", "teach.py", "seconds per teach-time self-test check", 0.1, 120),
     T("HANDOVER_MIN_STEP_S", 6.0, "float", "teach.py", "steps shorter than this are merged into a neighbour", 0.0, 600.0),
+    T("HANDOVER_REF_TAIL", 0.25, "float", "teach.py",
+      "fraction of a step, back from its end, searched for the stillest window when hands never leave the frame",
+      0.05, 0.5),
+    T("HANDOVER_TEACH_SAMPLE_S", 1.0, "float", "teach.py",
+      "seconds between frames the vision boundary pass sees across the whole take", 0.25, 5.0),
+    T("HANDOVER_TEACH_BOUNDARY_MODEL", "claude-sonnet-5-5", "str", "teach.py",
+      "model that finds when each step is done (vision boundaries); falls back to claude-haiku-5-5"),
     T("HANDOVER_AUTO_SELFTEST", True, "bool", "teach.py",
       "run the self-test after every cut and recut; failing steps become manual"),
 )
