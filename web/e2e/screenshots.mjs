@@ -126,7 +126,9 @@ async function learnRun(width, height, suffix) {
     await wait(800)
     await shoot(page, '06-done')
     check(await page.locator('.finish').isVisible(), 'done screen replaces the clip')
-    check(!(await page.locator('.next-hint').count()), 'no key hint next to the disabled Next at done')
+    check(!(await page.locator('.next-hint').count()), 'no key hint at done')
+    check(!(await page.locator('button.next:disabled').count()) && (await page.locator('button.next').innerText()) === 'Start over', 'done shows Start over, no disabled Next')
+    check((await page.locator('.step-title').innerText()) !== (await page.locator('.topbar-title').innerText()), 'done screen does not repeat the lesson title')
     check(await page.evaluate(() => document.querySelector('.clip video').paused), 'last clip stops at done')
 
     await page.click('text=Start over')

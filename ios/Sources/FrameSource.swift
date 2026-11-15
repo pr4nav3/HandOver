@@ -1,4 +1,4 @@
-// UNTESTED: written on Windows, never compiled.
+// Compiles with Xcode on macOS against MWDAT 1.0.1; not yet run on a device.
 
 import Foundation
 import UIKit
@@ -50,7 +50,8 @@ enum JPEGEncoder {
 // MARK: - 1 fps throttle
 
 /// Lets one frame through per `interval` seconds. Thread safe.
-final class FrameThrottle {
+/// `@unchecked Sendable` is sound here: the only mutable state, `last`, is read and written under `lock`.
+final class FrameThrottle: @unchecked Sendable {
     private let interval: TimeInterval
     private let lock = NSLock()
     private var last: TimeInterval?
@@ -79,7 +80,8 @@ final class FrameThrottle {
 }
 
 /// A Bool shared between the main thread and capture/toolkit queues.
-final class LockedFlag {
+/// `@unchecked Sendable` is sound here: `storage` is only read and written under `lock`.
+final class LockedFlag: @unchecked Sendable {
     private let lock = NSLock()
     private var storage: Bool
 

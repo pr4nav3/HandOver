@@ -1,5 +1,5 @@
 # xcodegen spec for the HandOver iPhone camera app (PLAN.md W8).
-# UNTESTED: written on Windows, never compiled. See README.md.
+# Compiles with Xcode on macOS against MWDAT 1.0.1; not yet run on a device. See README.md.
 #
 #   brew install xcodegen
 #   cd ios && xcodegen generate && open HandOverCamera.xcodeproj
@@ -36,9 +36,9 @@ targets:
         # excludes: ["GlassesCameraSource.swift"]
     dependencies:
       - package: MWDAT
-        product: MWDATCore      # VERIFY: product name in the package's Package.swift
+        product: MWDATCore      # product name confirmed in the 1.0.1 Package.swift
       - package: MWDAT
-        product: MWDATCamera    # VERIFY: product name in the package's Package.swift
+        product: MWDATCamera    # product name confirmed in the 1.0.1 Package.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.handover.camera
@@ -82,5 +82,6 @@ targets:
             CFBundleURLSchemes:
               - handovercamera
         MWDAT:
-          # VERIFY: key names against samples/CameraAccess Info.plist in meta-wearables-dat-ios 1.0.1.
+          # AppLinkURLScheme is a key the 1.0.1 toolkit binary reads. The MWDAT dictionary name follows
+          # the CameraAccess sample; not yet confirmed on a device.
           AppLinkURLScheme: "handovercamera://"

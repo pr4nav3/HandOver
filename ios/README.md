@@ -1,4 +1,4 @@
-UNTESTED: written on Windows, never compiled
+Compiles with Xcode on macOS against MWDAT 1.0.1; not yet run on a device.
 
 # HandOver Camera (iPhone app, PLAN.md W8)
 
@@ -7,8 +7,9 @@ A small SwiftUI app that sends about one JPEG per second to the hub's `/ws/camer
 The source is the phone's back camera (W8a), or Ray-Ban Meta glasses through the Meta Wearables
 Device Access Toolkit 1.0.1 (W8b). If the glasses fail, the app switches to the phone camera on its own.
 
-Nobody has built this code yet. Expect a few compile fixes on the first build, most likely in
-`Sources/GlassesCameraSource.swift`. Every toolkit name that was not checked is marked `// VERIFY:`.
+The app builds with zero warnings in the glasses and hub files. Every toolkit call lives in
+`Sources/GlassesCameraSource.swift`, checked against the 1.0.1 swiftinterface files. Nothing has run on
+an iPhone or the glasses yet.
 
 ## Files
 
@@ -86,10 +87,8 @@ W8b (glasses) is time-boxed from 6:30 to 8:00. At **8:00 PM**, frames must reach
 The phone camera (W8a) is the main path either way. The demo ladder is glasses, then this iPhone app, then Safari
 `capture.html`, then replay.
 
-## Checklist for the first build
+## Checklist for the first device run
 
-- Check every `// VERIFY:` in `GlassesCameraSource.swift` and `project.yml` against
-  `samples/CameraAccess` in github.com/facebook/meta-wearables-dat-ios at tag 1.0.1.
 - Check the `MWDAT` Info.plist dictionary keys against the sample's Info.plist (only `AppLinkURLScheme` is set).
 - Phone smoke test: Start with Phone selected. The hub log and the web app should show camera frames, and the
   frames counter should go up by about 1 per second.
