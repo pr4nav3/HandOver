@@ -45,6 +45,7 @@ import hashlib
 import io
 import json
 import logging
+import math
 import os
 import re
 import shutil
@@ -56,7 +57,7 @@ import urllib.request
 import wave
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Mapping, Optional, Sequence
+from typing import Any, Mapping, Optional, Sequence, Union
 
 from server import config
 
@@ -252,14 +253,21 @@ class StepScript:
     seconds: float  # clip length the narration must fit
     sentences: list[str] = field(default_factory=list)
     source: str = "claude"  # where the lines came from: claude, file (hand-written --script) or title (fallback)
+    times: list[Optional[float]] = field(default_factory=list)  # per sentence: start on the clip's clock, or None
+
+    def time_at(self, i: int) -> Optional[float]:
+        return self.times[i] if i < len(self.times) else None
 
     @property
     def narration(self) -> str:
         return " ".join(self.sentences)
 
     def to_dict(self) -> dict:
-        return {"n": self.n, "title": self.title, "seconds": round(self.seconds, 2), "sentences": self.sentences,
-                "source": self.source}
+        out = {"n": self.n, "title": self.title, "seconds": round(self.seconds, 2), "sentences": self.sentences,
+               "source": self.source}
+        if any(t is not None for t in self.times):
+            out["times"] = self.times
+        return out
 
 
 SYSTEM = """You write the voiceover for short how-to video clips. A calm, friendly person will read each line
@@ -368,8 +376,10 @@ def fallback_scripts(steps: Sequence[Any], clip_seconds: Optional[Sequence[float
     return out
 
 
-def load_script_file(path: Path) -> dict[int, str]:
-    """Hand-written lines from {"steps": {"1": "line", ...}} (1-based step numbers). Raises ValueError."""
+TimedLines = list[tuple[Optional[float], str]]  # (start on the clip's clock or None, text)
+
+
+def _read_script_json(path: Path) -> Mapping:
     try:
         data = json.loads(Path(path).read_text(encoding="utf-8-sig"))
     except (OSError, ValueError) as e:
@@ -377,7 +387,35 @@ def load_script_file(path: Path) -> dict[int, str]:
     steps = data.get("steps") if isinstance(data, Mapping) else None
     if not isinstance(steps, Mapping):
         raise ValueError('the script file needs {"steps": {"1": "line", ...}}')
-    out: dict[int, str] = {}
+    return data
+
+
+def _timed_line(n: int, item: Any) -> Optional[tuple[Optional[float], str]]:
+    """One entry of a step's list: {"at": 3.5, "text": "..."}, [3.5, "..."] or a plain string."""
+    at: Optional[float] = None
+    if isinstance(item, Mapping):
+        text, raw = item.get("text"), item.get("at")
+    elif isinstance(item, (list, tuple)) and len(item) == 2:
+        raw, text = item
+    else:
+        text, raw = item, None
+    if raw is not None:
+        try:
+            at = float(parse_time(raw))
+        except (TypeError, ValueError):
+            raise ValueError(f"step {n} in the script file: bad time {raw!r}") from None
+        if at < 0:
+            raise ValueError(f"step {n} in the script file: time {raw!r} is negative")
+    line = " ".join(str(text if text is not None else "").split())
+    return (at, line) if line else None
+
+
+def load_script_file(path: Path) -> dict[int, Union[str, TimedLines]]:
+    """Hand-written lines from {"steps": {"1": "line", ...}} (1-based step numbers). A step may instead be a list
+    of timed lines, [{"at": 3.5, "text": "..."}, ...] (seconds into the clip, or "m:ss"); a line without "at"
+    follows the one before it. Raises ValueError."""
+    steps = _read_script_json(path)["steps"]
+    out: dict[int, Union[str, TimedLines]] = {}
     for k, v in steps.items():
         try:
             n = int(str(k).strip())
@@ -385,16 +423,36 @@ def load_script_file(path: Path) -> dict[int, str]:
             raise ValueError(f"step key {k!r} in the script file is not a number") from None
         if n < 1:
             raise ValueError(f"step {n} in the script file: steps are numbered from 1")
+        if isinstance(v, (list, tuple)):
+            items = [t for t in (_timed_line(n, it) for it in v) if t]
+            if items:
+                out[n] = items
+            continue
         line = " ".join(str(v if v is not None else "").split())
         if line:
             out[n] = line
     return out
 
 
-def file_scripts(steps: Sequence[Any], lines: Mapping[int, str], clip_seconds: Optional[Sequence[float]] = None,
-                 warn=print) -> list[Optional[StepScript]]:
+def script_file_speed(path: Path) -> Optional[float]:
+    """The speaking speed the script file asks for ("speed": 0.9), within the registry's bounds, or None."""
+    raw = _read_script_json(path).get("speed")
+    if raw is None:
+        return None
+    try:
+        speed = float(raw)
+    except (TypeError, ValueError):
+        raise ValueError(f"the script file's speed {raw!r} is not a number") from None
+    if not 0.7 <= speed <= 1.3:
+        raise ValueError(f"the script file's speed {speed} is outside 0.7 to 1.3")
+    return speed
+
+
+def file_scripts(steps: Sequence[Any], lines: Mapping[int, Union[str, TimedLines]],
+                 clip_seconds: Optional[Sequence[float]] = None, warn=print) -> list[Optional[StepScript]]:
     """Per step, a StepScript from the hand-written line, or None when the file has no line for it. A line over
-    the clip's word limit is kept whole; warn() gets the overflow so it is never trimmed silently."""
+    the clip's word limit is kept whole; warn() gets the overflow so it is never trimmed silently. Timed lines
+    keep their times (each entry is spoken as one piece, at its moment); a time past the clip is reported."""
     out: list[Optional[StepScript]] = []
     for i, st in enumerate(steps):
         n = int(_get(st, "n", i + 1) or i + 1)
@@ -402,12 +460,21 @@ def file_scripts(steps: Sequence[Any], lines: Mapping[int, str], clip_seconds: O
             out.append(None)
             continue
         seconds = clip_seconds[i] if clip_seconds and i < len(clip_seconds) else step_seconds(st)
-        sentences = split_sentences(lines[n])
+        value = lines[n]
+        times: list[Optional[float]] = []
+        if isinstance(value, str):
+            sentences = split_sentences(value)
+        else:
+            sentences = [clean_sentence(text) for _, text in value]
+            times = [at for at, _ in value]
+            for at in times:
+                if at is not None and at > seconds - TAIL_S:
+                    warn(f"warning: step {n} has a line at {at:.1f}s but its clip is {seconds:.1f}s long")
         limit, words = word_limit(seconds), " ".join(sentences).split()
-        if len(words) > limit:
+        if len(words) > limit and not times:
             warn(f"warning: step {n} line is {len(words)} words, over its limit of {limit} for a {seconds:.1f}s "
                  f"clip; kept whole. Over by: {' '.join(words[limit:])}")
-        out.append(StepScript(n, str(_get(st, "title", "") or f"Step {n}"), seconds, sentences, "file"))
+        out.append(StepScript(n, str(_get(st, "title", "") or f"Step {n}"), seconds, sentences, "file", times))
     return out
 
 
@@ -796,51 +863,62 @@ def _read_samples(path: Path):
         return np.frombuffer(w.readframes(w.getnframes()), dtype="<i2").astype(np.float32) / 32767
 
 
+def _layout(parts: Sequence[tuple[str, Optional[float], Path, float]]) -> tuple[list[float], float]:
+    """Start of each part and the end of the last one. An untimed part follows the one before it after GAP_S;
+    a timed part starts at its moment, or right after the previous part when that one is still speaking."""
+    starts, t = [], LEAD_S
+    for _, at, _, seconds in parts:
+        if at is not None:
+            t = max(t, at)
+        starts.append(t)
+        t += seconds + GAP_S
+    return starts, t - GAP_S
+
+
 def narrate(sentences: Sequence[str], clip_seconds: float, workdir: Path, voice: Optional[str] = None,
-            speed: Optional[float] = None, synth=synthesize) -> Optional[Narration]:
-    """Synthesize each sentence, lay them out after a short lead-in with small pauses, and pad to the clip.
-    Speeds up a little, then drops trailing sentences, if the voice would run past the clip. None if no
-    sentence could be spoken."""
+            speed: Optional[float] = None, synth=synthesize,
+            times: Optional[Sequence[Optional[float]]] = None) -> Optional[Narration]:
+    """Synthesize each sentence and lay them out on the clip's clock: after a short lead-in with small pauses,
+    or, for sentences with a time in `times`, at that moment, so a line is heard while the hands do the thing.
+    Speeds up a little if the voice would run past the clip, then (untimed narration only) drops trailing
+    sentences. None if no sentence could be spoken."""
     import numpy as np
 
     base = float(speed or default_speed())
-    room = clip_seconds - LEAD_S - TAIL_S
-    sentences = [s for s in sentences if s]
-    def length(parts) -> float:
-        return sum(p[2] for p in parts) + GAP_S * (len(parts) - 1)
+    room = clip_seconds - TAIL_S
+    items = [(s, times[i] if times and i < len(times) else None) for i, s in enumerate(sentences) if s]
+    timed = any(at is not None for _, at in items)
 
+    parts: list[tuple[str, Optional[float], Path, float]] = []
+    engine = used = ""
     for rate in (base, base * 1.1, base * 1.2):
-        parts: list[tuple[str, Path, float]] = []
-        engine = used = ""
-        for i, s in enumerate(sentences):
+        parts, engine, used = [], "", ""
+        for i, (s, at) in enumerate(items):
             out = Path(workdir) / f"s{i}-{rate:.2f}.wav"
             seconds, eng, v = synth(s, out, voice, rate)
             if seconds > 0:
-                parts.append((s, out, seconds))
+                parts.append((s, at, out, seconds))
                 engine, used = engine or eng, used or v
         if not parts:
             return None
-        if length(parts) <= room:
+        if _layout(parts)[1] <= room:
             break
-    while len(parts) > 1 and length(parts) > room:
-        parts.pop()
-    total = length(parts)
-    if total > room:
-        log.warning("voiceover: narration (%.1fs) is longer than its clip allows (%.1fs); the end is cut",
-                    total, room)
-    chunks, cues, t = [np.zeros(int(LEAD_S * SAMPLE_RATE), dtype=np.float32)], [], LEAD_S
-    for i, (s, path, _) in enumerate(parts):
+    if not timed:
+        while len(parts) > 1 and _layout(parts)[1] > room:
+            parts.pop()
+    starts, end = _layout(parts)
+    if end > room:
+        log.warning("voiceover: narration ends at %.1fs but its clip allows %.1fs; the end is cut", end, room)
+    want = int(clip_seconds * SAMPLE_RATE)
+    audio = np.zeros(max(want, int(math.ceil(end * SAMPLE_RATE)) + 1), dtype=np.float32)
+    cues = []
+    for (s, _, path, _), t in zip(parts, starts):
         samples = _read_samples(path)
         seconds = len(samples) / SAMPLE_RATE
+        k = int(round(t * SAMPLE_RATE))
+        audio[k:k + len(samples)] += samples
         cues.append((t, t + seconds, s))
-        chunks.append(samples)
-        t += seconds
-        if i < len(parts) - 1:
-            chunks.append(np.zeros(int(GAP_S * SAMPLE_RATE), dtype=np.float32))
-            t += GAP_S
-    audio = np.concatenate(chunks)
-    want = int(clip_seconds * SAMPLE_RATE)
-    audio = np.pad(audio, (0, max(0, want - len(audio))))[:want]
+    audio = audio[:want]
     out = Path(workdir) / "voice.wav"
     _write_wav(out, audio)
     cues = [(a, min(b, clip_seconds), s) for a, b, s in cues if a < clip_seconds]
@@ -943,7 +1021,7 @@ def apply_voiceover(lesson_dir: Path, scripts: Sequence[StepScript], mode: str =
                 seconds, has_audio = _probe(source)
                 work = Path(tmp) / f"{sc.n:02d}"
                 work.mkdir()
-                nar = narrate(sc.sentences, seconds, work, voice, speed, synth)
+                nar = narrate(sc.sentences, seconds, work, voice, speed, synth, sc.times)
                 if nar is None:
                     raise RuntimeError("no speech")
                 out = clip.with_name(clip.stem + ".voice.tmp.mp4")
@@ -969,7 +1047,7 @@ def apply_voiceover(lesson_dir: Path, scripts: Sequence[StepScript], mode: str =
         used_voice = voices[engines.index(engine)]
         model = {"kokoro": "kokoro-v1.0", "elevenlabs": eleven_model()}.get(engine, "macos-say")
         field_value = {"engine": engine, "voice": used_voice, "model": model, "tts": f"{engine}:{used_voice}",
-                       "script_model": script_model(), "mode": mode,
+                       "script_model": script_model(), "mode": mode, "speed": float(speed or default_speed()),
                        "steps": {str(n): {"script_source": sources.get(n, "claude")} for n in voiced}}
         lesson = _load_lesson(lesson_dir)
         lesson["voiceover"] = field_value
@@ -1146,8 +1224,9 @@ def main(argv: Optional[list[str]] = None) -> int:
     ap.add_argument("--voices", default="af_heart,af_bella,af_nicole,am_adam,bm_george",
                     help="comma-separated Kokoro voices for --audition")
     ap.add_argument("--out", type=Path, default=None, metavar="DIR", help="folder for the --audition files")
-    ap.add_argument("--speed", type=float, default=None, help=f"speaking speed for --audition (default "
-                                                              f"HANDOVER_VOICE_SPEED, now {default_speed()})")
+    ap.add_argument("--speed", type=float, default=None, help=f"speaking speed, 0.7 to 1.3 (default "
+                                                              f"HANDOVER_VOICE_SPEED, now {default_speed()}; a "
+                                                              f"--script file's \"speed\" is used when given)")
     args = ap.parse_args(argv)
     for stream in (sys.stdout, sys.stderr):  # a Windows console is cp1252: never crash on a curly quote
         try:
@@ -1179,10 +1258,12 @@ def main(argv: Optional[list[str]] = None) -> int:
         print(f"mode auto: {mode} ({'no usable narration in the take' if thin else 'the take has narration'})")
     elif not thin:
         print("note: the expert's narration looks usable; voicing anyway because you asked")
-    lines: dict[int, str] = {}
+    lines: dict[int, Union[str, TimedLines]] = {}
+    speed = args.speed
     if args.script is not None:
         try:
             lines = load_script_file(args.script)
+            speed = speed if speed is not None else script_file_speed(args.script)
         except ValueError as e:
             print(e, file=sys.stderr)
             return 2
@@ -1212,12 +1293,14 @@ def main(argv: Optional[list[str]] = None) -> int:
         fill = iter(written)
         scripts = [sc if sc is not None else next(fill) for sc in from_file]
     for sc in scripts:
-        print(f"\n{sc.n:02d} {sc.title} ({sc.seconds:.1f}s, {_words(sc.narration)} words, {sc.source})"
-              f"\n   {sc.narration}")
+        print(f"\n{sc.n:02d} {sc.title} ({sc.seconds:.1f}s, {_words(sc.narration)} words, {sc.source})")
+        for i, s in enumerate(sc.sentences):
+            at = sc.time_at(i)
+            print(f"   {'' if at is None else f'{at:5.1f}s  '}{s}")
     if args.dry_run:
         return 0
-    print()
-    result = apply_voiceover(lesson_dir, scripts, mode, args.voice)
+    print(f"\nspeed {speed if speed is not None else default_speed()}")
+    result = apply_voiceover(lesson_dir, scripts, mode, args.voice, speed=speed)
     print(f"voiced steps {result['voiced'] or 'none'}; kept {result['skipped'] or 'none'}")
     if result["voiceover"]:
         print("lesson.json voiceover:", json.dumps(result["voiceover"]))

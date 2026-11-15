@@ -116,11 +116,71 @@ def test_themes_follow_design_doc():
 def test_ring_frames_sizes_and_fade():
     frames = P.ring_frames(300, 200, L1080, (138, 168, 255), 30.0)
     pad = P.ring_pad(L1080)
-    assert len(frames) == 30
+    assert len(frames) == 60
     assert all(f.size == (300 + 2 * pad, 200 + 2 * pad) and f.mode == "RGBA" for f in frames)
     alpha = [f.getchannel("A").getextrema()[1] for f in frames]
-    assert alpha[0] < alpha[15] and alpha[-1] < alpha[15] and alpha[15] > 200
-    assert frames[15].getpixel((frames[15].width // 2, frames[15].height // 2))[3] == 0  # hollow center
+    assert alpha[0] < alpha[30] and alpha[-1] < alpha[30] and alpha[30] > 200
+    assert frames[30].getpixel((frames[30].width // 2, frames[30].height // 2))[3] == 0  # hollow center
+
+
+def test_tracks_follow_keyframes_and_graph_takes_several():
+    keys = [(2.0, (0.2, 0.2, 0.4, 0.4)), (4.0, (0.6, 0.2, 0.8, 0.4))]
+    assert P.track_box(keys, 1.0) == (0.2, 0.2, 0.4, 0.4)
+    assert [round(v, 6) for v in P.track_box(keys, 3.0)] == [0.4, 0.2, 0.6, 0.4]
+    assert P.track_box(keys, 9.0) == (0.6, 0.2, 0.8, 0.4)
+    path = P.track_path(keys, 2.0, 4.0, 30.0)
+    assert len(path) == 60 and path[0][0] < path[30][0] < path[-1][0]
+    frames, (x, y) = P.track_frames(keys, 2.0, 4.0, L1080, (138, 168, 255), 30.0)
+    assert len(frames) == 60 and x < 0.25 * 1920 and y < 0.2 * 1080 and len({f.size for f in frames}) == 1
+    p = plan(tracks=[keys, [(6.0, (0.3, 0.3, 0.5, 0.6))]])
+    assert P.ring_window(p) is None
+    hl = P.highlight_tracks(p)
+    assert [(a, b) for a, b, _ in hl] == [(2.0, 4.0), (6.0, 7.9)]  # a single keyframe holds for RING_S, inside the clip
+    assert P.highlight_tracks(plan(tracks=[[(1.0, (0.0, 0.0, 1.0, 1.0))]])) == []
+    assert P.highlight_tracks(plan(highlight=False)) == []
+    one = P.highlight_tracks(plan())
+    assert len(one) == 1 and one[0][:2] == (4.6, 6.6)
+    a = assets_for(p)
+    a["rings"] = [(Path("/w/ring0/%04d.png"), (300, 200), 2.0), (Path("/w/ring1/%04d.png"), (500, 300), 6.0)]
+    text = P.step_graph(p, a).text()
+    assert "setpts=PTS-STARTPTS+2.000/TB" in text and "setpts=PTS-STARTPTS+6.000/TB" in text
+    assert text.count("overlay=x=300:y=200") == 1 and text.count("overlay=x=500:y=300") == 1
+    o = {"track": [[1, 0.1, 0.1, 0.3, 0.3], [0.5, 0.2, 0.2, 0.4, 0.4]], "tracks": [[{"t": 2, "region": [0.5, 0.5, 0.7, 0.7]}], "bad"]}
+    tr = P.step_tracks(o, 1920, 1080)
+    assert [k[0] for k in tr[0].keys] == [0.5, 1.0] and tr[1].keys == [(2.0, (0.5, 0.5, 0.7, 0.7))]
+    assert P.tracks_union(tr) == (0.1, 0.1, 0.7, 0.7)
+    warn = P.step_tracks({"tracks": [{"keys": [[3, 0.1, 0.1, 0.4, 0.4]], "color": "#d12a2a", "label": " Be  careful "}]}, 1920, 1080)
+    assert warn[0].color == (209, 42, 42) and warn[0].label == "Be careful"
+    assert P.tracks_union(warn) is None  # a warning does not steer the push-in
+    z, x, y = P.zoom_state((0.4, 0.3, 0.6, 0.6), 8.0, 8.0)
+    assert abs(z - P.MAX_ZOOM) < 1e-6 and 0 <= x <= 1 - 1 / z and 0 <= y <= 1 - 1 / z
+    assert P.zoom_state((0.4, 0.3, 0.6, 0.6), 8.0, 0.0) == (1.0, 0.0, 0.0) and P.zoom_state(None, 0.5, 0.2) == (1.0, 0.0, 0.0)
+    assert P.zoomed_box((0.1, 0.1, 0.2, 0.2), (2.0, 0.1, 0.1)) == (0.0, 0.0, 0.2, 0.2)
+    frames, (x, y) = P.track_frames(warn[0].keys, 3.0, 5.0, L1080, warn[0].color, 30.0, warn[0].label)
+    assert len(frames) == 60 and y < 0.1 * 1080 - 40  # room above the box for the tag
+    assert frames[30].getpixel((frames[30].width // 2, frames[30].height // 2))[3] == 0
+    fz, (xz, yz) = P.track_frames(warn[0].keys, 3.0, 5.0, L1080, warn[0].color, 30.0, "", lambda t: (2.0, 0.0, 0.0))
+    assert fz[0].width > frames[0].width  # the box is twice as big in the zoomed picture
+
+
+def test_speedups_retime_clock_and_filter():
+    sp = P._clean_speedups([[6, 46, 8], [50, 52, 2], [45, 47, 3], "x", [1, 1.1, 4], [60, 70, 100]])
+    assert sp == [(6.0, 46.0, 8.0), (50.0, 52.0, 2.0)]
+    assert P.retimed(3.0, sp) == 3.0 and abs(P.retimed(46.0, sp) - 11.0) < 1e-9 and abs(P.retimed(47.3, sp) - 12.3) < 1e-9
+    assert abs(P.retimed(54.0, sp) - (54 - 35 - 1)) < 1e-9
+    assert P.fast_windows(sp)[0] == (6.0, 11.0, 8.0)
+    text = P.retime_filter(54.0, sp)
+    assert text.count("trim=") == 5 and "setpts=(PTS-STARTPTS)/8" in text and "concat=n=5:v=1:a=0" in text
+    assert text.endswith("[v]")
+    img = P.fast_badge(8, L1080, P.overlay_theme(P.normalize_style({})))
+    assert img.mode == "RGBA" and img.width > img.height > 30
+    p = plan(fast=[(6.0, 11.0, 8.0)], style=P.normalize_style({"step_label": False}))
+    assert P.label_window(p) is None
+    a = assets_for(p)
+    a["fast"] = [(Path("/w/fast0.png"), (200, 60), 6.0, 11.0)]
+    g = P.step_graph(p, a).text()
+    assert "fast0.png" in " ".join(" ".join(a) for a in P.step_graph(p, a).inputs) and "setpts=PTS-STARTPTS+6.000/TB" in g and "overlay=x='1664':y='56'" in g
+
 
 
 def test_lower_third_caption_progress_sizes():
@@ -236,9 +296,9 @@ def test_audio_chain_two_pass():
 
 
 def test_ring_window_rules():
-    assert P.ring_window(plan()) == (4.6, 5.6)
-    assert P.ring_window(plan(key_time=0.1)) == (0.3, 1.3)
-    assert P.ring_window(plan(key_time=7.9)) == (6.9, 7.9)
+    assert P.ring_window(plan()) == (4.6, 6.6)
+    assert P.ring_window(plan(key_time=0.1)) == (0.3, 2.3)
+    assert P.ring_window(plan(key_time=7.9)) == (5.9, 7.9)
     assert P.ring_window(plan(region=None)) is None                    # nothing honest to point at
     assert P.ring_window(plan(region=(0.1, 0.1, 0.9, 0.9))) is None    # a box around most of the frame
     assert P.ring_window(plan(highlight=False)) is None

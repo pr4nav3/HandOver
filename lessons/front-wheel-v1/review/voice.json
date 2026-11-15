@@ -1,13 +1,101 @@
 {
+  "speed": 0.9,
   "steps": {
-    "1": "Squeeze the front brake once and watch both pads land on the rim.",
-    "2": "Turn the bike over, flip the lever open, and lift the frame so the wheel drops out.",
-    "3": "Unscrew the nut and slide the skewer out. Each spring points its narrow end toward the hub.",
-    "4": "Lift the wheel and give it a spin, then run your fingers round the flat band the pads touch.",
-    "5": "Look at the brake from above. Each pad should face the rim's braking track.",
-    "6": "Set the wheel back between the fork blades with the tire's arrow pointing forward. Check the back tire the same way.",
-    "7": "Slide the skewer back through the hub, lever on the left, and thread the nut on.",
-    "8": "Snug the nut, then fold the lever flat along the fork, pointing up.",
-    "9": "Turn the bike upright. Spin the wheel and squeeze the brake."
+    "1": [
+      {
+        "at": 0.8,
+        "text": "Turn the bike over."
+      },
+      {
+        "at": 7.4,
+        "text": "Flip the lever open."
+      },
+      {
+        "at": 9.2,
+        "text": "Lift the frame and the wheel drops out."
+      }
+    ],
+    "2": [
+      {
+        "at": 1.5,
+        "text": "Unscrew the nut on the end of the skewer."
+      },
+      {
+        "at": 12.3,
+        "text": "Once it's loose, slide the skewer out."
+      },
+      {
+        "at": 14.6,
+        "text": "Each spring's narrow end faces the hub; that centres the wheel."
+      }
+    ],
+    "3": [
+      {
+        "at": 4.6,
+        "text": "Lift the wheel and give it a spin."
+      },
+      {
+        "at": 7.6,
+        "text": "Run your fingers round the flat band the pads touch."
+      },
+      {
+        "at": 11.8,
+        "text": "You're feeling for grooves or a lip. A worn rim brakes badly and can fail."
+      }
+    ],
+    "4": [
+      {
+        "at": 1.2,
+        "text": "Look at the brake from above."
+      },
+      {
+        "at": 3.2,
+        "text": "Each pad should face the rim's braking track."
+      },
+      {
+        "at": 6.0,
+        "text": "Check there's no debris in the brakes."
+      }
+    ],
+    "5": [
+      {
+        "at": 2.4,
+        "text": "Set the wheel back between the fork blades."
+      },
+      {
+        "at": 9.6,
+        "text": "The tread is moulded to roll one way. The arrow on the sidewall shows it, so point it forward."
+      },
+      {
+        "at": 18.6,
+        "text": "Check the back tire the same way."
+      }
+    ],
+    "6": [
+      {
+        "at": 1.8,
+        "text": "Slide the skewer back through the hub, lever on the left, away from the chain."
+      },
+      {
+        "at": 13.2,
+        "text": "Thread the nut onto the other end."
+      }
+    ],
+    "7": [
+      {
+        "at": 0.9,
+        "text": "Tighten the nut by hand until it's firm."
+      },
+      {
+        "at": 18.3,
+        "text": "Then fold the lever closed so it lies flat along the fork, pointing up. Nothing can catch it there."
+      }
+    ],
+    "8": [
+      {
+        "at": 6.35,
+        "text": "Spin the wheel and squeeze the brake. If it runs true and the pads bite, you're good to ride."
+      }
+    ]
   }
 }

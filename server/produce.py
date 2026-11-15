@@ -98,9 +98,11 @@ OUTRO_S = 2.5
 LABEL_S = 2.5         # step label (lower third) on screen
 LABEL_IN_S = 0.2      # it appears this long after the clip starts
 MOVE_S = 0.35         # fades and rises of text
-RING_S = 1.0
-RING_IN_S = 0.3
-RING_OUT_S = 0.3
+RING_S = 2.0          # a highlight given as one box (region and key_time) stays this long
+RING_IN_S = 0.45      # it settles in: a small scale-down with a fade
+RING_OUT_S = 0.4
+TRACK_SMOOTH_S = 0.3  # a tracked box's path is averaged this far on either side, so it glides between keyframes
+BOX_LOOK = "brackets" # "brackets": a hairline box with heavier corners; "line": one even stroke; "corners": corners only
 MAX_ZOOM = 1.3
 CENTER_ZOOM = 1.08    # gentle push-in when no action region is known
 ZOOM_MARGIN = 0.06    # room kept around the action region on every side, as a fraction of the frame
@@ -116,6 +118,8 @@ STYLE_DEFAULTS: dict[str, Any] = {
     "highlight": True,
     "burn_captions": False,  # players already show captions/NN.vtt; burn for exports and social clips
     "accent": None,          # "#RRGGBB"; None uses the theme's accent
+    "highlight_color": None, # "#RRGGBB" for the highlight box over the video; None uses the overlay accent
+    "step_label": True,      # "Step N of M" and the title over the clip's first seconds; off when the player shows them
 }
 
 # Colors from apps/design/THEMES.md, per look: (paper, raised, ink, ink2 alpha, accent, onAccent).
@@ -192,6 +196,11 @@ def card_theme(style: dict) -> Theme:
     return _theme(base, look, style.get("accent"))
 
 
+def highlight_color(style: dict, over: Theme) -> tuple:
+    """RGB of the highlight box: the style's highlight_color, else the overlay theme's accent."""
+    return _rgb(style["highlight_color"]) if style.get("highlight_color") else over.accent
+
+
 def overlay_theme(style: dict) -> Theme:
     """Colors for things drawn over the video (step label, progress bar, ring): the dark look when the theme has
     one, as the apps force dark controls over video; always-light themes keep their light look."""
@@ -216,11 +225,12 @@ def normalize_style(raw: Optional[dict]) -> dict:
         out["title_cards"] = "card" if tc else "off"
     elif tc in TITLE_CARDS:
         out["title_cards"] = tc
-    for key in ("zoom", "highlight", "burn_captions"):
+    for key in ("zoom", "highlight", "burn_captions", "step_label"):
         if isinstance(raw.get(key), bool):
             out[key] = raw[key]
-    if isinstance(raw.get("accent"), str) and _HEX.match(raw["accent"]):
-        out["accent"] = raw["accent"].upper()
+    for key in ("accent", "highlight_color"):
+        if isinstance(raw.get(key), str) and _HEX.match(raw[key]):
+            out[key] = raw[key].upper()
     return out
 
 
@@ -391,6 +401,7 @@ class Layout:
 
 
 SS = 3  # supersampling for shapes; Pillow's own antialiasing on rounded rectangles is rough
+Box = tuple[float, float, float, float]  # normalized x0, y0, x1, y1
 
 
 def _rounded(size: tuple[int, int], radius: float, fill: tuple) -> Image.Image:
@@ -410,54 +421,220 @@ def _panel(size: tuple[int, int], radius: float, theme: Theme) -> Image.Image:
     return big.resize((w, h), Image.LANCZOS)
 
 
+BOX_SS = 2  # supersampling for the highlight box (drawn once per frame while it tracks, so it stays cheap)
+
+
+def box_margin(layout: Layout) -> int:
+    """Room the box image needs around the region: the gap, the heaviest stroke and the shadow's blur."""
+    return int(math.ceil(30 * layout.u))
+
+
+def box_image(region_w: float, region_h: float, layout: Layout, accent: tuple, alpha: float = 1.0,
+              scale: float = 1.0, look: str = BOX_LOOK) -> Image.Image:
+    """The highlight: a rounded box drawn a little outside the region, centered on a canvas of the scaled box
+    plus box_margin on every side. A soft dark shadow underneath keeps it readable over any picture; the
+    accent stroke sits on top. look picks the drawing (see BOX_LOOK)."""
+    u, ss = layout.u, BOX_SS
+    gap = 10 * u                       # the box sits this far outside the region
+    hair, heavy = 3.2 * u, 7.0 * u     # the hairline and the corner strokes
+    m = box_margin(layout)
+    bw, bh = (region_w + 2 * gap) * scale, (region_h + 2 * gap) * scale
+    W, H = int(math.ceil(bw)) + 2 * m, int(math.ceil(bh)) + 2 * m
+    cx, cy = W / 2, H / 2
+    rect = [(cx - bw / 2) * ss, (cy - bh / 2) * ss, (cx + bw / 2) * ss, (cy + bh / 2) * ss]
+    radius = min(14 * u, bw / 4, bh / 4) * ss
+    a = max(0.0, min(1.0, alpha))
+    size = (W * ss, H * ss)
+
+    def outline(width: float, color: tuple) -> Image.Image:
+        img = Image.new("RGBA", size, (0, 0, 0, 0))
+        ImageDraw.Draw(img).rounded_rectangle(rect, radius=radius, outline=color, width=max(1, int(round(width * ss))))
+        return img
+
+    def corners_only(img: Image.Image, width: float) -> Image.Image:
+        """Keeps only the corners of an outline: the middle of every side is cleared."""
+        d = ImageDraw.Draw(img)
+        arm = max(26 * u, 0.22 * min(bw, bh)) * ss
+        w2 = width * ss / 2 + 2 * ss
+        x0, y0, x1, y1 = rect
+        d.rectangle([x0 + arm, y0 - w2, x1 - arm, y0 + w2], fill=(0, 0, 0, 0))
+        d.rectangle([x0 + arm, y1 - w2, x1 - arm, y1 + w2], fill=(0, 0, 0, 0))
+        d.rectangle([x0 - w2, y0 + arm, x0 + w2, y1 - arm], fill=(0, 0, 0, 0))
+        d.rectangle([x1 - w2, y0 + arm, x1 + w2, y1 - arm], fill=(0, 0, 0, 0))
+        return img
+
+    main_w = {"line": 4.0 * u, "brackets": hair, "corners": heavy}[look]
+    shadow = outline(main_w + 3 * u, (0, 0, 0, int(150 * a)))
+    if look == "corners":
+        shadow = corners_only(shadow, main_w + 3 * u)
+    shadow = shadow.filter(ImageFilter.GaussianBlur(3.0 * u * ss))
+    out = shadow
+    if look in ("line", "brackets"):
+        out = Image.alpha_composite(out, outline(main_w, (*accent, int((235 if look == "line" else 215) * a))))
+    if look in ("brackets", "corners"):
+        out = Image.alpha_composite(out, corners_only(outline(heavy, (*accent, int(255 * a))), heavy))
+    return out.resize((W, H), Image.LANCZOS)
+
+
 def ring_frame(region_w: int, region_h: int, layout: Layout, accent: tuple, scale: float = 1.0,
                alpha: float = 1.0) -> Image.Image:
-    """A rounded rectangle outline around a region, drawn at scale about its center on a fixed canvas. The canvas is
-    the region plus ring_pad on every side, so every frame of the animation has the same size and position."""
-    u = layout.u
+    """The box for a region that does not move, on a canvas of the region plus ring_pad on every side."""
     pad = ring_pad(layout)
-    stroke = max(2.0, 4 * u)
-    w, h = region_w + 2 * pad, region_h + 2 * pad
-    big = Image.new("RGBA", (w * SS, h * SS), (0, 0, 0, 0))
-    d = ImageDraw.Draw(big)
-    gap = 10 * u  # ring sits this far outside the region
-    rw, rh = (region_w + 2 * gap) * scale, (region_h + 2 * gap) * scale
-    cx, cy = w / 2, h / 2
-    box = [(cx - rw / 2) * SS, (cy - rh / 2) * SS, (cx + rw / 2) * SS, (cy + rh / 2) * SS]
-    radius = min(22 * u, rw / 4, rh / 4) * SS
-    a = max(0.0, min(1.0, alpha))
-    contour = stroke + 2 * u
-    d.rounded_rectangle(box, radius=radius, outline=(0, 0, 0, int(90 * a)), width=max(1, int(contour * SS)))
-    inset = (contour - stroke) / 2 * SS
-    inner = [box[0] + inset, box[1] + inset, box[2] - inset, box[3] - inset]
-    d.rounded_rectangle(inner, radius=max(0.0, radius - inset), outline=(*accent, int(255 * a)),
-                        width=max(1, int(stroke * SS)))
-    return big.resize((w, h), Image.LANCZOS)
+    canvas = Image.new("RGBA", (region_w + 2 * pad, region_h + 2 * pad), (0, 0, 0, 0))
+    img = box_image(region_w, region_h, layout, accent, alpha, scale)
+    canvas.alpha_composite(img, ((canvas.width - img.width) // 2, (canvas.height - img.height) // 2))
+    return canvas
 
 
 def ring_pad(layout: Layout) -> int:
-    return int(math.ceil(18 * layout.u))
+    """Canvas room around a still region: the box margin plus the settle-in scale on the largest sensible box."""
+    return int(math.ceil(box_margin(layout) + 22 * layout.u))
 
 
 def _ease_out(p: float) -> float:
     return 1 - (1 - max(0.0, min(1.0, p))) ** 3
 
 
-def ring_frames(region_w: int, region_h: int, layout: Layout, accent: tuple, fps: float) -> list[Image.Image]:
-    """RING_S of animation: a gentle scale-in from 92 percent with a fade, a hold, then a fade out."""
-    n = max(1, int(round(RING_S * fps)))
+def box_phase(i: int, n: int, fps: float) -> tuple[float, float]:
+    """(scale, alpha) of frame i of n: settles in from 106 percent with a fade, holds, then fades out."""
     n_in, n_out = max(1, int(round(RING_IN_S * fps))), max(1, int(round(RING_OUT_S * fps)))
-    frames = []
+    if i < n_in:
+        e = _ease_out((i + 1) / n_in)
+        return 1.06 - 0.06 * e, e
+    if i >= n - n_out:
+        return 1.0, 1 - _ease_out((i - (n - n_out) + 1) / n_out)
+    return 1.0, 1.0
+
+
+def ring_frames(region_w: int, region_h: int, layout: Layout, accent: tuple, fps: float) -> list[Image.Image]:
+    """RING_S of animation for a region that does not move."""
+    n = max(1, int(round(RING_S * fps)))
+    return [ring_frame(region_w, region_h, layout, accent, *box_phase(i, n, fps)) for i in range(n)]
+
+
+Track = list[tuple[float, Box]]  # (seconds into the clip, normalized box), in time order
+
+
+@dataclass
+class Highlight:
+    """One hand-placed highlight: the box follows keys; color (RGB) and label are optional. A labelled box
+    carries a small tag at its corner, for warnings such as a pet in the frame."""
+    keys: Track
+    color: Optional[tuple] = None
+    label: str = ""
+
+
+def track_box(keys: Track, t: float) -> Box:
+    """The box at time t: the keyframe boxes blended in time, held still before the first and after the last."""
+    if t <= keys[0][0]:
+        return keys[0][1]
+    for (t0, b0), (t1, b1) in zip(keys, keys[1:]):
+        if t <= t1:
+            p = 0.0 if t1 <= t0 else (t - t0) / (t1 - t0)
+            return tuple(a + (b - a) * p for a, b in zip(b0, b1))  # type: ignore[return-value]
+    return keys[-1][1]
+
+
+def track_path(keys: Track, start: float, end: float, fps: float) -> list[Box]:
+    """One box per frame from start to end, blended between keyframes and smoothed over TRACK_SMOOTH_S on each
+    side, so the box eases into and out of every move instead of changing direction sharply."""
+    n = max(1, int(round((end - start) * fps)))
+    raw = [track_box(keys, start + i / fps) for i in range(n)]
+    k = int(round(TRACK_SMOOTH_S * fps))
+    if k < 1:
+        return raw
+    out = []
     for i in range(n):
-        if i < n_in:
-            e = _ease_out((i + 1) / n_in)
-            scale, alpha = 0.92 + 0.08 * e, e
-        elif i >= n - n_out:
-            scale, alpha = 1.0, 1 - _ease_out((i - (n - n_out) + 1) / n_out)
-        else:
-            scale, alpha = 1.0, 1.0
-        frames.append(ring_frame(region_w, region_h, layout, accent, scale, alpha))
-    return frames
+        lo, hi = max(0, i - k), min(n, i + k + 1)
+        out.append(tuple(sum(b[j] for b in raw[lo:hi]) / (hi - lo) for j in range(4)))  # type: ignore[misc]
+    return out
+
+
+def _luma(rgb: tuple) -> float:
+    r, g, b = (c / 255 for c in rgb[:3])
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def pill(size: tuple[int, int], fill: tuple, edge: Optional[tuple] = None) -> Image.Image:
+    """A fully rounded chip, the shape of the players' over-video buttons (Replay, the camera name)."""
+    w, h = size
+    big = Image.new("RGBA", (w * SS, h * SS), (0, 0, 0, 0))
+    ImageDraw.Draw(big).rounded_rectangle((0, 0, w * SS - 1, h * SS - 1), radius=h * SS / 2, fill=fill,
+                                          outline=edge, width=SS if edge else 0)
+    return big.resize((w, h), Image.LANCZOS)
+
+
+CHIP_FILL = (0, 0, 0, 153)        # the players' chips over video: black at 60 percent
+CHIP_EDGE = (255, 255, 255, 51)   # with a hairline at 20 percent
+CHIP_INK = (255, 255, 255, 255)
+
+
+def box_tag(label: str, layout: Layout, color: tuple) -> Image.Image:
+    """The label on a highlighted box: a chip in the box color with white (or dark) text."""
+    u = layout.u
+    f = font(24 * u, "semibold")
+    text = " ".join(label.split())
+    pad_x, pad_y = int(16 * u), int(7 * u)
+    w, h = int(text_width(text, f)) + 2 * pad_x, _line_height(f, 1.0) + 2 * pad_y
+    img = pill((w, h), (*color[:3], 255))
+    ink = CHIP_INK if _luma(color) < 0.62 else (20, 20, 24, 255)
+    ImageDraw.Draw(img).text((pad_x, pad_y - int(1 * u)), text, font=f, fill=ink)
+    return img
+
+
+def _faded(img: Image.Image, alpha: float) -> Image.Image:
+    if alpha >= 0.999:
+        return img
+    out = img.copy()
+    out.putalpha(out.getchannel("A").point(lambda v: int(v * alpha)))
+    return out
+
+
+def track_frames(keys: Track, start: float, end: float, layout: Layout, accent: tuple,
+                 fps: float, label: str = "", zoom=None) -> tuple[list[Image.Image], tuple[int, int]]:
+    """Every frame of a tracked highlight on one fixed canvas (the union of the boxes plus room), and the
+    canvas position in the frame. zoom(t) -> (z, x, y) maps each box through the push-in, so the overlay can
+    be laid over the zoomed picture with a constant stroke and nothing cropped. A label rides at the box's
+    top left corner (below the box when the box touches the top of the frame, and never off the left edge).
+    Returns ([frames], (x, y))."""
+    W, H = layout.width, layout.height
+    u = layout.u
+    path = track_path(keys, start, end, fps)
+    if zoom is not None:
+        path = [zoomed_box(b, zoom(start + i / fps)) for i, b in enumerate(path)]
+    boxes = path
+    ux0, uy0 = min(b[0] for b in boxes) * W, min(b[1] for b in boxes) * H
+    ux1, uy1 = max(b[2] for b in boxes) * W, max(b[3] for b in boxes) * H
+    side = max((b[2] - b[0]) * W for b in boxes) + max((b[3] - b[1]) * H for b in boxes)
+    pad = int(math.ceil(box_margin(layout) + 0.04 * side + 2))
+    tag = box_tag(label, layout, accent) if label else None
+    tag_room = (tag.height + int(10 * u)) if tag else 0
+    ox, oy = int(math.floor(ux0)) - pad, int(math.floor(uy0)) - pad - tag_room
+    right = max(pad, (tag.width + int(8 * u)) if tag else 0)
+    size = (int(math.ceil(ux1)) + right - ox, int(math.ceil(uy1)) + pad + tag_room - oy)
+    gap = 10 * u
+    frames, cache = [], {}
+    for i, (x0, y0, x1, y1) in enumerate(path):
+        scale, alpha = box_phase(i, len(path), fps)
+        bw, bh = (x1 - x0) * W, (y1 - y0) * H
+        key = (round(bw), round(bh), round(scale, 3), round(alpha, 2))
+        img = cache.get(key)
+        if img is None:
+            img = cache[key] = box_image(round(bw), round(bh), layout, accent, alpha, scale)
+            if len(cache) > 64:
+                cache.pop(next(iter(cache)))
+        canvas = Image.new("RGBA", size, (0, 0, 0, 0))
+        cx, cy = (x0 + x1) / 2 * W - ox, (y0 + y1) / 2 * H - oy
+        canvas.alpha_composite(img, (int(round(cx - img.width / 2)), int(round(cy - img.height / 2))))
+        if tag is not None:
+            left = x0 * W - gap * scale
+            top = y0 * H - gap * scale - tag.height - 6 * u
+            if top < 6 * u:
+                top = y1 * H + gap * scale + 6 * u
+            left = max(6 * u, min(left, W - tag.width - 6 * u))
+            canvas.alpha_composite(_faded(tag, alpha), (int(round(left - ox)), int(round(top - oy))))
+        frames.append(canvas)
+    return frames, (ox, oy)
 
 
 def lower_third(n: int, total: int, title: str, layout: Layout, theme: Theme) -> Image.Image:
@@ -887,6 +1064,37 @@ def zoom_filters(target: Optional[tuple[float, float, float, float]], width: int
             f":s={width}x{height}:fps={fps:g}")
 
 
+def _ease_in_out(p: float) -> float:
+    p = max(0.0, min(1.0, p))
+    return 4 * p ** 3 if p < 0.5 else 1 - (-2 * p + 2) ** 3 / 2
+
+
+def zoom_state(target: Optional[tuple[float, float, float, float]], seconds: float, t: float,
+               max_zoom: float = MAX_ZOOM) -> tuple[float, float, float]:
+    """(zoom, x, y) of the push-in at clip time t, the same numbers zoom_filters' expressions give ffmpeg: x and y
+    are the normalized top-left corner of the window the output shows. (1, 0, 0) when there is no push-in."""
+    z_end = end_zoom(target, max_zoom)
+    if z_end < 1.02 or seconds < 1.0:
+        return 1.0, 0.0, 0.0
+    if target is None:
+        cx = cy = 0.5
+    else:
+        x0, y0, x1, y1 = target
+        cx = min(max((x0 + x1) / 2, 0.5 / z_end), 1 - 0.5 / z_end)
+        cy = min(max((y0 + y1) / 2, 0.5 / z_end), 1 - 0.5 / z_end)
+    e = _ease_in_out(t / max(0.5, seconds * ZOOM_HOLD))
+    z = 1 + (z_end - 1) * e
+    x = min(max((0.5 + (cx - 0.5) * e) - 0.5 / z, 0.0), 1 - 1 / z)
+    y = min(max((0.5 + (cy - 0.5) * e) - 0.5 / z, 0.0), 1 - 1 / z)
+    return z, x, y
+
+
+def zoomed_box(box: Box, state: tuple[float, float, float]) -> Box:
+    """A source-frame box as it appears in the pushed-in output frame (normalized; may leave the frame)."""
+    z, x, y = state
+    return ((box[0] - x) * z, (box[1] - y) * z, (box[2] - x) * z, (box[3] - y) * z)
+
+
 def end_zoom(target: Optional[tuple[float, float, float, float]], max_zoom: float = MAX_ZOOM) -> float:
     if target is None:
         return min(CENTER_ZOOM, max_zoom)
@@ -895,6 +1103,127 @@ def end_zoom(target: Optional[tuple[float, float, float, float]], max_zoom: floa
 
 
 FINAL_VF = teach.CLIP_VF
+
+Speedup = tuple[float, float, float]  # (from, to, factor) on the clip's own clock before any speed-up
+FAST_S = 0.3                          # the fast-forward badge fades in and out this long
+
+
+def _clean_speedups(raw: Any, seconds: Optional[float] = None) -> list[Speedup]:
+    """Non-overlapping (from, to, factor) triples in time order; factor between 1.05 and 32, inside the clip."""
+    out: list[Speedup] = []
+    if not isinstance(raw, (list, tuple)):
+        return out
+    for item in raw:
+        try:
+            a, b, f = (float(v) for v in (item[0], item[1], item[2]))
+        except (TypeError, ValueError, IndexError):
+            continue
+        if seconds is not None:
+            b = min(b, seconds)
+        if b - a >= 0.2 and 1.05 <= f <= 32:
+            out.append((round(a, 3), round(b, 3), round(f, 3)))
+    out.sort()
+    merged: list[Speedup] = []
+    for s in out:
+        if merged and s[0] < merged[-1][1]:
+            continue  # overlaps the one before: skip it
+        merged.append(s)
+    return merged
+
+
+def retimed(t: float, speedups: Sequence[Speedup]) -> float:
+    """A moment on the original clip clock, on the sped-up clip's clock."""
+    out = t
+    for a, b, f in speedups:
+        if t <= a:
+            break
+        out -= (min(t, b) - a) * (1 - 1 / f)
+    return out
+
+
+def fast_windows(speedups: Sequence[Speedup]) -> list[tuple[float, float, float]]:
+    """(start, end, factor) of every sped-up stretch on the sped-up clip's clock: where the badge shows."""
+    return [(retimed(a, speedups), retimed(b, speedups), f) for a, b, f in speedups]
+
+
+def retime_filter(span: float, speedups: Sequence[Speedup]) -> str:
+    """A filter graph over [0:v] that plays the clip at normal speed except for the speedups, output [v]. The
+    clip is cut into pieces with trim, each piece's timestamps are rescaled, and the pieces are joined."""
+    cuts, t = [], 0.0
+    for a, b, f in speedups:
+        if a > t:
+            cuts.append((t, a, 1.0))
+        cuts.append((a, b, f))
+        t = b
+    if span > t + 0.05:
+        cuts.append((t, span, 1.0))
+    parts, labels = [], []
+    for i, (a, b, f) in enumerate(cuts):
+        parts.append(f"[0:v]trim=start={a:.3f}:end={b:.3f},setpts=(PTS-STARTPTS)/{f:g}[p{i}]")
+        labels.append(f"[p{i}]")
+    parts.append(f"{''.join(labels)}concat=n={len(cuts)}:v=1:a=0,{teach.CLIP_VF}[v]")
+    return ";".join(parts)
+
+
+def retime_step(lesson_dir: Path, step: dict, speedups: Sequence[Speedup]) -> Path:
+    """Re-cuts clips/NN.mp4 for one step from the take (norm.mp4, the step's start and end) with its speedups
+    applied, silent: a voiceover is laid over it afterwards on the new clock. Returns the clip path."""
+    n = int(step.get("n") or 0)
+    norm = lesson_dir / str((json.loads((lesson_dir / "lesson.json").read_text(encoding="utf-8")).get("video"))
+                            or "norm.mp4")
+    a, b = teach.parse_time(step.get("start") or 0), teach.parse_time(step.get("end") or 0)
+    if b <= a:
+        raise ValueError(f"step {n} has no span to re-cut")
+    out = lesson_dir / "clips" / f"{n:02d}.mp4"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    tmp = out.with_name(out.stem + ".retime.tmp.mp4")
+    cmd = [ffmpeg(), "-y", "-v", "error", "-ss", f"{a:.3f}", "-to", f"{b:.3f}", "-i", norm.as_posix(),
+           "-filter_complex", retime_filter(b - a, speedups), "-map", "[v]", "-an",
+           "-c:v", "libx264", "-crf", "20", "-preset", "veryfast", "-r", "30", "-fps_mode", "cfr",
+           *teach.SEEK_TAGS, *teach.SDR_TAGS, "-movflags", "+faststart", str(tmp)]
+    run(cmd)
+    teach._retry(lambda: os.replace(tmp, out))  # a player streaming the old clip holds it for a moment
+    return out
+
+
+def retime_lesson(lesson_dir: Path, steps: Optional[Sequence[int]] = None, progress: Progress = noop) -> list[int]:
+    """Re-cuts every step that has production.steps[n].speedups (or only `steps`). Returns the steps re-cut."""
+    lesson_dir = Path(lesson_dir)
+    lesson = _load_lesson(lesson_dir)
+    production = lesson.get("production") if isinstance(lesson.get("production"), dict) else {}
+    done = []
+    for i, s in enumerate(lesson["steps"]):
+        n = int(s.get("n", i + 1))
+        if steps and n not in steps:
+            continue
+        sp = _clean_speedups(_overrides(production, n).get("speedups"))
+        if not sp:
+            continue
+        progress("retime", f"step {n}: " + ", ".join(f"{a:g} to {b:g} s at {f:g}x" for a, b, f in sp))
+        retime_step(lesson_dir, s, sp)
+        done.append(n)
+    return done
+
+
+def fast_badge(factor: float, layout: Layout, theme: Theme) -> Image.Image:
+    """The fast-forward mark: two small triangles and the factor on a chip like the players' Replay button."""
+    u = layout.u
+    f = font(24 * u, "semibold")
+    text = f"{factor:g}×"
+    pad_x, pad_y = int(16 * u), int(8 * u)
+    tri_w, tri_h, gap = 11 * u, 14 * u, 2.5 * u
+    glyph_w = 2 * tri_w + gap
+    w = int(pad_x + glyph_w + 9 * u + text_width(text, f) + pad_x)
+    h = int(max(tri_h, _line_height(f, 1.0)) + 2 * pad_y)
+    img = pill((w, h), CHIP_FILL, CHIP_EDGE)
+    d = ImageDraw.Draw(img)
+    cy = h / 2
+    x = pad_x
+    for _ in range(2):
+        d.polygon([(x, cy - tri_h / 2), (x + tri_w, cy), (x, cy + tri_h / 2)], fill=CHIP_INK)
+        x += tri_w + gap
+    d.text((pad_x + glyph_w + 9 * u, (h - _line_height(f, 1.0)) / 2 - 1 * u), text, font=f, fill=CHIP_INK)
+    return img
 
 
 # ---------------------------------------------------------------- plans
@@ -915,6 +1244,8 @@ class StepPlan:
     style: dict
     zoom: bool = True
     highlight: bool = True
+    tracks: list = field(default_factory=list)   # hand-placed Highlight list: boxes that follow keyframes
+    fast: list = field(default_factory=list)     # (start, end, factor) stretches that were sped up, clip clock
 
     @property
     def card(self) -> bool:
@@ -930,21 +1261,50 @@ class StepPlan:
         return self.lead + self.probe.duration
 
 
+def _too_big(box: Box) -> bool:
+    x0, y0, x1, y1 = box
+    return x1 - x0 > 0.6 or y1 - y0 > 0.5 or (x1 - x0) * (y1 - y0) > 0.25  # a big box points at nothing in particular
+
+
 def ring_window(plan: StepPlan) -> Optional[tuple[float, float]]:
-    """(start, end) of the highlight in clip time, or None when there is nothing honest to point at."""
-    if not plan.highlight or plan.region is None or plan.probe.duration < RING_S + 0.4:
+    """(start, end) of a still highlight (region and key_time) in clip time, or None when there is nothing honest
+    to point at. Steps with tracks use highlight_tracks instead."""
+    if not plan.highlight or plan.tracks or plan.region is None or plan.probe.duration < RING_S + 0.4:
         return None
-    x0, y0, x1, y1 = plan.region
-    if x1 - x0 > 0.6 or y1 - y0 > 0.5 or (x1 - x0) * (y1 - y0) > 0.25:  # a big box points at nothing in particular
+    if _too_big(plan.region):
         return None
     key = plan.key_time if plan.key_time is not None else plan.probe.duration * 0.6
     start = min(max(0.3, key - 0.4), plan.probe.duration - RING_S - 0.1)
     return start, start + RING_S
 
 
+def highlight_tracks(plan: StepPlan) -> list[tuple[float, float, Highlight]]:
+    """Every highlight of the step as (start, end, Highlight) in clip time. A hand-placed track runs from its
+    first keyframe to its last (a single keyframe holds for RING_S); a still region becomes a two-keyframe
+    track over ring_window. A track with a box around most of the frame is skipped."""
+    if not plan.highlight:
+        return []
+    D = plan.probe.duration
+    out: list[tuple[float, float, Highlight]] = []
+    for hl in plan.tracks:
+        hl = hl if isinstance(hl, Highlight) else Highlight(list(hl))
+        keys = [(float(t), b) for t, b in hl.keys if 0 <= float(t) <= D]
+        if not keys or any(_too_big(b) for _, b in keys):
+            continue
+        start = keys[0][0]
+        end = min(D - 0.1, keys[-1][0] if len(keys) > 1 else start + RING_S)
+        if end - start >= 0.5:
+            out.append((start, end, Highlight(keys, hl.color, hl.label)))
+    if not plan.tracks:
+        win = ring_window(plan)
+        if win:
+            out.append((win[0], win[1], Highlight([(win[0], plan.region), (win[1], plan.region)])))  # type: ignore[list-item]
+    return out
+
+
 def label_window(plan: StepPlan) -> Optional[tuple[float, float]]:
-    if plan.style["title_cards"] == "overlay":
-        return None  # the overlay title already names the step
+    if plan.style["title_cards"] == "overlay" or not plan.style.get("step_label", True):
+        return None  # the overlay title already names the step, or the player does
     start = LABEL_IN_S if plan.card else 0.0
     end = min(start + LABEL_S, plan.probe.duration - 0.15)
     return (start, end) if end - start >= 1.0 else None
@@ -980,15 +1340,29 @@ def prepare_step(plan: StepPlan, work: Path) -> dict:
         lt = lower_third(plan.n, plan.total, plan.title, layout, over)
         lt.save(work / "label.png")
         assets["label"] = (work / "label.png", lt.size)
-    win = ring_window(plan)
-    if win:
-        x0, y0, x1, y1 = region_px(plan)
-        ring_dir = work / "ring"
+    rings = []
+    zoom = (lambda t: zoom_state(plan.region, plan.probe.duration, t)) if plan.zoom else None
+    for j, (start, end, hl) in enumerate(highlight_tracks(plan)):
+        ring_dir = work / f"ring{j}"
         ring_dir.mkdir(exist_ok=True)
-        for i, img in enumerate(ring_frames(x1 - x0, y1 - y0, layout, over.accent, plan.probe.fps)):
-            img.save(ring_dir / f"{i:03d}.png")
-        pad = ring_pad(layout)
-        assets["ring"] = (ring_dir / "%03d.png", (x0 - pad, y0 - pad))
+        color = hl.color or highlight_color(plan.style, over)
+        frames, (rx, ry) = track_frames(hl.keys, start, end, layout, color, plan.probe.fps, hl.label, zoom)
+        for i, img in enumerate(frames):
+            img.save(ring_dir / f"{i:04d}.png")
+        rings.append((ring_dir / "%04d.png", (rx, ry), start))
+    if rings:
+        assets["ring"] = rings[0][:2]  # the first highlight, as before
+        assets["rings"] = rings
+    fasts = []
+    for j, (a, b, f) in enumerate(plan.fast):
+        a, b = max(0.0, a), min(plan.probe.duration - 0.1, b)
+        if b - a < 0.4:
+            continue
+        img = fast_badge(f, layout, over)
+        path = work / f"fast{j}.png"
+        img.save(path)
+        fasts.append((path, img.size, a, b))
+    assets["fast"] = fasts
     track, fill = progress_images(layout, over)
     track.save(work / "track.png")
     fill.save(work / "fill.png")
@@ -1017,21 +1391,23 @@ def step_graph(plan: StepPlan, assets: dict) -> Graph:
     base = g.label()
     g.add(f"[{clip}:v]fps={fps:g},format=yuv420p,setsar=1[{base}]")
 
-    if "ring" in assets:
-        pattern, (rx, ry) = assets["ring"]
-        start, _ = ring_window(plan)  # type: ignore[misc]
-        k = g.input("-framerate", f"{fps:g}", "-start_number", "0", "-i", Path(pattern).as_posix())
-        src, out = g.label("o"), g.label()
-        g.add(f"[{k}:v]format=rgba,setpts=PTS-STARTPTS+{start:.3f}/TB[{src}]")
-        g.add(f"[{base}][{src}]overlay=x={rx}:y={ry}:eof_action=pass[{out}]")
-        base = out
-
     if plan.zoom:
         zf = zoom_filters(plan.region, W, H, D, fps)
         if zf:
             out = g.label()
             g.add(f"[{base}]{zf},format=yuv420p[{out}]")
             base = out
+
+    # highlights go over the pushed-in picture (their frames were mapped through the same push-in)
+    rings = assets.get("rings")
+    if rings is None and "ring" in assets:
+        rings = [(*assets["ring"], (ring_window(plan) or (0.0, 0.0))[0])]
+    for pattern, (rx, ry), start in rings or []:
+        k = g.input("-framerate", f"{fps:g}", "-start_number", "0", "-i", Path(pattern).as_posix())
+        src, out = g.label("o"), g.label()
+        g.add(f"[{k}:v]format=rgba,setpts=PTS-STARTPTS+{start:.3f}/TB[{src}]")
+        g.add(f"[{base}][{src}]overlay=x={rx}:y={ry}:eof_action=pass[{out}]")
+        base = out
 
     rise = 12 * u
     if plan.style["title_cards"] == "overlay":
@@ -1041,6 +1417,10 @@ def step_graph(plan: StepPlan, assets: dict) -> Graph:
         path, (tw, th) = assets["title"]
         k = g.still(path, fps, hold)
         base = g.overlay(base, k, 0.0, hold, f"{(W - tw) // 2}", f"{(H - th) // 2}", fade_in=0)
+
+    for path, (fw, fh), a, b in assets.get("fast", []):
+        k = g.still(path, fps, b - a)
+        base = g.overlay(base, k, a, b - a, f"{W - m - fw}", f"{m}", fade_in=FAST_S, fade_out=FAST_S)
 
     label_y = None
     win = label_window(plan)
@@ -1436,6 +1816,64 @@ def _overrides(production: dict, n: int) -> dict:
     return o if isinstance(o, dict) else {}
 
 
+def _clean_track(raw: Any, width: int, height: int) -> Optional[Track]:
+    """Keyframes from [[t, x0, y0, x1, y1], ...] or [{"t": s, "region": [...]}, ...], sorted by time."""
+    if not isinstance(raw, (list, tuple)):
+        return None
+    keys: Track = []
+    for item in raw:
+        try:
+            if isinstance(item, dict):
+                t = float(item.get("t", item.get("at")))
+                box = _clean_box(item.get("region") or item.get("box"), width, height)
+            elif isinstance(item, (list, tuple)) and len(item) == 5:
+                t = float(item[0])
+                box = _clean_box(list(item[1:]), width, height)
+            else:
+                continue
+        except (TypeError, ValueError):
+            continue
+        if box is not None and t >= 0:
+            keys.append((round(t, 3), box))
+    keys.sort(key=lambda k: k[0])
+    return keys or None
+
+
+def _clean_highlight(raw: Any, width: int, height: int) -> Optional[Highlight]:
+    """A Highlight from a keyframe list, or from {"keys": [...], "color": "#RRGGBB", "label": "Be careful"}."""
+    if isinstance(raw, dict):
+        keys = _clean_track(raw.get("keys", raw.get("track")), width, height)
+        if not keys:
+            return None
+        color = raw.get("color")
+        rgb = _rgb(color.upper()) if isinstance(color, str) and _HEX.match(color) else None
+        label = " ".join(str(raw.get("label") or "").split())
+        return Highlight(keys, rgb, label[:40])
+    keys = _clean_track(raw, width, height)
+    return Highlight(keys) if keys else None
+
+
+def step_tracks(o: dict, width: int, height: int) -> list[Highlight]:
+    """The step's hand-placed highlights: production.steps[n].track (one) and .tracks (several)."""
+    out = []
+    one = _clean_highlight(o.get("track"), width, height)
+    if one:
+        out.append(one)
+    for raw in (o.get("tracks") if isinstance(o.get("tracks"), (list, tuple)) else []):
+        hl = _clean_highlight(raw, width, height)
+        if hl:
+            out.append(hl)
+    return out
+
+
+def tracks_union(tracks: Sequence[Highlight]) -> Optional[Box]:
+    """The box around every keyframe of the plain highlights (labelled warnings do not steer the push-in)."""
+    boxes = [b for hl in tracks if not hl.label for _, b in hl.keys]
+    if not boxes:
+        return None
+    return (min(b[0] for b in boxes), min(b[1] for b in boxes), max(b[2] for b in boxes), max(b[3] for b in boxes))
+
+
 def build_plans(lesson_dir: Path, lesson: dict, style: dict, probes: dict[int, Probe], assist: dict,
                 work: Path) -> list[StepPlan]:
     steps = lesson["steps"]
@@ -1447,8 +1885,13 @@ def build_plans(lesson_dir: Path, lesson: dict, style: dict, probes: dict[int, P
         pr = probes[n]
         found = (assist.get("steps") or {}).get(str(n)) or {}
         o = _overrides(production, n)
-        region = _clean_box(o.get("region"), pr.width, pr.height) or _clean_box(found.get("region"))
+        tracks = step_tracks(o, pr.width, pr.height)
+        speedups = _clean_speedups(o.get("speedups"))
+        region = (_clean_box(o.get("region"), pr.width, pr.height) or tracks_union(tracks)
+                  or _clean_box(found.get("region")))
         key = o.get("key_time") if isinstance(o.get("key_time"), (int, float)) else _ref_seconds(s)
+        if key is not None and speedups and not isinstance(o.get("key_time"), (int, float)):
+            key = retimed(key, speedups)  # ref_time is on the take's clock; the clip was sped up after
         if key is None:
             key = found.get("key_time")
         if key is not None and not 0 <= key <= pr.duration:
@@ -1460,7 +1903,8 @@ def build_plans(lesson_dir: Path, lesson: dict, style: dict, probes: dict[int, P
             first_frame=work / f"{n:02d}" / "first.jpg", probe=pr, region=region, key_time=key,
             frac0=t / total_s, frac1=(t + pr.duration) / total_s, style=style,
             zoom=style["zoom"] and o.get("zoom", True) is not False,
-            highlight=style["highlight"] and o.get("highlight", True) is not False))
+            highlight=style["highlight"] and o.get("highlight", True) is not False, tracks=tracks,
+            fast=fast_windows(speedups)))
         t += pr.duration
     return plans
 
@@ -1657,12 +2101,30 @@ def main(argv: Optional[list[str]] = None) -> int:
     ap.add_argument("--accent", help="accent color as #RRGGBB")
     ap.add_argument("--steps", type=_parse_steps, help="only re-render these steps, for example 2,3")
     ap.add_argument("--no-assist", action="store_true", help="never call Claude for action regions")
+    ap.add_argument("--no-label", action="store_true", help="no step label over the clip (the player shows it)")
+    ap.add_argument("--label", action="store_true", help="step label over the clip again")
+    ap.add_argument("--retime", action="store_true",
+                    help="re-cut clips/NN.mp4 from the take for every step with production speedups, then stop "
+                         "(voice the lesson next, then render)")
     args = ap.parse_args(argv)
     lesson_dir = args.lesson_dir
     if not (lesson_dir / "lesson.json").is_file():
         print(f"no lesson.json in {lesson_dir}", file=sys.stderr)
         return 2
+    show: Progress = lambda status, message: print(f"[{status}] {message}", flush=True)  # noqa: E731
+    if args.retime:
+        try:
+            done = retime_lesson(lesson_dir, args.steps, show)
+        except (ValueError, RuntimeError) as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 1
+        print(f"re-cut steps {done or 'none'}; now voice the lesson, then render")
+        return 0
     style: dict[str, Any] = {}
+    if args.no_label:
+        style["step_label"] = False
+    if args.label:
+        style["step_label"] = True
     if args.no_zoom:
         style["zoom"] = False
     if args.no_cards:
@@ -1682,7 +2144,6 @@ def main(argv: Optional[list[str]] = None) -> int:
             print("--accent takes a color like #0A84FF", file=sys.stderr)
             return 2
         style["accent"] = args.accent
-    show: Progress = lambda status, message: print(f"[{status}] {message}", flush=True)  # noqa: E731
     try:
         result = produce(lesson_dir, style, steps=args.steps, assist=not args.no_assist, progress=show)
     except (ValueError, FileNotFoundError) as e:
