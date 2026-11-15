@@ -2831,7 +2831,7 @@ def _run_cli(args, show: Progress) -> int:
             show("self-test", "norm.mp4 missing; the first step may be skipped")
         lesson = json.loads((d / "lesson.json").read_text(encoding="utf-8"))
         camera = [s.get("n", i + 1) for i, s in enumerate(lesson.get("steps") or []) if s.get("check_type") != "manual"]
-        mode = "mock" if _check_is_mock() else config.get("HANDOVER_CHECK_MODEL")
+        mode = "mock" if _check_is_mock() else check.active_model()  # the provider the live hub uses, not the Gemini default
         show("self-test", f"{len(camera)} camera steps in {d}, check: {mode}")
         if args.dry_run:
             print(f"  would test steps {', '.join(map(str, camera)) or 'none'}")
