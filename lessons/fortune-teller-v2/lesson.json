@@ -1,0 +1,191 @@
+{
+  "id": "fortune-teller-v2",
+  "title": "Fold a fortune teller",
+  "video": "norm.mp4",
+  "safety": [],
+  "tools": [
+    "square sheet of paper",
+    "table surface"
+  ],
+  "steps": [
+    {
+      "n": 1,
+      "title": "Fold corner to corner into a triangle",
+      "start": "00:00",
+      "end": "00:13.2",
+      "clip": "clips/01.mp4",
+      "captions": "captions/01.vtt",
+      "ref_frame": "frames/01.jpg",
+      "ref_time": "00:12.7",
+      "check_type": "camera",
+      "check_question": "Is the paper folded into a single triangle with three corners?",
+      "prerequisites": [],
+      "common_mistake": "Line up the two corners exactly before pressing the crease."
+    },
+    {
+      "n": 2,
+      "title": "Unfold and fold the other diagonal",
+      "start": "00:13.2",
+      "end": "00:33",
+      "clip": "clips/02.mp4",
+      "captions": "captions/02.vtt",
+      "ref_frame": "frames/02.jpg",
+      "ref_time": "00:32.4",
+      "check_type": "camera",
+      "check_question": "Is the paper a single triangle with one crease running from the top point to the bottom edge?",
+      "prerequisites": [
+        1
+      ],
+      "common_mistake": "Open the first fold, then bring the other pair of corners together."
+    },
+    {
+      "n": 3,
+      "title": "Unfold and fold edge to edge into a rectangle",
+      "start": "00:33",
+      "end": "00:53.4",
+      "clip": "clips/03.mp4",
+      "captions": "captions/03.vtt",
+      "ref_frame": "frames/03.jpg",
+      "ref_time": "00:52.8",
+      "check_type": "camera",
+      "check_question": "Is the paper folded into a rectangle with four corners and one long folded edge?",
+      "prerequisites": [
+        2
+      ],
+      "common_mistake": "Match the opposite edges before pressing the straight crease."
+    },
+    {
+      "n": 4,
+      "title": "Unfold, fold in half the other way, and reopen",
+      "start": "00:53.4",
+      "end": "01:08.2",
+      "clip": "clips/04.mp4",
+      "captions": "captions/04.vtt",
+      "ref_frame": "frames/04.jpg",
+      "ref_time": "01:05.9",
+      "check_type": "manual",
+      "check_question": "",
+      "prerequisites": [
+        3
+      ],
+      "common_mistake": "Turn the fold a quarter turn before pressing the second straight crease."
+    },
+    {
+      "n": 5,
+      "title": "Fold all four corners to the center",
+      "start": "01:08.2",
+      "end": "01:53.2",
+      "clip": "clips/05.mp4",
+      "captions": "captions/05.vtt",
+      "ref_frame": "frames/05.jpg",
+      "ref_time": "01:48.3",
+      "check_type": "camera",
+      "check_question": "Do four triangular flaps form a square with all four points meeting at the center?",
+      "prerequisites": [
+        4
+      ],
+      "common_mistake": "Bring every corner point to the exact center without gaps."
+    },
+    {
+      "n": 6,
+      "title": "Flip the folded square over",
+      "start": "01:53.2",
+      "end": "01:55.2",
+      "clip": "clips/06.mp4",
+      "captions": "captions/06.vtt",
+      "ref_frame": "frames/06.jpg",
+      "ref_time": "01:55.1",
+      "check_type": "camera",
+      "check_question": "Is the top a square with no triangular flap seams facing up?",
+      "prerequisites": [
+        5
+      ],
+      "common_mistake": "Flip it over first. The seams should face down."
+    },
+    {
+      "n": 7,
+      "title": "Fold all four corners to the center again",
+      "start": "01:55.2",
+      "end": "02:32.2",
+      "clip": "clips/07.mp4",
+      "captions": "captions/07.vtt",
+      "ref_frame": "frames/07.jpg",
+      "ref_time": "02:31.4",
+      "check_type": "camera",
+      "check_question": "Do four triangular flaps form a smaller square with all four points meeting at the center?",
+      "prerequisites": [
+        6
+      ],
+      "common_mistake": "Bring each corner to the center on this side and keep all four points touching."
+    },
+    {
+      "n": 8,
+      "title": "Crease the small square in half both ways",
+      "start": "02:32.2",
+      "end": "02:51.4",
+      "clip": "clips/08.mp4",
+      "captions": "captions/08.vtt",
+      "ref_frame": "frames/08.jpg",
+      "ref_time": "02:51.2",
+      "check_type": "manual",
+      "check_question": "",
+      "prerequisites": [
+        7
+      ],
+      "common_mistake": "Make both half-folds through the center, not along a diagonal."
+    },
+    {
+      "n": 9,
+      "title": "Open the four pockets into a fortune teller",
+      "start": "02:51.4",
+      "end": "03:03.2",
+      "clip": "clips/09.mp4",
+      "captions": "captions/09.vtt",
+      "ref_frame": "frames/09.jpg",
+      "ref_time": "03:02.1",
+      "check_type": "camera",
+      "check_question": "Does the paper stand as four pointed pockets meeting at the center?",
+      "prerequisites": [
+        8
+      ],
+      "common_mistake": "Slide one finger under each flap, then push all four pockets toward the center."
+    }
+  ],
+  "voiceover": {
+    "engine": "kokoro",
+    "voice": "af_heart",
+    "model": "kokoro-v1.0",
+    "tts": "kokoro:af_heart",
+    "script_model": "claude-haiku-5-5",
+    "mode": "replace",
+    "steps": {
+      "1": {
+        "script_source": "file"
+      },
+      "2": {
+        "script_source": "file"
+      },
+      "3": {
+        "script_source": "file"
+      },
+      "4": {
+        "script_source": "file"
+      },
+      "5": {
+        "script_source": "file"
+      },
+      "6": {
+        "script_source": "file"
+      },
+      "7": {
+        "script_source": "file"
+      },
+      "8": {
+        "script_source": "file"
+      },
+      "9": {
+        "script_source": "file"
+      }
+    }
+  }
+}
