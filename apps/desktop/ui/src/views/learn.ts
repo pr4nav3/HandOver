@@ -178,6 +178,7 @@ export class LearnView {
   private lastListKey = "";
   private mistakeKey = "";
   private doneKey = "";
+  private titleKey = "";
   private layout: LearnLayout = readLearnLayout();
   private draggingLayout = false;
 
@@ -531,7 +532,7 @@ export class LearnView {
     let text: string;
     if (r.mistakes) text = `Done. ${r.mistakes} ${r.mistakes === 1 ? "mistake" : "mistakes"} fixed.`;
     else if (t >= 1 && exp) {
-      if (t < exp * 0.9) text = `Nice. ${mmss(t, true)}, faster than the expert.`;
+      if (t < exp * 0.9) text = `Done in ${mmss(t, true)}, faster than the expert.`;
       else if (t <= exp * 1.1) text = `Done. ${mmss(t, true)}, about the expert's time.`;
       else text = `Done in ${mmss(t, true)}.`;
     } else text = reason === "camera" ? "Verified." : "Done.";
@@ -717,6 +718,8 @@ export class LearnView {
       v.appendChild(track);
       track.track.mode = this.captionsOn ? "showing" : "hidden";
       replaceLessonPlayback(v, clipKey, window.speechSynthesis);
+      if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches)
+        v.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 250, easing: "ease-out" });
     }
     v.classList.toggle("hidden", !step);
     if (this.active && step && !isDone && !this.userPaused && v.paused && this.tutorialLoaded) this.play();
@@ -725,6 +728,14 @@ export class LearnView {
 
     this.q(".step-count").textContent = step ? `Step ${idx + 1} of ${total}` : " ";
     this.q(".step-title").textContent = step ? step.title : " ";
+    const titleKey = `${lesson?.id}:${idx}:${step?.title}`;
+    if (this.active && titleKey !== this.titleKey) {
+      this.titleKey = titleKey;
+      const title = this.q<HTMLElement>(".step-title");
+      title.getAnimations().forEach((animation) => animation.cancel());
+      if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches)
+        title.animate([{ opacity: 0, transform: "translateY(8px)" }, { opacity: 1, transform: "translateY(0)" }], { duration: 320, easing: "ease-out" });
+    }
     const hold = this.q<HTMLButtonElement>(".hold-step");
     const held = !!s?.held && !isDone;
     hold.disabled = !s?.lesson_id || isDone || down;

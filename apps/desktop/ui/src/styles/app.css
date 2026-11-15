@@ -252,7 +252,6 @@ html.grain body::after {
 
 .hub-pill.wait .dot {
   background: var(--grey);
-  animation: pulse 1.6s ease-in-out infinite;
 }
 
 .hub-pill.warn {
@@ -263,7 +262,6 @@ html.grain body::after {
 .hub-pill.warn .dot,
 .dot.warn {
   background: var(--amber);
-  animation: pulse 1.6s ease-in-out infinite;
 }
 
 .main {
@@ -3203,7 +3201,7 @@ video::cue {
 }
 
 .badge.watching.is-live .badge-dot {
-  animation: pulse 1.6s ease-in-out infinite;
+  animation: none;
 }
 
 .badge.verified {
