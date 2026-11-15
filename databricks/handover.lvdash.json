@@ -1,0 +1,2926 @@
+{
+  "datasets": [
+    {
+      "name": "aa664ce9",
+      "displayName": "ds_lessons",
+      "queryLines": [
+        "-- Lesson list for the Lesson filter. Also used as a small reference table on page 2.\n",
+        "SELECT\n",
+        "  l.lesson_id,\n",
+        "  l.title                                        AS lesson_title,\n",
+        "  round(l.duration_s, 1)                         AS expert_total_s,\n",
+        "  count(s.n)                                     AS steps,\n",
+        "  count_if(s.check_type = 'camera')              AS camera_steps,\n",
+        "  count_if(s.check_type = 'manual')              AS manual_steps\n",
+        "FROM workspace.handover.lessons l\n",
+        "LEFT JOIN workspace.handover.steps s ON s.lesson_id = l.lesson_id\n",
+        "GROUP BY l.lesson_id, l.title, l.duration_s\n",
+        "ORDER BY l.lesson_id"
+      ]
+    },
+    {
+      "name": "aca2befc",
+      "displayName": "ds_runs",
+      "queryLines": [
+        "-- One row per learner run. Counters: SUM(finished), COUNT(run_id), SUM(camera_advances),\n",
+        "-- SUM(manual_advances), SUM(mistakes). Runs-per-hour chart: started_local by hour, color outcome.\n",
+        "WITH step_count AS (\n",
+        "  SELECT lesson_id, count(*) AS total\n",
+        "  FROM workspace.handover.steps\n",
+        "  GROUP BY lesson_id\n",
+        "),\n",
+        "per_run AS (\n",
+        "  SELECT\n",
+        "    run_id,\n",
+        "    count_if(kind = 'advance' AND to_step > from_step AND reason = 'camera')              AS camera_advances,\n",
+        "    count_if(kind = 'advance' AND to_step > from_step AND reason IN ('button', 'voice'))  AS manual_advances,\n",
+        "    count_if(kind = 'advance' AND to_step < from_step)                                    AS back_moves,\n",
+        "    count_if(kind = 'mistake')                                                            AS mistakes,\n",
+        "    count_if(kind = 'check')                                                              AS checks,\n",
+        "    max(ts)                                                                               AS last_event_at\n",
+        "  FROM workspace.handover.events\n",
+        "  WHERE run_id IS NOT NULL\n",
+        "  GROUP BY run_id\n",
+        "),\n",
+        "finish AS (\n",
+        "  SELECT e.run_id, min(e.ts) AS finished_at\n",
+        "  FROM workspace.handover.events e\n",
+        "  JOIN workspace.handover.runs r  ON r.run_id = e.run_id\n",
+        "  JOIN step_count c               ON c.lesson_id = r.lesson_id\n",
+        "  WHERE e.kind = 'advance' AND e.to_step >= c.total\n",
+        "  GROUP BY e.run_id\n",
+        ")\n",
+        "SELECT\n",
+        "  r.run_id,\n",
+        "  r.lesson_id,\n",
+        "  r.learner,\n",
+        "  from_utc_timestamp(r.started_at, 'America/Chicago')                         AS started_local,\n",
+        "  CASE WHEN f.finished_at IS NOT NULL THEN 1 ELSE 0 END                       AS finished,\n",
+        "  CASE\n",
+        "    WHEN f.finished_at IS NOT NULL THEN 'Finished'\n",
+        "    WHEN r.ended_at IS NOT NULL\n",
+        "      OR coalesce(p.last_event_at, r.started_at) < current_timestamp() - INTERVAL 15 MINUTES\n",
+        "      THEN 'Abandoned'\n",
+        "    ELSE 'In progress'\n",
+        "  END                                                                         AS outcome,\n",
+        "  round((unix_millis(f.finished_at) - unix_millis(r.started_at)) / 1000.0, 1) AS run_s,\n",
+        "  coalesce(p.camera_advances, 0)                                              AS camera_advances,\n",
+        "  coalesce(p.manual_advances, 0)                                              AS manual_advances,\n",
+        "  coalesce(p.back_moves, 0)                                                   AS back_moves,\n",
+        "  coalesce(p.mistakes, 0)                                                     AS mistakes,\n",
+        "  coalesce(p.checks, 0)                                                       AS checks\n",
+        "FROM workspace.handover.runs r\n",
+        "LEFT JOIN per_run p ON p.run_id = r.run_id\n",
+        "LEFT JOIN finish f  ON f.run_id = r.run_id"
+      ]
+    },
+    {
+      "name": "5d3fab4a",
+      "displayName": "ds_time_per_step",
+      "queryLines": [
+        "-- Learner median vs expert seconds per step, long format: one row per (step, series).\n",
+        "-- Learner time on a step = all time spent at that position in a run (revisits included), counted only\n",
+        "-- for runs that left the step forward at least once, so an abandoned step does not inflate the median.\n",
+        "-- Time at step 1 starts at run_start. Expert time = end_s - start_s from the cut lesson.\n",
+        "-- Expert rows exist for every step, so the chart is never empty.\n",
+        "WITH timeline AS (\n",
+        "  SELECT\n",
+        "    run_id, lesson_id, kind, ts,\n",
+        "    CASE WHEN kind = 'run_start' THEN 0 WHEN kind = 'advance' THEN to_step END AS position,\n",
+        "    lead(ts) OVER (PARTITION BY run_id ORDER BY ts)                            AS next_ts\n",
+        "  FROM workspace.handover.events\n",
+        "  WHERE run_id IS NOT NULL AND kind IN ('run_start', 'advance', 'run_end')\n",
+        "),\n",
+        "segments AS (\n",
+        "  SELECT run_id, lesson_id, position AS step,\n",
+        "         (unix_millis(next_ts) - unix_millis(ts)) / 1000.0 AS secs\n",
+        "  FROM timeline\n",
+        "  WHERE kind <> 'run_end' AND next_ts IS NOT NULL\n",
+        "),\n",
+        "left_forward AS (\n",
+        "  SELECT DISTINCT run_id, from_step AS step\n",
+        "  FROM workspace.handover.events\n",
+        "  WHERE kind = 'advance' AND to_step > from_step AND run_id IS NOT NULL\n",
+        "),\n",
+        "per_run AS (\n",
+        "  SELECT s.run_id, s.lesson_id, s.step, sum(s.secs) AS learner_s\n",
+        "  FROM segments s\n",
+        "  JOIN left_forward l ON l.run_id = s.run_id AND l.step = s.step\n",
+        "  GROUP BY s.run_id, s.lesson_id, s.step\n",
+        ")\n",
+        "SELECT\n",
+        "  st.lesson_id,\n",
+        "  st.n,\n",
+        "  concat(lpad(cast(st.n AS STRING), 2, '0'), ' ', st.title) AS step_label,\n",
+        "  'Learners (median)'                                        AS series,\n",
+        "  round(percentile(p.learner_s, 0.5), 1)                     AS seconds,\n",
+        "  count(DISTINCT p.run_id)                                   AS runs\n",
+        "FROM per_run p\n",
+        "JOIN workspace.handover.steps st ON st.lesson_id = p.lesson_id AND st.n = p.step + 1\n",
+        "GROUP BY st.lesson_id, st.n, st.title\n",
+        "UNION ALL\n",
+        "SELECT\n",
+        "  lesson_id,\n",
+        "  n,\n",
+        "  concat(lpad(cast(n AS STRING), 2, '0'), ' ', title),\n",
+        "  'Expert',\n",
+        "  round(end_s - start_s, 1),\n",
+        "  CAST(NULL AS BIGINT)\n",
+        "FROM workspace.handover.steps\n",
+        "ORDER BY lesson_id, n, series"
+      ]
+    },
+    {
+      "name": "2a6373dc",
+      "displayName": "ds_step_summary",
+      "queryLines": [
+        "-- One row per step with every per-step measure side by side. Table widget on page 1, and the shape\n",
+        "-- of the Genie \"stuck\" answer. Same definitions as the per-measure datasets below.\n",
+        "--   slowdown          learner median / expert seconds (2.0 = twice as long as the expert)\n",
+        "--   manual_rate       camera steps only: forward advances by button or voice / all forward advances\n",
+        "--   false_passes      camera passes undone with Back within 60 s\n",
+        "--   abandoned_here    unfinished runs whose last position was this step\n",
+        "WITH step_count AS (\n",
+        "  SELECT lesson_id, count(*) AS total FROM workspace.handover.steps GROUP BY lesson_id\n",
+        "),\n",
+        "timeline AS (\n",
+        "  SELECT\n",
+        "    run_id, lesson_id, kind, ts,\n",
+        "    CASE WHEN kind = 'run_start' THEN 0 WHEN kind = 'advance' THEN to_step END AS position,\n",
+        "    lead(ts) OVER (PARTITION BY run_id ORDER BY ts)                            AS next_ts\n",
+        "  FROM workspace.handover.events\n",
+        "  WHERE run_id IS NOT NULL AND kind IN ('run_start', 'advance', 'run_end')\n",
+        "),\n",
+        "fwd AS (\n",
+        "  SELECT run_id, lesson_id, from_step AS step, reason, ts, event_id\n",
+        "  FROM workspace.handover.events\n",
+        "  WHERE kind = 'advance' AND to_step > from_step AND run_id IS NOT NULL\n",
+        "),\n",
+        "learner_time AS (\n",
+        "  SELECT t.lesson_id, t.position AS step, t.run_id,\n",
+        "         sum((unix_millis(t.next_ts) - unix_millis(t.ts)) / 1000.0) AS learner_s\n",
+        "  FROM timeline t\n",
+        "  WHERE t.kind <> 'run_end' AND t.next_ts IS NOT NULL\n",
+        "    AND EXISTS (SELECT 1 FROM fwd f WHERE f.run_id = t.run_id AND f.step = t.position)\n",
+        "  GROUP BY t.lesson_id, t.position, t.run_id\n",
+        "),\n",
+        "time_agg AS (\n",
+        "  SELECT lesson_id, step, percentile(learner_s, 0.5) AS learner_median_s, count(*) AS runs_measured\n",
+        "  FROM learner_time\n",
+        "  GROUP BY lesson_id, step\n",
+        "),\n",
+        "adv_agg AS (\n",
+        "  SELECT lesson_id, step,\n",
+        "         count(*)                                        AS forward_advances,\n",
+        "         count_if(reason = 'camera')                     AS by_camera,\n",
+        "         count_if(reason IN ('button', 'voice'))         AS by_hand\n",
+        "  FROM fwd\n",
+        "  GROUP BY lesson_id, step\n",
+        "),\n",
+        "back AS (\n",
+        "  SELECT run_id, to_step AS step, ts\n",
+        "  FROM workspace.handover.events\n",
+        "  WHERE kind = 'advance' AND to_step < from_step AND run_id IS NOT NULL\n",
+        "),\n",
+        "cam_flagged AS (\n",
+        "  SELECT f.event_id, f.lesson_id, f.step,\n",
+        "         max(CASE WHEN b.run_id IS NOT NULL THEN 1 ELSE 0 END) AS came_back\n",
+        "  FROM fwd f\n",
+        "  LEFT JOIN back b\n",
+        "    ON b.run_id = f.run_id AND b.step = f.step\n",
+        "   AND b.ts > f.ts AND b.ts <= f.ts + INTERVAL 60 SECONDS\n",
+        "  WHERE f.reason = 'camera'\n",
+        "  GROUP BY f.event_id, f.lesson_id, f.step\n",
+        "),\n",
+        "false_pass AS (\n",
+        "  SELECT lesson_id, step, count(*) AS camera_passes, sum(came_back) AS false_passes\n",
+        "  FROM cam_flagged\n",
+        "  GROUP BY lesson_id, step\n",
+        "),\n",
+        "mistake_agg AS (\n",
+        "  SELECT lesson_id, step,\n",
+        "         count(*)                                        AS mistakes,\n",
+        "         count_if(mistake_kind = 'behind')               AS behind,\n",
+        "         count_if(mistake_kind = 'ahead')                AS ahead\n",
+        "  FROM workspace.handover.events\n",
+        "  WHERE kind = 'mistake' AND run_id IS NOT NULL\n",
+        "  GROUP BY lesson_id, step\n",
+        "),\n",
+        "last_pos AS (\n",
+        "  SELECT run_id, lesson_id, max_by(position, ts) AS step, max(ts) AS last_move_at\n",
+        "  FROM timeline\n",
+        "  WHERE kind <> 'run_end'\n",
+        "  GROUP BY run_id, lesson_id\n",
+        "),\n",
+        "run_state AS (\n",
+        "  SELECT r.run_id, r.lesson_id, r.ended_at, lp.step,\n",
+        "         max(e.ts) AS last_event_at,\n",
+        "         max(CASE WHEN e.kind = 'advance' AND e.to_step >= c.total THEN 1 ELSE 0 END) AS finished\n",
+        "  FROM workspace.handover.runs r\n",
+        "  JOIN last_pos lp                     ON lp.run_id = r.run_id\n",
+        "  JOIN step_count c                    ON c.lesson_id = r.lesson_id\n",
+        "  LEFT JOIN workspace.handover.events e ON e.run_id = r.run_id\n",
+        "  GROUP BY r.run_id, r.lesson_id, r.ended_at, lp.step\n",
+        "),\n",
+        "abandon_agg AS (\n",
+        "  SELECT lesson_id, step, count(*) AS abandoned_here\n",
+        "  FROM run_state\n",
+        "  WHERE finished = 0\n",
+        "    AND (ended_at IS NOT NULL OR last_event_at < current_timestamp() - INTERVAL 15 MINUTES)\n",
+        "  GROUP BY lesson_id, step\n",
+        ")\n",
+        "SELECT\n",
+        "  s.lesson_id,\n",
+        "  s.n,\n",
+        "  concat(lpad(cast(s.n AS STRING), 2, '0'), ' ', s.title)        AS step_label,\n",
+        "  s.check_type,\n",
+        "  round(s.end_s - s.start_s, 1)                                  AS expert_s,\n",
+        "  round(t.learner_median_s, 1)                                   AS learner_median_s,\n",
+        "  round(t.learner_median_s / nullif(s.end_s - s.start_s, 0), 1)  AS slowdown,\n",
+        "  coalesce(t.runs_measured, 0)                                   AS runs_measured,\n",
+        "  coalesce(a.forward_advances, 0)                                AS forward_advances,\n",
+        "  coalesce(a.by_camera, 0)                                       AS by_camera,\n",
+        "  coalesce(a.by_hand, 0)                                         AS by_hand,\n",
+        "  CASE WHEN s.check_type = 'camera' AND a.forward_advances > 0\n",
+        "       THEN round(a.by_hand / a.forward_advances, 2) END         AS manual_rate,\n",
+        "  coalesce(m.mistakes, 0)                                        AS mistakes,\n",
+        "  coalesce(m.behind, 0)                                          AS behind,\n",
+        "  coalesce(m.ahead, 0)                                           AS ahead,\n",
+        "  coalesce(fp.false_passes, 0)                                   AS false_passes,\n",
+        "  coalesce(ab.abandoned_here, 0)                                 AS abandoned_here\n",
+        "FROM workspace.handover.steps s\n",
+        "LEFT JOIN time_agg t     ON t.lesson_id = s.lesson_id  AND t.step = s.n - 1\n",
+        "LEFT JOIN adv_agg a      ON a.lesson_id = s.lesson_id  AND a.step = s.n - 1\n",
+        "LEFT JOIN false_pass fp  ON fp.lesson_id = s.lesson_id AND fp.step = s.n - 1\n",
+        "LEFT JOIN mistake_agg m  ON m.lesson_id = s.lesson_id  AND m.step = s.n - 1\n",
+        "LEFT JOIN abandon_agg ab ON ab.lesson_id = s.lesson_id AND ab.step = s.n - 1\n",
+        "ORDER BY s.lesson_id, s.n"
+      ]
+    },
+    {
+      "name": "2587dbbe",
+      "displayName": "ds_advance_method",
+      "queryLines": [
+        "-- How learners left each step going forward, long format: one row per (step, method).\n",
+        "-- Stacked bar: Camera green, Button and Voice grey. Manual steps (step 1) only ever show Button/Voice.\n",
+        "SELECT\n",
+        "  s.lesson_id,\n",
+        "  s.n,\n",
+        "  concat(lpad(cast(s.n AS STRING), 2, '0'), ' ', s.title) AS step_label,\n",
+        "  s.check_type,\n",
+        "  CASE e.reason WHEN 'camera' THEN 'Camera' WHEN 'voice' THEN 'Voice' ELSE 'Button' END AS method,\n",
+        "  count(*)                                                AS advances\n",
+        "FROM workspace.handover.events e\n",
+        "JOIN workspace.handover.steps s ON s.lesson_id = e.lesson_id AND s.n = e.from_step + 1\n",
+        "WHERE e.kind = 'advance' AND e.to_step > e.from_step AND e.run_id IS NOT NULL\n",
+        "GROUP BY s.lesson_id, s.n, s.title, s.check_type, method\n",
+        "ORDER BY s.lesson_id, s.n, method"
+      ]
+    },
+    {
+      "name": "3cb3c68a",
+      "displayName": "ds_manual_rate",
+      "queryLines": [
+        "-- Pranav's query 2, refined: camera steps only; share of forward advances the learner forced with\n",
+        "-- Next (button or voice) instead of the camera check passing. A high rate means the check is too strict\n",
+        "-- for that step, or the step is hard to show to the camera.\n",
+        "-- Change from Pranav's version: counts any forward advance (to_step > from_step), so the \"ahead\" jump\n",
+        "-- (k -> k + 2 by camera) is counted for step k instead of being dropped.\n",
+        "SELECT\n",
+        "  e.lesson_id,\n",
+        "  s.n,\n",
+        "  concat(lpad(cast(s.n AS STRING), 2, '0'), ' ', s.title)                 AS step_label,\n",
+        "  count(*)                                                                AS advances,\n",
+        "  count_if(e.reason = 'camera')                                           AS by_camera,\n",
+        "  count_if(e.reason IN ('button', 'voice'))                               AS manual,\n",
+        "  round(avg(CASE WHEN e.reason IN ('button', 'voice') THEN 1.0 ELSE 0.0 END), 2) AS manual_rate\n",
+        "FROM workspace.handover.events e\n",
+        "JOIN workspace.handover.steps s ON s.lesson_id = e.lesson_id AND s.n = e.from_step + 1\n",
+        "WHERE e.kind = 'advance' AND e.to_step > e.from_step AND e.run_id IS NOT NULL\n",
+        "  AND s.check_type = 'camera'\n",
+        "GROUP BY e.lesson_id, s.n, s.title\n",
+        "ORDER BY e.lesson_id, s.n"
+      ]
+    },
+    {
+      "name": "add20e18",
+      "displayName": "ds_false_passes",
+      "queryLines": [
+        "-- Pranav's query 3, refined: a camera pass is \"false\" when the learner pressed Back to that same step\n",
+        "-- within 60 s (the check said done when it was not). Lower bound: a learner who just carries on is not\n",
+        "-- counted.\n",
+        "-- Change from Pranav's version: one row per camera pass before counting, so two Back presses after one\n",
+        "-- pass do not count twice, and camera_passes is not inflated by the join.\n",
+        "WITH cam AS (\n",
+        "  SELECT event_id, run_id, lesson_id, from_step AS step, ts\n",
+        "  FROM workspace.handover.events\n",
+        "  WHERE kind = 'advance' AND reason = 'camera' AND to_step > from_step AND run_id IS NOT NULL\n",
+        "),\n",
+        "back AS (\n",
+        "  SELECT run_id, to_step AS step, ts\n",
+        "  FROM workspace.handover.events\n",
+        "  WHERE kind = 'advance' AND to_step < from_step AND run_id IS NOT NULL\n",
+        "),\n",
+        "flagged AS (\n",
+        "  SELECT c.event_id, c.lesson_id, c.step,\n",
+        "         max(CASE WHEN b.run_id IS NOT NULL THEN 1 ELSE 0 END) AS came_back\n",
+        "  FROM cam c\n",
+        "  LEFT JOIN back b\n",
+        "    ON b.run_id = c.run_id AND b.step = c.step\n",
+        "   AND b.ts > c.ts AND b.ts <= c.ts + INTERVAL 60 SECONDS\n",
+        "  GROUP BY c.event_id, c.lesson_id, c.step\n",
+        ")\n",
+        "SELECT\n",
+        "  f.lesson_id,\n",
+        "  s.n,\n",
+        "  concat(lpad(cast(s.n AS STRING), 2, '0'), ' ', s.title) AS step_label,\n",
+        "  count(*)                                                AS camera_passes,\n",
+        "  sum(f.came_back)                                        AS false_passes,\n",
+        "  round(avg(f.came_back), 2)                              AS false_pass_rate\n",
+        "FROM flagged f\n",
+        "JOIN workspace.handover.steps s ON s.lesson_id = f.lesson_id AND s.n = f.step + 1\n",
+        "GROUP BY f.lesson_id, s.n, s.title\n",
+        "ORDER BY f.lesson_id, s.n"
+      ]
+    },
+    {
+      "name": "94e9ecfa",
+      "displayName": "ds_checks",
+      "queryLines": [
+        "-- One row per camera check. Verdict mix: COUNT(*) by step_label, color verdict.\n",
+        "-- Confidence: AVG(confidence) by step_label. Overall latency counter: MEDIAN(latency_ms).\n",
+        "-- timed_out = 1 for \"unsure\" at confidence 0: per CONTRACT.md section 8 a timeout or error is recorded\n",
+        "-- as unsure 0, so these are not real model answers.\n",
+        "SELECT\n",
+        "  e.lesson_id,\n",
+        "  s.n,\n",
+        "  concat(lpad(cast(s.n AS STRING), 2, '0'), ' ', s.title)            AS step_label,\n",
+        "  e.run_id,\n",
+        "  from_utc_timestamp(e.ts, 'America/Chicago')                        AS ts_local,\n",
+        "  e.done                                                             AS verdict,\n",
+        "  e.confidence,\n",
+        "  e.latency_ms,\n",
+        "  CASE WHEN e.done = 'unsure' AND e.confidence = 0 THEN 1 ELSE 0 END AS timed_out,\n",
+        "  e.reason                                                           AS what_differs\n",
+        "FROM workspace.handover.events e\n",
+        "JOIN workspace.handover.steps s ON s.lesson_id = e.lesson_id AND s.n = e.step + 1\n",
+        "WHERE e.kind = 'check'"
+      ]
+    },
+    {
+      "name": "7ab0f838",
+      "displayName": "ds_check_latency_by_step",
+      "queryLines": [
+        "-- p50 and p90 check latency per step, long format: one row per (step, stat). Timed-out checks are\n",
+        "-- included: they are what the learner waited for.\n",
+        "WITH c AS (\n",
+        "  SELECT e.lesson_id, s.n, s.title, e.latency_ms\n",
+        "  FROM workspace.handover.events e\n",
+        "  JOIN workspace.handover.steps s ON s.lesson_id = e.lesson_id AND s.n = e.step + 1\n",
+        "  WHERE e.kind = 'check' AND e.latency_ms IS NOT NULL\n",
+        "),\n",
+        "agg AS (\n",
+        "  SELECT lesson_id, n, title,\n",
+        "         count(*)                     AS checks,\n",
+        "         percentile(latency_ms, 0.5)  AS p50,\n",
+        "         percentile(latency_ms, 0.9)  AS p90\n",
+        "  FROM c\n",
+        "  GROUP BY lesson_id, n, title\n",
+        ")\n",
+        "SELECT lesson_id, n, concat(lpad(cast(n AS STRING), 2, '0'), ' ', title) AS step_label,\n",
+        "       'p50' AS stat, round(p50) AS latency_ms, checks\n",
+        "FROM agg\n",
+        "UNION ALL\n",
+        "SELECT lesson_id, n, concat(lpad(cast(n AS STRING), 2, '0'), ' ', title),\n",
+        "       'p90', round(p90), checks\n",
+        "FROM agg\n",
+        "ORDER BY lesson_id, n, stat"
+      ]
+    },
+    {
+      "name": "159d8346",
+      "displayName": "ds_check_latency_overall",
+      "queryLines": [
+        "-- p50 and p90 check latency per lesson, plus the timed-out share. Small table on page 2.\n",
+        "SELECT\n",
+        "  lesson_id,\n",
+        "  count(*)                                                                  AS checks,\n",
+        "  round(percentile(latency_ms, 0.5))                                        AS p50_ms,\n",
+        "  round(percentile(latency_ms, 0.9))                                        AS p90_ms,\n",
+        "  round(avg(CASE WHEN done = 'unsure' AND confidence = 0 THEN 1.0 ELSE 0.0 END), 3) AS timed_out_rate\n",
+        "FROM workspace.handover.events\n",
+        "WHERE kind = 'check' AND latency_ms IS NOT NULL\n",
+        "GROUP BY lesson_id\n",
+        "ORDER BY lesson_id"
+      ]
+    },
+    {
+      "name": "f8b5b91a",
+      "displayName": "ds_mistakes",
+      "queryLines": [
+        "-- Mistakes the camera caught, per step the learner was on, long format: one row per (step, kind).\n",
+        "--   Behind  the live frame still matches the previous step (a step was skipped or undone);\n",
+        "--           the step does not move.\n",
+        "--   Ahead   the live frame matches the next step; the hub confirms and jumps forward.\n",
+        "SELECT\n",
+        "  e.lesson_id,\n",
+        "  s.n,\n",
+        "  concat(lpad(cast(s.n AS STRING), 2, '0'), ' ', s.title) AS step_label,\n",
+        "  CASE e.mistake_kind WHEN 'behind' THEN 'Behind' WHEN 'ahead' THEN 'Ahead'\n",
+        "       ELSE coalesce(e.mistake_kind, 'Unknown') END       AS mistake_kind,\n",
+        "  count(*)                                                AS mistakes,\n",
+        "  round(avg(e.confidence), 2)                             AS avg_confidence\n",
+        "FROM workspace.handover.events e\n",
+        "JOIN workspace.handover.steps s ON s.lesson_id = e.lesson_id AND s.n = e.step + 1\n",
+        "WHERE e.kind = 'mistake' AND e.run_id IS NOT NULL\n",
+        "GROUP BY e.lesson_id, s.n, s.title, e.mistake_kind\n",
+        "ORDER BY e.lesson_id, s.n, mistake_kind"
+      ]
+    },
+    {
+      "name": "ac3f0f99",
+      "displayName": "ds_abandoned",
+      "queryLines": [
+        "-- Where unfinished runs stopped: the step each abandoned run was on at its last move.\n",
+        "-- In-progress runs (an event in the last 15 minutes and no ended_at) are left out.\n",
+        "WITH step_count AS (\n",
+        "  SELECT lesson_id, count(*) AS total FROM workspace.handover.steps GROUP BY lesson_id\n",
+        "),\n",
+        "moves AS (\n",
+        "  SELECT run_id, ts, CASE WHEN kind = 'run_start' THEN 0 ELSE to_step END AS position\n",
+        "  FROM workspace.handover.events\n",
+        "  WHERE run_id IS NOT NULL AND kind IN ('run_start', 'advance')\n",
+        "),\n",
+        "last_pos AS (\n",
+        "  SELECT run_id, max_by(position, ts) AS step, max(position) AS furthest\n",
+        "  FROM moves\n",
+        "  GROUP BY run_id\n",
+        "),\n",
+        "run_state AS (\n",
+        "  SELECT r.run_id, r.lesson_id, r.ended_at, lp.step, lp.furthest, c.total,\n",
+        "         max(e.ts) AS last_event_at,\n",
+        "         max(CASE WHEN e.kind = 'advance' AND e.to_step >= c.total THEN 1 ELSE 0 END) AS finished\n",
+        "  FROM workspace.handover.runs r\n",
+        "  JOIN last_pos lp                      ON lp.run_id = r.run_id\n",
+        "  JOIN step_count c                     ON c.lesson_id = r.lesson_id\n",
+        "  LEFT JOIN workspace.handover.events e ON e.run_id = r.run_id\n",
+        "  GROUP BY r.run_id, r.lesson_id, r.ended_at, lp.step, lp.furthest, c.total\n",
+        ")\n",
+        "SELECT\n",
+        "  rs.lesson_id,\n",
+        "  s.n,\n",
+        "  concat(lpad(cast(s.n AS STRING), 2, '0'), ' ', s.title) AS step_label,\n",
+        "  count(*)                                                AS abandoned_runs\n",
+        "FROM run_state rs\n",
+        "JOIN workspace.handover.steps s ON s.lesson_id = rs.lesson_id AND s.n = rs.step + 1\n",
+        "WHERE rs.finished = 0\n",
+        "  AND (rs.ended_at IS NOT NULL OR rs.last_event_at < current_timestamp() - INTERVAL 15 MINUTES)\n",
+        "GROUP BY rs.lesson_id, s.n, s.title\n",
+        "ORDER BY rs.lesson_id, s.n"
+      ]
+    },
+    {
+      "name": "cfe95f73",
+      "displayName": "ds_check_offline",
+      "queryLines": [
+        "-- \"Checks off, use Next\" incidents: one row per check_offline event (the breaker opened).\n",
+        "-- reason: no_key, rate_limited or errors. During these the learner advances by hand, which also\n",
+        "-- shows up as manual advances on camera steps.\n",
+        "SELECT\n",
+        "  e.lesson_id,\n",
+        "  from_utc_timestamp(e.ts, 'America/Chicago')                                        AS ts_local,\n",
+        "  e.reason,\n",
+        "  e.run_id,\n",
+        "  CASE WHEN s.n IS NOT NULL\n",
+        "       THEN concat(lpad(cast(s.n AS STRING), 2, '0'), ' ', s.title) END              AS step_label\n",
+        "FROM workspace.handover.events e\n",
+        "LEFT JOIN workspace.handover.steps s ON s.lesson_id = e.lesson_id AND s.n = e.step + 1\n",
+        "WHERE e.kind = 'check_offline'\n",
+        "ORDER BY ts_local DESC"
+      ]
+    }
+  ],
+  "pages": [
+    {
+      "name": "2917796e",
+      "displayName": "Overview",
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layout": [
+        {
+          "widget": {
+            "name": "98030cd3",
+            "textbox_spec": "# Where learners slow down\nEvery number comes from real HandOver runs: each step's camera check, each Next press, each mistake the camera caught. Expert time is the expert's own take."
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 6,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "a80e76d5",
+            "queries": [
+              {
+                "name": "filter_lesson_ds_lessons",
+                "query": {
+                  "datasetName": "aa664ce9",
+                  "fields": [
+                    {
+                      "name": "lesson_id",
+                      "expression": "`lesson_id`"
+                    },
+                    {
+                      "name": "lesson_id_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "filter_lesson_ds_runs",
+                "query": {
+                  "datasetName": "aca2befc",
+                  "fields": [
+                    {
+                      "name": "lesson_id",
+                      "expression": "`lesson_id`"
+                    },
+                    {
+                      "name": "lesson_id_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "filter_lesson_ds_checks",
+                "query": {
+                  "datasetName": "94e9ecfa",
+                  "fields": [
+                    {
+                      "name": "lesson_id",
+                      "expression": "`lesson_id`"
+                    },
+                    {
+                      "name": "lesson_id_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "filter_lesson_ds_time_per_step",
+                "query": {
+                  "datasetName": "5d3fab4a",
+                  "fields": [
+                    {
+                      "name": "lesson_id",
+                      "expression": "`lesson_id`"
+                    },
+                    {
+                      "name": "lesson_id_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "filter_lesson_ds_advance_method",
+                "query": {
+                  "datasetName": "2587dbbe",
+                  "fields": [
+                    {
+                      "name": "lesson_id",
+                      "expression": "`lesson_id`"
+                    },
+                    {
+                      "name": "lesson_id_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "filter_lesson_ds_mistakes",
+                "query": {
+                  "datasetName": "f8b5b91a",
+                  "fields": [
+                    {
+                      "name": "lesson_id",
+                      "expression": "`lesson_id`"
+                    },
+                    {
+                      "name": "lesson_id_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "filter_lesson_ds_step_summary",
+                "query": {
+                  "datasetName": "2a6373dc",
+                  "fields": [
+                    {
+                      "name": "lesson_id",
+                      "expression": "`lesson_id`"
+                    },
+                    {
+                      "name": "lesson_id_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "filter-single-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "lesson_id",
+                    "displayName": "lesson_id",
+                    "queryName": "filter_lesson_ds_lessons"
+                  },
+                  {
+                    "fieldName": "lesson_id",
+                    "displayName": "lesson_id",
+                    "queryName": "filter_lesson_ds_runs"
+                  },
+                  {
+                    "fieldName": "lesson_id",
+                    "displayName": "lesson_id",
+                    "queryName": "filter_lesson_ds_checks"
+                  },
+                  {
+                    "fieldName": "lesson_id",
+                    "displayName": "lesson_id",
+                    "queryName": "filter_lesson_ds_time_per_step"
+                  },
+                  {
+                    "fieldName": "lesson_id",
+                    "displayName": "lesson_id",
+                    "queryName": "filter_lesson_ds_advance_method"
+                  },
+                  {
+                    "fieldName": "lesson_id",
+                    "displayName": "lesson_id",
+                    "queryName": "filter_lesson_ds_mistakes"
+                  },
+                  {
+                    "fieldName": "lesson_id",
+                    "displayName": "lesson_id",
+                    "queryName": "filter_lesson_ds_step_summary"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Lesson"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 2,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "45eb3e74",
+            "textbox_spec": "Green = verified by the camera. Amber = mistake caught. Times in Madison time (CST)."
+          },
+          "position": {
+            "x": 2,
+            "y": 2,
+            "width": 4,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "f46ee4fe",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "aca2befc",
+                  "fields": [
+                    {
+                      "name": "count(run_id)",
+                      "expression": "COUNT(`run_id`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "count(run_id)",
+                  "displayName": "Runs"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Runs"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 3,
+            "width": 1,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "73357652",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "aca2befc",
+                  "fields": [
+                    {
+                      "name": "sum(finished)",
+                      "expression": "SUM(`finished`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(finished)",
+                  "displayName": "Finished"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Finished"
+              }
+            }
+          },
+          "position": {
+            "x": 1,
+            "y": 3,
+            "width": 1,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "400a9827",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "aca2befc",
+                  "fields": [
+                    {
+                      "name": "sum(camera_advances)",
+                      "expression": "SUM(`camera_advances`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(camera_advances)",
+                  "displayName": "Steps passed by camera"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Steps passed by camera"
+              }
+            }
+          },
+          "position": {
+            "x": 2,
+            "y": 3,
+            "width": 1,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "2453b3ee",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "aca2befc",
+                  "fields": [
+                    {
+                      "name": "sum(manual_advances)",
+                      "expression": "SUM(`manual_advances`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(manual_advances)",
+                  "displayName": "Steps passed by Next"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Steps passed by Next"
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 3,
+            "width": 1,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "0fd710f7",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "aca2befc",
+                  "fields": [
+                    {
+                      "name": "sum(mistakes)",
+                      "expression": "SUM(`mistakes`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(mistakes)",
+                  "displayName": "Mistakes caught"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Mistakes caught"
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 3,
+            "width": 1,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "e151ef88",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "94e9ecfa",
+                  "fields": [
+                    {
+                      "name": "median(latency_ms)",
+                      "expression": "MEDIAN(`latency_ms`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "median(latency_ms)",
+                  "displayName": "Median check (ms)"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Median check (ms)"
+              }
+            }
+          },
+          "position": {
+            "x": 5,
+            "y": 3,
+            "width": 1,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "f03e1a95",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "5d3fab4a",
+                  "fields": [
+                    {
+                      "name": "step_label",
+                      "expression": "`step_label`"
+                    },
+                    {
+                      "name": "sum(seconds)",
+                      "expression": "SUM(`seconds`)"
+                    },
+                    {
+                      "name": "series",
+                      "expression": "`series`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "step_label",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Step",
+                  "axis": {
+                    "title": "Step"
+                  }
+                },
+                "y": {
+                  "fieldName": "sum(seconds)",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Seconds",
+                  "axis": {
+                    "title": "Seconds"
+                  }
+                },
+                "label": {
+                  "show": false
+                },
+                "color": {
+                  "fieldName": "series",
+                  "scale": {
+                    "type": "categorical",
+                    "mappings": [
+                      {
+                        "value": "Learners (median)",
+                        "color": "#3A3A3C"
+                      },
+                      {
+                        "value": "Expert",
+                        "color": "#C7C7CC"
+                      }
+                    ]
+                  },
+                  "displayName": "series"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Time per step: learners vs the expert",
+                "showDescription": true,
+                "description": "Median seconds a learner spent on each step, next to the expert's own time in the take."
+              },
+              "mark": {
+                "layout": "group"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 5,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "3d0312c4",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "2587dbbe",
+                  "fields": [
+                    {
+                      "name": "step_label",
+                      "expression": "`step_label`"
+                    },
+                    {
+                      "name": "sum(advances)",
+                      "expression": "SUM(`advances`)"
+                    },
+                    {
+                      "name": "method",
+                      "expression": "`method`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "step_label",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Step",
+                  "axis": {
+                    "title": "Step"
+                  }
+                },
+                "y": {
+                  "fieldName": "sum(advances)",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Advances",
+                  "axis": {
+                    "title": "Advances"
+                  }
+                },
+                "label": {
+                  "show": false
+                },
+                "color": {
+                  "fieldName": "method",
+                  "scale": {
+                    "type": "categorical",
+                    "mappings": [
+                      {
+                        "value": "Camera",
+                        "color": "#30D158"
+                      },
+                      {
+                        "value": "Button",
+                        "color": "#8E8E93"
+                      },
+                      {
+                        "value": "Voice",
+                        "color": "#C7C7CC"
+                      }
+                    ]
+                  },
+                  "displayName": "method"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "How each step was passed",
+                "showDescription": true,
+                "description": "Camera = the check saw the step done. Button or Voice = the learner pressed Next."
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 11,
+            "width": 3,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "cc95b25c",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "f8b5b91a",
+                  "fields": [
+                    {
+                      "name": "step_label",
+                      "expression": "`step_label`"
+                    },
+                    {
+                      "name": "sum(mistakes)",
+                      "expression": "SUM(`mistakes`)"
+                    },
+                    {
+                      "name": "mistake_kind",
+                      "expression": "`mistake_kind`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "step_label",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Step",
+                  "axis": {
+                    "title": "Step"
+                  }
+                },
+                "y": {
+                  "fieldName": "sum(mistakes)",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Mistakes",
+                  "axis": {
+                    "title": "Mistakes"
+                  }
+                },
+                "label": {
+                  "show": false
+                },
+                "color": {
+                  "fieldName": "mistake_kind",
+                  "scale": {
+                    "type": "categorical",
+                    "mappings": [
+                      {
+                        "value": "Behind",
+                        "color": "#FF9F0A"
+                      },
+                      {
+                        "value": "Ahead",
+                        "color": "#FFCC66"
+                      }
+                    ]
+                  },
+                  "displayName": "mistake_kind"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Mistakes the camera caught",
+                "showDescription": true,
+                "description": "Behind = still looks like the previous step. Ahead = already on the next step."
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 11,
+            "width": 3,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "017a448f",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "2a6373dc",
+                  "fields": [
+                    {
+                      "name": "step_label",
+                      "expression": "`step_label`"
+                    },
+                    {
+                      "name": "check_type",
+                      "expression": "`check_type`"
+                    },
+                    {
+                      "name": "expert_s",
+                      "expression": "`expert_s`"
+                    },
+                    {
+                      "name": "learner_median_s",
+                      "expression": "`learner_median_s`"
+                    },
+                    {
+                      "name": "slowdown",
+                      "expression": "`slowdown`"
+                    },
+                    {
+                      "name": "manual_rate",
+                      "expression": "`manual_rate`"
+                    },
+                    {
+                      "name": "mistakes",
+                      "expression": "`mistakes`"
+                    },
+                    {
+                      "name": "false_passes",
+                      "expression": "`false_passes`"
+                    },
+                    {
+                      "name": "abandoned_here",
+                      "expression": "`abandoned_here`"
+                    },
+                    {
+                      "name": "runs_measured",
+                      "expression": "`runs_measured`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 1,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "step_label",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 100000,
+                    "title": "Step",
+                    "allowSearch": false,
+                    "alignContent": "left",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "check_type",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 100001,
+                    "title": "Check",
+                    "allowSearch": false,
+                    "alignContent": "left",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "expert_s",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "float",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 100002,
+                    "title": "Expert s",
+                    "allowSearch": false,
+                    "alignContent": "right",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "numberFormat": "0.0"
+                  },
+                  {
+                    "fieldName": "learner_median_s",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "float",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 100003,
+                    "title": "Learner median s",
+                    "allowSearch": false,
+                    "alignContent": "right",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "numberFormat": "0.0"
+                  },
+                  {
+                    "fieldName": "slowdown",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "float",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 100004,
+                    "title": "x expert",
+                    "allowSearch": false,
+                    "alignContent": "right",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "numberFormat": "0.0"
+                  },
+                  {
+                    "fieldName": "manual_rate",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "float",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 100005,
+                    "title": "Manual rate",
+                    "allowSearch": false,
+                    "alignContent": "right",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "numberFormat": "0%"
+                  },
+                  {
+                    "fieldName": "mistakes",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "integer",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 100006,
+                    "title": "Mistakes",
+                    "allowSearch": false,
+                    "alignContent": "right",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "numberFormat": "0"
+                  },
+                  {
+                    "fieldName": "false_passes",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "integer",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 100007,
+                    "title": "False passes",
+                    "allowSearch": false,
+                    "alignContent": "right",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "numberFormat": "0"
+                  },
+                  {
+                    "fieldName": "abandoned_here",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "integer",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 100008,
+                    "title": "Stopped here",
+                    "allowSearch": false,
+                    "alignContent": "right",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "numberFormat": "0"
+                  },
+                  {
+                    "fieldName": "runs_measured",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "integer",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 100009,
+                    "title": "Runs",
+                    "allowSearch": false,
+                    "alignContent": "right",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "numberFormat": "0"
+                  }
+                ]
+              },
+              "allowHTMLByDefault": false,
+              "condensed": true,
+              "frame": {
+                "showTitle": true,
+                "title": "Step by step"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 17,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "b10c23db",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "aca2befc",
+                  "fields": [
+                    {
+                      "name": "hourly(started_local)",
+                      "expression": "DATE_TRUNC(\"HOUR\", `started_local`)"
+                    },
+                    {
+                      "name": "count(run_id)",
+                      "expression": "COUNT(`run_id`)"
+                    },
+                    {
+                      "name": "outcome",
+                      "expression": "`outcome`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "hourly(started_local)",
+                  "scale": {
+                    "type": "temporal"
+                  },
+                  "displayName": "Hour (CST)",
+                  "axis": {
+                    "title": "Hour (CST)"
+                  }
+                },
+                "y": {
+                  "fieldName": "count(run_id)",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Runs",
+                  "axis": {
+                    "title": "Runs"
+                  }
+                },
+                "label": {
+                  "show": false
+                },
+                "color": {
+                  "fieldName": "outcome",
+                  "scale": {
+                    "type": "categorical",
+                    "mappings": [
+                      {
+                        "value": "Finished",
+                        "color": "#3A3A3C"
+                      },
+                      {
+                        "value": "Abandoned",
+                        "color": "#C7C7CC"
+                      },
+                      {
+                        "value": "In progress",
+                        "color": "#8E8E93"
+                      }
+                    ]
+                  },
+                  "displayName": "outcome"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Runs per hour"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 23,
+            "width": 6,
+            "height": 4
+          }
+        }
+      ]
+    },
+    {
+      "name": "0771f334",
+      "displayName": "Camera checks",
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layout": [
+        {
+          "widget": {
+            "name": "d3d4f5b8",
+            "textbox_spec": "# Camera check quality\nHow often the check said yes, no or unsure, how long it took, and where it let people through too early."
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 6,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "3dff3346",
+            "queries": [
+              {
+                "name": "filter_lesson_ds_checks",
+                "query": {
+                  "datasetName": "94e9ecfa",
+                  "fields": [
+                    {
+                      "name": "lesson_id",
+                      "expression": "`lesson_id`"
+                    },
+                    {
+                      "name": "lesson_id_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "filter_lesson_ds_check_latency_by_step",
+                "query": {
+                  "datasetName": "7ab0f838",
+                  "fields": [
+                    {
+                      "name": "lesson_id",
+                      "expression": "`lesson_id`"
+                    },
+                    {
+                      "name": "lesson_id_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "filter_lesson_ds_check_latency_overall",
+                "query": {
+                  "datasetName": "159d8346",
+                  "fields": [
+                    {
+                      "name": "lesson_id",
+                      "expression": "`lesson_id`"
+                    },
+                    {
+                      "name": "lesson_id_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "filter_lesson_ds_manual_rate",
+                "query": {
+                  "datasetName": "3cb3c68a",
+                  "fields": [
+                    {
+                      "name": "lesson_id",
+                      "expression": "`lesson_id`"
+                    },
+                    {
+                      "name": "lesson_id_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "filter_lesson_ds_false_passes",
+                "query": {
+                  "datasetName": "add20e18",
+                  "fields": [
+                    {
+                      "name": "lesson_id",
+                      "expression": "`lesson_id`"
+                    },
+                    {
+                      "name": "lesson_id_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "filter_lesson_ds_abandoned",
+                "query": {
+                  "datasetName": "ac3f0f99",
+                  "fields": [
+                    {
+                      "name": "lesson_id",
+                      "expression": "`lesson_id`"
+                    },
+                    {
+                      "name": "lesson_id_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "filter_lesson_ds_check_offline",
+                "query": {
+                  "datasetName": "cfe95f73",
+                  "fields": [
+                    {
+                      "name": "lesson_id",
+                      "expression": "`lesson_id`"
+                    },
+                    {
+                      "name": "lesson_id_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "filter_lesson_ds_lessons",
+                "query": {
+                  "datasetName": "aa664ce9",
+                  "fields": [
+                    {
+                      "name": "lesson_id",
+                      "expression": "`lesson_id`"
+                    },
+                    {
+                      "name": "lesson_id_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "filter-single-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "lesson_id",
+                    "displayName": "lesson_id",
+                    "queryName": "filter_lesson_ds_checks"
+                  },
+                  {
+                    "fieldName": "lesson_id",
+                    "displayName": "lesson_id",
+                    "queryName": "filter_lesson_ds_check_latency_by_step"
+                  },
+                  {
+                    "fieldName": "lesson_id",
+                    "displayName": "lesson_id",
+                    "queryName": "filter_lesson_ds_check_latency_overall"
+                  },
+                  {
+                    "fieldName": "lesson_id",
+                    "displayName": "lesson_id",
+                    "queryName": "filter_lesson_ds_manual_rate"
+                  },
+                  {
+                    "fieldName": "lesson_id",
+                    "displayName": "lesson_id",
+                    "queryName": "filter_lesson_ds_false_passes"
+                  },
+                  {
+                    "fieldName": "lesson_id",
+                    "displayName": "lesson_id",
+                    "queryName": "filter_lesson_ds_abandoned"
+                  },
+                  {
+                    "fieldName": "lesson_id",
+                    "displayName": "lesson_id",
+                    "queryName": "filter_lesson_ds_check_offline"
+                  },
+                  {
+                    "fieldName": "lesson_id",
+                    "displayName": "lesson_id",
+                    "queryName": "filter_lesson_ds_lessons"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Lesson"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 2,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "e7a87ada",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "94e9ecfa",
+                  "fields": [
+                    {
+                      "name": "step_label",
+                      "expression": "`step_label`"
+                    },
+                    {
+                      "name": "count(*)",
+                      "expression": "COUNT(`*`)"
+                    },
+                    {
+                      "name": "verdict",
+                      "expression": "`verdict`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "step_label",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Step",
+                  "axis": {
+                    "title": "Step"
+                  }
+                },
+                "y": {
+                  "fieldName": "count(*)",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Checks",
+                  "axis": {
+                    "title": "Checks"
+                  }
+                },
+                "label": {
+                  "show": false
+                },
+                "color": {
+                  "fieldName": "verdict",
+                  "scale": {
+                    "type": "categorical",
+                    "mappings": [
+                      {
+                        "value": "yes",
+                        "color": "#30D158"
+                      },
+                      {
+                        "value": "no",
+                        "color": "#3A3A3C"
+                      },
+                      {
+                        "value": "unsure",
+                        "color": "#C7C7CC"
+                      }
+                    ]
+                  },
+                  "displayName": "verdict"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Check verdicts per step"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 3,
+            "width": 3,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "c49b9e98",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "94e9ecfa",
+                  "fields": [
+                    {
+                      "name": "step_label",
+                      "expression": "`step_label`"
+                    },
+                    {
+                      "name": "avg(confidence)",
+                      "expression": "AVG(`confidence`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "step_label",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Step",
+                  "axis": {
+                    "title": "Step"
+                  }
+                },
+                "y": {
+                  "fieldName": "avg(confidence)",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Confidence (0 to 1)",
+                  "axis": {
+                    "title": "Confidence (0 to 1)"
+                  }
+                },
+                "label": {
+                  "show": false
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Average check confidence per step"
+              },
+              "mark": {
+                "colors": [
+                  "#8E8E93"
+                ]
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 3,
+            "width": 3,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "2f59c769",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "7ab0f838",
+                  "fields": [
+                    {
+                      "name": "step_label",
+                      "expression": "`step_label`"
+                    },
+                    {
+                      "name": "sum(latency_ms)",
+                      "expression": "SUM(`latency_ms`)"
+                    },
+                    {
+                      "name": "stat",
+                      "expression": "`stat`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "step_label",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Step",
+                  "axis": {
+                    "title": "Step"
+                  }
+                },
+                "y": {
+                  "fieldName": "sum(latency_ms)",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "ms",
+                  "axis": {
+                    "title": "ms"
+                  }
+                },
+                "label": {
+                  "show": false
+                },
+                "color": {
+                  "fieldName": "stat",
+                  "scale": {
+                    "type": "categorical",
+                    "mappings": [
+                      {
+                        "value": "p50",
+                        "color": "#3A3A3C"
+                      },
+                      {
+                        "value": "p90",
+                        "color": "#C7C7CC"
+                      }
+                    ]
+                  },
+                  "displayName": "stat"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Check latency per step (p50, p90)"
+              },
+              "mark": {
+                "layout": "group"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 9,
+            "width": 4,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "3c8153f3",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "159d8346",
+                  "fields": [
+                    {
+                      "name": "lesson_id",
+                      "expression": "`lesson_id`"
+                    },
+                    {
+                      "name": "checks",
+                      "expression": "`checks`"
+                    },
+                    {
+                      "name": "p50_ms",
+                      "expression": "`p50_ms`"
+                    },
+                    {
+                      "name": "p90_ms",
+                      "expression": "`p90_ms`"
+                    },
+                    {
+                      "name": "timed_out_rate",
+                      "expression": "`timed_out_rate`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 1,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "lesson_id",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 100000,
+                    "title": "Lesson",
+                    "allowSearch": false,
+                    "alignContent": "left",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "checks",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "integer",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 100001,
+                    "title": "Checks",
+                    "allowSearch": false,
+                    "alignContent": "right",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "numberFormat": "0"
+                  },
+                  {
+                    "fieldName": "p50_ms",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "float",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 100002,
+                    "title": "p50 ms",
+                    "allowSearch": false,
+                    "alignContent": "right",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "numberFormat": "0"
+                  },
+                  {
+                    "fieldName": "p90_ms",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "float",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 100003,
+                    "title": "p90 ms",
+                    "allowSearch": false,
+                    "alignContent": "right",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "numberFormat": "0"
+                  },
+                  {
+                    "fieldName": "timed_out_rate",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "float",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 100004,
+                    "title": "Timed out",
+                    "allowSearch": false,
+                    "alignContent": "right",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "numberFormat": "0.0%"
+                  }
+                ]
+              },
+              "allowHTMLByDefault": false,
+              "condensed": true,
+              "frame": {
+                "showTitle": true,
+                "title": "Latency per lesson"
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 9,
+            "width": 2,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "05f137b5",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "3cb3c68a",
+                  "fields": [
+                    {
+                      "name": "step_label",
+                      "expression": "`step_label`"
+                    },
+                    {
+                      "name": "avg(manual_rate)",
+                      "expression": "AVG(`manual_rate`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "step_label",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Step",
+                  "axis": {
+                    "title": "Step"
+                  }
+                },
+                "y": {
+                  "fieldName": "avg(manual_rate)",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Share by Next",
+                  "axis": {
+                    "title": "Share by Next"
+                  }
+                },
+                "label": {
+                  "show": false
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Manual-advance rate (camera steps)",
+                "showDescription": true,
+                "description": "Share of advances on camera steps forced with Next instead of a camera pass."
+              },
+              "mark": {
+                "colors": [
+                  "#8E8E93"
+                ]
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 15,
+            "width": 3,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "c7a84574",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "add20e18",
+                  "fields": [
+                    {
+                      "name": "step_label",
+                      "expression": "`step_label`"
+                    },
+                    {
+                      "name": "camera_passes",
+                      "expression": "`camera_passes`"
+                    },
+                    {
+                      "name": "false_passes",
+                      "expression": "`false_passes`"
+                    },
+                    {
+                      "name": "false_pass_rate",
+                      "expression": "`false_pass_rate`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 1,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "step_label",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 100000,
+                    "title": "Step",
+                    "allowSearch": false,
+                    "alignContent": "left",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "camera_passes",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "integer",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 100001,
+                    "title": "Camera passes",
+                    "allowSearch": false,
+                    "alignContent": "right",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "numberFormat": "0"
+                  },
+                  {
+                    "fieldName": "false_passes",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "integer",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 100002,
+                    "title": "Undone within 60 s",
+                    "allowSearch": false,
+                    "alignContent": "right",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "numberFormat": "0"
+                  },
+                  {
+                    "fieldName": "false_pass_rate",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "float",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 100003,
+                    "title": "Rate",
+                    "allowSearch": false,
+                    "alignContent": "right",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "numberFormat": "0%"
+                  }
+                ]
+              },
+              "allowHTMLByDefault": false,
+              "condensed": true,
+              "frame": {
+                "showTitle": true,
+                "title": "False passes",
+                "showDescription": true,
+                "description": "Camera passes the learner undid with Back within 60 s. A lower bound."
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 15,
+            "width": 3,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "110ca46f",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ac3f0f99",
+                  "fields": [
+                    {
+                      "name": "step_label",
+                      "expression": "`step_label`"
+                    },
+                    {
+                      "name": "sum(abandoned_runs)",
+                      "expression": "SUM(`abandoned_runs`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "step_label",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Step",
+                  "axis": {
+                    "title": "Step"
+                  }
+                },
+                "y": {
+                  "fieldName": "sum(abandoned_runs)",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Runs",
+                  "axis": {
+                    "title": "Runs"
+                  }
+                },
+                "label": {
+                  "show": false
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Where unfinished runs stopped"
+              },
+              "mark": {
+                "colors": [
+                  "#C7C7CC"
+                ]
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 21,
+            "width": 3,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "7261d8dd",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "cfe95f73",
+                  "fields": [
+                    {
+                      "name": "ts_local",
+                      "expression": "`ts_local`"
+                    },
+                    {
+                      "name": "reason",
+                      "expression": "`reason`"
+                    },
+                    {
+                      "name": "step_label",
+                      "expression": "`step_label`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 1,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "ts_local",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "datetime",
+                    "displayAs": "datetime",
+                    "visible": true,
+                    "order": 100000,
+                    "title": "Time (CST)",
+                    "allowSearch": false,
+                    "alignContent": "left",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "reason",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 100001,
+                    "title": "Reason",
+                    "allowSearch": false,
+                    "alignContent": "left",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "step_label",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 100002,
+                    "title": "Step",
+                    "allowSearch": false,
+                    "alignContent": "left",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  }
+                ]
+              },
+              "allowHTMLByDefault": false,
+              "condensed": true,
+              "frame": {
+                "showTitle": true,
+                "title": "Checks off incidents",
+                "showDescription": true,
+                "description": "The breaker opened; learners used Next until it closed."
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 21,
+            "width": 3,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "6450112f",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "aa664ce9",
+                  "fields": [
+                    {
+                      "name": "lesson_id",
+                      "expression": "`lesson_id`"
+                    },
+                    {
+                      "name": "lesson_title",
+                      "expression": "`lesson_title`"
+                    },
+                    {
+                      "name": "steps",
+                      "expression": "`steps`"
+                    },
+                    {
+                      "name": "camera_steps",
+                      "expression": "`camera_steps`"
+                    },
+                    {
+                      "name": "expert_total_s",
+                      "expression": "`expert_total_s`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 1,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "lesson_id",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 100000,
+                    "title": "Lesson",
+                    "allowSearch": false,
+                    "alignContent": "left",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "lesson_title",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 100001,
+                    "title": "Title",
+                    "allowSearch": false,
+                    "alignContent": "left",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "steps",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "integer",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 100002,
+                    "title": "Steps",
+                    "allowSearch": false,
+                    "alignContent": "right",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "numberFormat": "0"
+                  },
+                  {
+                    "fieldName": "camera_steps",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "integer",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 100003,
+                    "title": "Camera steps",
+                    "allowSearch": false,
+                    "alignContent": "right",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "numberFormat": "0"
+                  },
+                  {
+                    "fieldName": "expert_total_s",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "float",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 100004,
+                    "title": "Expert total s",
+                    "allowSearch": false,
+                    "alignContent": "right",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "numberFormat": "0.0"
+                  }
+                ]
+              },
+              "allowHTMLByDefault": false,
+              "condensed": true,
+              "frame": {
+                "showTitle": true,
+                "title": "Lessons"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 26,
+            "width": 6,
+            "height": 3
+          }
+        }
+      ]
+    }
+  ],
+  "uiSettings": {
+    "theme": {
+      "widgetHeaderAlignment": "ALIGNMENT_UNSPECIFIED"
+    }
+  }
+}
