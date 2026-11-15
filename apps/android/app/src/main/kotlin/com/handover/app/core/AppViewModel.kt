@@ -170,7 +170,9 @@ class AppViewModel(
      */
     fun endLesson() {
         stopCamera()
-        ui?.endLesson()
+        val session = _state.value.session
+        // The ids let the hub ignore a stale End (this phone on an old lesson while someone started another).
+        if (ui?.endLesson(session?.lessonId, session?.runId) != true) notConnected()
         _state.update { s ->
             val id = s.session?.lessonId ?: return@update s
             s.copy(ended = EndedRun(id, s.session.runId))

@@ -16,8 +16,9 @@ data class UploadState(
 }
 
 /**
- * A run ended on this phone. The hub has no message to unload a lesson, so the mark is local: a new
- * run (another run id, another lesson, or this phone picking a lesson again) clears it.
+ * A run ended on this phone. End also sends end_lesson, but the mark stays local until the hub's
+ * state confirms it: a new run (another run id, another lesson, or this phone picking a lesson
+ * again) clears it.
  */
 data class EndedRun(val lessonId: String, val runId: String?)
 

@@ -267,7 +267,9 @@ function leaveLearn() {
 
 /** Leaves Learn for Home. With `end`, tells the hub to stop the run and unload the lesson. */
 function exitLearn(end = false) {
-  if (end && app.state?.lesson_id) void call("endLesson").catch(showError);
+  const s = app.state;
+  if (end && s?.lesson_id)
+    void call("endLesson", { lessonId: s.lesson_id, runId: (s as { run_id?: string | null }).run_id ?? "" }).catch(showError);
   ui.resumeId = null;
   ui.pendingGoto = null;
   app.history = [];

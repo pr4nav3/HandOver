@@ -147,7 +147,10 @@ impl Engine {
             "back" => self.send(ClientMessage::Back { from: int("from") })?,
             "goto" => self.send(ClientMessage::Goto { step: int("step").ok_or("goto needs a step")? })?,
             "dismissMistake" => self.send(ClientMessage::DismissMistake)?,
-            "endLesson" => self.send(ClientMessage::EndLesson)?,
+            "endLesson" => {
+                let opt = |v: String| if v.is_empty() { None } else { Some(v) };
+                self.send(ClientMessage::EndLesson { lesson_id: opt(s("lessonId")), run_id: opt(s("runId")) })?
+            }
             "pairing" => self.pairing()?,
             "cameraStart" => self.camera_start(&s("name"), &s("platform"))?,
             "cameraStop" => {

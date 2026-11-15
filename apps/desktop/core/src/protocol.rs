@@ -267,8 +267,14 @@ pub enum ClientMessage {
         step: i64,
     },
     DismissMistake,
-    /// Stops the run and unloads the lesson; every client gets a state with no lesson.
-    EndLesson,
+    /// Stops the run and unloads the lesson; every client gets a state with no lesson. The ids let the hub
+    /// ignore a stale End (this screen on an older lesson or run).
+    EndLesson {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        lesson_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        run_id: Option<String>,
+    },
 }
 
 impl ClientMessage {
