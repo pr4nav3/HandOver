@@ -106,6 +106,9 @@
   .bike { background: var(--card); border: 3px solid var(--ink); padding: 30px 34px; }
   .bike h3 { font: 600 48px/1 var(--cond); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 14px; }
   .bike p { font-size: 37px; line-height: 1.32; color: var(--ink2); }
+  .lessons .tag { display: inline-block; vertical-align: middle; font: 600 30px/1 var(--cond); letter-spacing: 0.12em; text-transform: uppercase; padding: 8px 12px 7px; color: #fff; background: var(--cobalt); white-space: nowrap; }
+  .lessons .tag.rec { background: var(--ink2); }
+  .bike .tag { margin-bottom: 16px; }
 
   /* ---------- row C: architecture ---------- */
   .rowC { margin-top: 56px; margin-bottom: 52px; }
@@ -184,7 +187,7 @@
     <div class="sec"><span class="n">03</span><h2>Two demo lessons</h2></div>
     <div class="lessons">
       <div>
-        <div class="lesson-h"><h3>Fold a fortune teller</h3><span>9 steps from a 2:37 take. Blue: checked by camera.</span></div>
+        <div class="lesson-h"><span class="tag">Live demo</span><h3>Fold a fortune teller</h3><span>9 steps from a 2:37 take. Blue: checked by camera.</span></div>
         <div class="strip">
           <div class="tile"><div class="img"><img src="img/ft-frame-01.jpg" alt=""></div><div class="cap">01</div></div>
           <div class="tile"><div class="img"><img src="img/ft-frame-02.jpg" alt=""></div><div class="cap">02</div></div>
@@ -198,6 +201,7 @@
         </div>
       </div>
       <div class="bike">
+        <span class="tag rec">Showcase</span>
         <h3>Front wheel check</h3>
         <p>Front wheel off, rim checked, wheel back on, a spin, then the front brake.</p>
       </div>
