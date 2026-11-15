@@ -1396,8 +1396,11 @@ button.row:hover {
 }
 
 .teach-create-cards {
-  margin-bottom: 38px;
+  margin-bottom: 12px;
+  grid-template-columns: minmax(0, 1fr);
 }
+
+.teach-record-note { margin-bottom: 28px; font-size: 13px; }
 
 .teach-create-cards .option-card {
   min-height: 178px;

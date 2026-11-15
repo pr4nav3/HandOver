@@ -29,7 +29,7 @@ test("navigation calls the catalog Lessons and Home stays within the app viewpor
   assert.match(css, /body\[data-screen="home"\] #content\s*{\s*overflow:\s*hidden/);
   assert.match(css, /\.home-page\s*{[\s\S]*?height:\s*100%[\s\S]*?overflow:\s*hidden/);
   assert.doesNotMatch(home, /class="card how"|class="option-cards home-actions"/);
-  assert.match(teach, /Upload a Video[\s\S]*Choose video/);
+  assert.match(teach, /Upload a Video[\s\S]*Choose a File/);
 });
 
 test("Learn layout and tutorial controls expose keyboard and assistive semantics", async () => {

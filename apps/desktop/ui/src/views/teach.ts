@@ -42,7 +42,7 @@ export function renderTeach(el: HTMLElement) {
                 <span class="row-text"><span class="row-title">${c.title || c.id}</span>
                   <span class="row-meta">${c.steps} ${c.steps === 1 ? "step" : "steps"}${c.duration ? `, ${mmss(c.duration)}` : ""}${c.org ? `, ${c.org.name}` : ""}</span></span>
                 <span class="badge-soft ${c.status}">${STATUS_WORD[c.status]}</span>
-                <span class="teach-edit-action">Edit ${icons.chevron}</span>
+                <span class="teach-edit-action" aria-label="Edit lesson">${icons.chevron}</span>
               </button>`,
             )}</div>`;
   paint(
@@ -54,14 +54,10 @@ export function renderTeach(el: HTMLElement) {
           <span class="tile">${icons.folder}</span>
           <span class="option-title">Upload a Video</span>
           <span class="option-line">Choose one complete recording. HandOver turns it into editable steps.</span>
-          <span class="teach-card-cta">Choose video ${icons.chevron}</span>
+          <span class="teach-card-cta">Choose a File ${icons.chevron}</span>
         </button>
-        <div class="option-card static">
-          <span class="tile">${icons.record}</span>
-          <span class="option-title">Record a Take</span>
-          <span class="option-line">Record on the HandOver iPhone app or Ray-Ban Meta glasses, then it shows up here.</span>
-        </div>
       </div>
+      <p class="teach-record-note muted">You can also record a take in the HandOver phone app or with Meta glasses.</p>
       <section class="block">
         <div class="block-head teach-lessons-head"><div><h2>Your Lessons</h2><p>Open a lesson to edit its steps, timing, and checks.</p></div></div>
         ${list}
@@ -93,7 +89,7 @@ export async function startTeach(orgId?: string) {
       <p class="hint">One video of the whole task works best. Talk through each step as you do it.</p>
       <p class="form-error" role="alert">${err}</p>
       <div class="form-actions"><button type="button" class="quiet" data-sheet="close">Cancel</button>
-        <button type="submit" class="primary">Make Course</button></div>
+        <button type="submit" class="primary">Make a Lesson</button></div>
     </form>`,
     onSubmit: (form) => {
       const t = (form.querySelector("[name=title]") as HTMLInputElement).value.trim();
