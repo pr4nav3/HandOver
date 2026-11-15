@@ -13,6 +13,15 @@
     <!-- Ray-Ban Meta glasses (Meta Wearables Device Access Toolkit). The toolkit adds BLUETOOTH_CONNECT. -->
     <uses-permission android:name="android.permission.BLUETOOTH" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <!-- Haptics on taps, step results and mistakes (Settings can turn them off). -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+
+    <!-- Android 11+ package visibility: lets SpeechRecognizer find the phone's recognizer for voice Next. -->
+    <queries>
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+    </queries>
 
     <application
         android:allowBackup="false"

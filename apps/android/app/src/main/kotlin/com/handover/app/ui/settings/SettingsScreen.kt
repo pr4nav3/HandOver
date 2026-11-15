@@ -32,6 +32,7 @@ import androidx.compose.material.icons.outlined.LightMode
 import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.PhotoCamera
+import androidx.compose.material.icons.outlined.Videocam
 import androidx.compose.material.icons.outlined.QrCodeScanner
 import androidx.compose.material.icons.outlined.RecordVoiceOver
 import androidx.compose.material.icons.outlined.Shield
@@ -89,7 +90,7 @@ enum class SettingsPage { Main, Hub, Theme, About, Licenses, Connect, Account, V
  * ThemeStore, so the whole app redraws in the new theme.
  */
 @Composable
-fun SettingsScreen(state: AppState, vm: AppViewModel, modifier: Modifier = Modifier) {
+fun SettingsScreen(state: AppState, vm: AppViewModel, modifier: Modifier = Modifier, onCameraMode: (() -> Unit)? = null) {
     val context = LocalContext.current
     val store = remember { SettingsStore.get(context) }
     val settings by store.settings.collectAsState()
@@ -133,6 +134,7 @@ fun SettingsScreen(state: AppState, vm: AppViewModel, modifier: Modifier = Modif
                     },
                     onAccount = { page = SettingsPage.Account },
                     onAbout = { page = SettingsPage.About },
+                    onCameraMode = onCameraMode?.takeIf { state.hub != null },
                 )
                 SettingsPage.Hub -> HubDetails(
                     state, recent.nameOf(state.hub?.display),
@@ -194,6 +196,8 @@ fun SettingsMain(
     onAccount: () -> Unit,
     onAbout: () -> Unit,
     now: Long = System.currentTimeMillis(),
+    /** Opens Camera Mode (this phone, or the glasses through it, as the hub's camera). Null hides the row. */
+    onCameraMode: (() -> Unit)? = null,
 ) {
     val s = ui.settings
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).statusBarsPadding().padding(bottom = HOSpace.xxl)) {
@@ -247,6 +251,7 @@ fun SettingsMain(
                             onChange { if (i == 2) it.copy(useGlasses = true) else it.copy(useGlasses = false, cameraFacing = CameraFacing.entries[i]) }
                         }
                     }
+                    if (onCameraMode != null) row { SettingsRow("Camera Mode", Icons.Outlined.Videocam, subtitle = "Use this phone as the hub's camera", chevron = true, onClick = onCameraMode) }
                 }
             }
             if (ui.accounts) {
@@ -305,6 +310,7 @@ fun HubDetails(state: AppState, name: String?, onReconnect: () -> Unit, onForget
             s.checkOffline -> "Off: " + when (s.checkOfflineReason) {
                 com.handover.app.core.OfflineReason.NoKey -> "no check key"
                 com.handover.app.core.OfflineReason.RateLimited -> "too many requests"
+                com.handover.app.core.OfflineReason.Budget -> "spending limit reached"
                 else -> "checks are failing"
             }
             s.checkMode == "mock" -> "Simulated checks"

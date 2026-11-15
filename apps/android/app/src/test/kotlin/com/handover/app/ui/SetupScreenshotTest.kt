@@ -24,25 +24,25 @@ import com.handover.app.core.HubUrl
 import com.handover.app.ui.account.AccountModel
 import com.handover.app.ui.account.AccountState
 import com.handover.app.ui.account.AccountSupport
-import com.handover.app.ui.account.Capabilities
-import com.handover.app.ui.account.CourseItem
-import com.handover.app.ui.account.CourseProgress
-import com.handover.app.ui.account.HubUser
+import com.handover.app.core.Capabilities
+import com.handover.app.core.CourseItem
+import com.handover.app.core.CourseProgress
+import com.handover.app.core.HubUser
 import com.handover.app.ui.account.InvitePage
 import com.handover.app.ui.account.InvitePreview
 import com.handover.app.ui.account.JoinOrgPage
-import com.handover.app.ui.account.Org
+import com.handover.app.core.Org
 import com.handover.app.ui.account.OrgDetailPage
-import com.handover.app.ui.account.OrgInvite
-import com.handover.app.ui.account.OrgLesson
-import com.handover.app.ui.account.OrgMember
-import com.handover.app.ui.account.OrgPage
+import com.handover.app.core.OrgInvite
+import com.handover.app.core.OrgLesson
+import com.handover.app.core.OrgMember
+import com.handover.app.core.OrgPage
 import com.handover.app.ui.account.OrgWelcomeCard
 import com.handover.app.ui.account.OrgsListPage
 import com.handover.app.ui.account.OwnerSetupPage
 import com.handover.app.ui.account.ProfilePage
 import com.handover.app.ui.account.SignInPage
-import com.handover.app.ui.account.TokenStore
+import com.handover.app.core.MemoryTokenStore
 import com.handover.app.ui.camera.CameraModeContent
 import com.handover.app.ui.camera.CameraPhase
 import com.handover.app.ui.camera.CameraUi
@@ -66,7 +66,6 @@ import com.handover.app.ui.pairing.RecentHub
 import com.handover.app.ui.pairing.ScannerScreen
 import com.handover.app.ui.pairing.TypedAddressScreen
 import com.handover.app.ui.settings.AppSettings
-import com.handover.app.ui.settings.MemoryKeyValue
 import com.handover.app.ui.settings.SettingsMain
 import com.handover.app.ui.settings.SettingsUi
 import com.handover.app.ui.settings.ThemePicker
@@ -278,37 +277,39 @@ class SetupScreenshotTest {
 
     // ------------------------------------------------------------ organizations
 
-    private val shop = Org("o1", "Bike Shop Crew", "Fixing flats and tuning brakes together.", "admin", members = 4, lessons = 2)
+    private val shop = Org("o1", "Bike Shop Crew", slug = "bike-shop-crew", role = "org_admin", members = 4, lessons = 2)
 
     @Test fun orgsEmpty() = shot("orgs-empty") { OrgsListPage(emptyList(), canCreate = true, {}, {}, {}, {}) }
     @Test fun orgsList() = shot("orgs-list") {
-        OrgsListPage(listOf(shop, Org("o2", "Saturday Origami", role = "member", members = 12, lessons = 5)), canCreate = true, {}, {}, {}, {})
+        OrgsListPage(listOf(shop, Org("o2", "Saturday Origami", role = "learner", members = 12, lessons = 5)), canCreate = true, {}, {}, {}, {})
     }
 
     @Test fun orgJoin() = shot("org-join") {
-        val model = AccountModel(TokenStore(MemoryKeyValue()), OkHttpClient(), CoroutineScope(Dispatchers.Unconfined))
+        val model = AccountModel(MemoryTokenStore(), OkHttpClient(), CoroutineScope(Dispatchers.Unconfined))
         JoinOrgPage(model, null, {}, {})
     }
 
     @Test fun orgWelcome() = shot("org-welcome") {
         Column(Modifier.statusBarsPadding()) {
-            OrgWelcomeCard(InvitePreview(shop.copy(role = null), "member"), busy = false, error = null, {}, {}, {},
+            OrgWelcomeCard(InvitePreview(shop.copy(role = "learner"), "learner", joined = true), busy = false, error = null, {}, {}, {},
                 lessons = listOf(OrgLesson("synthetic-fortune-teller-v1", "Fold a fortune teller", 8)))
         }
     }
 
     private val page = OrgPage(
         shop,
-        members = listOf(OrgMember("u1", "Sam Rivera", "sam", "admin"), OrgMember("u2", "Ana Cruz", "ana", "teacher"), OrgMember("u3", "Lee Park", null, "member")),
+        members = listOf(OrgMember("u1", "Sam Rivera", "org_admin"), OrgMember("u2", "Ana Cruz", "teacher"), OrgMember("u3", "Lee Park", "learner")),
         lessons = listOf(OrgLesson("synthetic-fortune-teller-v1", "Fold a fortune teller", 8)),
-        invites = listOf(OrgInvite("K7QM2XPA", "member", expires = "2026-11-21T17:00:00", uses = 3)),
+        // As the hub lists them: no code (it keeps a hash). The fresh one below has its code, as in the create reply.
+        invites = listOf(OrgInvite("a1b2c3d4e5f6", "code", "learner", expires = "2026-11-21T17:00:00Z", maxUses = null, uses = 3)),
     )
+    private val freshCode = OrgInvite("f6e5d4c3b2a1", "code", "teacher", expires = "2026-11-21T17:00:00Z", maxUses = 10, uses = 0, code = "k7Qm2x_PaZ9wE4r-")
 
     @Test fun orgPage() = shot("org-page") { OrgDetailPage(page, sam, {}, { _, _ -> }, {}, {}, {}) }
 
     @Test @Config(qualifiers = "w412dp-h1500dp-xhdpi")
     fun orgInvite() = shot("org-invite") {
-        InvitePage(shop, page.invites, HubUrl("192.168.1.20", 8000), "Workshop hub", { _, _, _ -> }, {}, busy = false, error = null, onBack = {})
+        InvitePage(shop, page.invites.orEmpty(), HubUrl("192.168.1.20", 8000), "Workshop hub", { _, _, _ -> }, {}, busy = false, error = null, onBack = {}, fresh = freshCode)
     }
 
     // ------------------------------------------------------------ onboarding

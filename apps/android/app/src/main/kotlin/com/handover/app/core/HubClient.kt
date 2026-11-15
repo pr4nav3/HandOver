@@ -31,6 +31,7 @@ import okio.source
 import java.io.File
 import java.io.IOException
 import java.io.InputStream
+import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
@@ -51,11 +52,13 @@ class UploadSource(
 
 /**
  * The hub's REST API (CONTRACT.md section 4) over OkHttp. Every call is main-safe: it runs on
- * Dispatchers.IO and cancels its HTTP call when the coroutine is cancelled.
+ * Dispatchers.IO and cancels its HTTP call when the coroutine is cancelled. Every request carries the
+ * signed-in session's bearer token when there is one ([AccountSession]).
  */
 class HubClient(
     val hub: HubUrl,
-    private val http: OkHttpClient,
+    private val http: OkHttpClient = sharedHttp,
+    private val token: () -> String? = { AccountSession.token(hub) },
 ) {
     suspend fun lessons(): List<LessonSummary> = get("api/lessons", ListSerializer(LessonSummary.serializer()))
 
@@ -80,22 +83,35 @@ class HubClient(
     }
 
     /**
-     * Uploads a video as a new lesson. [onProgress] gets (bytes sent, bytes total) on OkHttp's thread
-     * as the body is written. Returns the job to poll and the lesson id the hub chose.
+     * Uploads a video as a new lesson. Signed in, it goes to `POST /api/courses` (library.md), so the
+     * course is owned by this person, optionally inside [orgId]; signed out, to `POST /api/lesson`
+     * (CONTRACT.md section 4). A hub without the library falls back to `/api/lesson` too. [onProgress]
+     * gets (bytes sent, bytes total) on OkHttp's thread as the body is written. Returns the job to poll
+     * and the lesson id the hub chose.
      */
     suspend fun upload(
         video: UploadSource,
         title: String,
         id: String? = null,
+        orgId: String? = null,
         onProgress: (sent: Long, total: Long) -> Unit = { _, _ -> },
     ): UploadResponse {
-        val form = MultipartBody.Builder().setType(MultipartBody.FORM)
+        fun form(course: Boolean) = MultipartBody.Builder().setType(MultipartBody.FORM)
             .addFormDataPart("title", title)
             .apply { if (!id.isNullOrBlank()) addFormDataPart("id", id) }
+            .apply { if (course && !orgId.isNullOrBlank()) addFormDataPart("org_id", orgId) }
             .addFormDataPart("file", video.fileName, StreamBody(video))
             .build()
-        val request = Request.Builder().url(hub.http("api/lesson")).post(ProgressBody(form, onProgress)).build()
-        return call(request, UploadResponse.serializer())
+        fun request(path: String, course: Boolean) = Request.Builder().url(hub.http(path)).post(ProgressBody(form(course), onProgress)).build()
+        if (token() != null) {
+            try {
+                return call(request("api/courses", course = true), UploadResponse.serializer())
+            } catch (e: HubException) {
+                // FastAPI's own 404 or 405: this hub has no library, so the lesson goes in the classic way.
+                if (!((e.status == 404 && e.detail == "Not Found") || e.status == 405)) throw e
+            }
+        }
+        return call(request("api/lesson", course = false), UploadResponse.serializer())
     }
 
     /** Recuts a lesson. With [lesson] null the hub recuts from its stored lesson.json. */
@@ -123,7 +139,8 @@ class HubClient(
         call(Request.Builder().url(hub.http(path)).get().build(), serializer)
 
     private suspend fun <T> call(request: Request, serializer: KSerializer<T>): T = withContext(Dispatchers.IO) {
-        http.newCall(request).await().use { response ->
+        val signed = token()?.takeIf { it.isNotBlank() }?.let { request.newBuilder().header("Authorization", "Bearer $it").build() } ?: request
+        http.newCall(signed).await().use { response ->
             val text = response.body?.string().orEmpty()
             if (!response.isSuccessful) throw HubException(response.code, detailOf(text, response.message))
             try {
@@ -138,6 +155,17 @@ class HubClient(
 
     companion object {
         private val JSON: MediaType = "application/json".toMediaType()
+
+        /** The app's one OkHttp client for every hub call and socket, so connections and threads are shared. */
+        val sharedHttp: OkHttpClient by lazy {
+            OkHttpClient.Builder()
+                .connectTimeout(5, TimeUnit.SECONDS)
+                .readTimeout(30, TimeUnit.SECONDS)
+                .writeTimeout(30, TimeUnit.SECONDS)
+                // The hub pings every 10 s; this side pings too, so a hub that vanished is noticed.
+                .pingInterval(15, TimeUnit.SECONDS)
+                .build()
+        }
 
         /** FastAPI's `{"detail": "..."}`. A 422 carries a list there; its first `msg` is used. */
         internal fun detailOf(text: String, fallback: String): String {

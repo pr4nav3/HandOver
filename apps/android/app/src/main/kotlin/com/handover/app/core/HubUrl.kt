@@ -37,6 +37,9 @@ data class HubUrl(val host: String, val port: Int, val secure: Boolean = false) 
     fun http(path: String): HttpUrl = base.newBuilder().addPathSegments(path.trimStart('/')).build()
 
     val uiSocket: String get() = socket("ws/ui")
+
+    /** The viewer socket, with `?frames=0` when [frames] is false (a phone that is itself the camera). */
+    fun uiSocket(frames: Boolean): String = if (frames) uiSocket else "$uiSocket?frames=0"
     val cameraSocket: String get() = socket("ws/camera")
 
     private fun socket(path: String): String =
@@ -53,6 +56,8 @@ data class HubUrl(val host: String, val port: Int, val secure: Boolean = false) 
             if (text.isEmpty() || text.any { it.isWhitespace() }) return null
             val schemeEnd = text.indexOf("://")
             val scheme = if (schemeEnd > 0) text.substring(0, schemeEnd).lowercase() else null
+            if (scheme == null && hasOtherScheme(text)) return null
+            if ('@' in text.substringAfter("://").substringBefore('/').substringBefore('?')) return null
             return when (scheme) {
                 null -> fromHttp("http://$text", portGiven = hasPort(text))
                 "http", "https" -> fromHttp(text, portGiven = hasPort(text.substring(schemeEnd + 3)))
@@ -67,6 +72,8 @@ data class HubUrl(val host: String, val port: Int, val secure: Boolean = false) 
 
         private fun fromDeepLink(rest: String): HubUrl? {
             val url = "http://$rest".toHttpUrlOrNull() ?: return null
+            // An org invite (handover://join?code=...&host=...) opens Join, never a plain connect.
+            if (url.host == "join") return null
             val host = url.queryParameter("host")
             if (host != null) {
                 // handover://connect?host=...&port=...&secure=1
@@ -91,6 +98,19 @@ data class HubUrl(val host: String, val port: Int, val secure: Boolean = false) 
                 port = 443
             }
             return HubUrl(url.host, port, secure)
+        }
+
+        /**
+         * True for `mailto:`, `tel:`, `javascript:`, `sms:` and any other `scheme:` without `//`: text whose
+         * part before the first colon is followed by something other than a port number. `mac.local:8000` and
+         * `[fe80::1]:8000` are addresses, not schemes.
+         */
+        private fun hasOtherScheme(text: String): Boolean {
+            if (text.startsWith("[")) return false
+            val colon = text.indexOf(':')
+            if (colon <= 0) return false
+            val port = text.substring(colon + 1).takeWhile { it != '/' && it != '?' && it != '#' }
+            return port.isEmpty() || !port.all(Char::isDigit)
         }
 
         /** Whether the authority part of [rest] (no scheme) names a port. */

@@ -202,7 +202,6 @@ fun ConnectPage(stepLabel: String?, onScan: () -> Unit, onTyped: () -> Unit) {
         Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(HOSpace.s), horizontalAlignment = Alignment.CenterHorizontally) {
             HOButton("Connect to a Hub", onScan, Modifier.fillMaxWidth(), kind = ButtonKind.Primary, size = ButtonSize.Large, icon = Icons.Rounded.QrCodeScanner)
             SecondaryButton("Enter Address", onTyped, Modifier.fillMaxWidth(), size = ButtonSize.Large)
-            Text("A hub is the HandOver server running on a computer near you.", style = HandOver.type.caption, color = c.ink3, textAlign = TextAlign.Center, modifier = Modifier.padding(top = HOSpace.xs))
         }
     }
 }

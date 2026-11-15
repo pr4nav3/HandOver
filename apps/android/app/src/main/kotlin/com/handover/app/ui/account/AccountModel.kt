@@ -1,8 +1,17 @@
 package com.handover.app.ui.account
 
+import com.handover.app.core.AccountApi
+import com.handover.app.core.AuthReply
+import com.handover.app.core.Capabilities
+import com.handover.app.core.CourseItem
 import com.handover.app.core.HubException
 import com.handover.app.core.HubUrl
-import com.handover.app.ui.settings.KeyValue
+import com.handover.app.core.HubUser
+import com.handover.app.core.Org
+import com.handover.app.core.OrgInvite
+import com.handover.app.core.OrgPage
+import com.handover.app.core.OrgRole
+import com.handover.app.core.TokenStore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -38,6 +47,8 @@ data class AccountState(
     val courses: List<CourseItem> = emptyList(),
     /** Null when the hub has no organizations; empty when it has them and I am in none. */
     val orgs: List<Org>? = null,
+    /** Invites sent to me by name that I have not answered (each carries its org). */
+    val invites: List<OrgInvite> = emptyList(),
     val busy: Boolean = false,
     /** One plain sentence for the field or card that failed, or null. */
     val error: String? = null,
@@ -48,15 +59,13 @@ data class AccountState(
     val completed: List<CourseItem> get() = courses.filter { (it.progress?.completed ?: 0) > 0 }
 }
 
-/** Remembers the sign-in token for each hub, so switching hubs keeps each one's session. */
-class TokenStore(private val kv: KeyValue) {
-    fun token(hub: String): String? = kv.string("token:$hub")
-    fun save(hub: String, token: String?) = kv.putString("token:$hub", token)
-}
+/** What joining with a code gave: the org, the role, and whether this person was already in it. */
+data class InvitePreview(val org: Org = Org(), val role: String = "learner", val alreadyMember: Boolean = false, val joined: Boolean = false)
 
 /**
  * The accounts and organizations session for one hub. Screens call these methods; failures land in
- * [AccountState.error] as one sentence. A token the hub refuses (401 on /api/me) is dropped.
+ * [AccountState.error] as one sentence. A token the hub refuses (401 on /api/me) is dropped. Tokens
+ * are kept per hub in [tokens] (the app passes core's Keystore-backed AccountSession store).
  */
 class AccountModel(
     private val tokens: TokenStore,
@@ -102,7 +111,7 @@ class AccountModel(
             _state.update {
                 it.copy(
                     support = AccountSupport.Available, authRequired = me.auth == "required", setupNeeded = me.setupNeeded,
-                    user = me.user, capabilities = me.capabilities ?: Capabilities(),
+                    user = me.user, capabilities = me.capabilities ?: Capabilities.derive(me.user),
                 )
             }
             loadSignedIn(a)
@@ -110,8 +119,9 @@ class AccountModel(
     }
 
     private suspend fun loadSignedIn(a: AccountApi) {
-        val orgs = quiet { a.orgs() }
-        _state.update { it.copy(orgs = orgs) }
+        // GET /api/orgs needs a signed-in user; signed out, organizations stay hidden.
+        val mine = if (_state.value.user != null) quiet { a.orgs() } else null
+        _state.update { it.copy(orgs = mine?.orgs, invites = mine?.invites.orEmpty()) }
         if (_state.value.user != null) {
             val courses = quiet { a.courses() }.orEmpty()
             _state.update { it.copy(courses = courses) }
@@ -140,7 +150,7 @@ class AccountModel(
         scope.launch {
             quiet { a.logout() }
             tokens.save(h.display, null)
-            _state.update { it.copy(user = null, courses = emptyList(), capabilities = Capabilities()) }
+            _state.update { it.copy(user = null, courses = emptyList(), orgs = null, invites = emptyList(), capabilities = Capabilities()) }
             refresh()
         }
     }
@@ -149,10 +159,10 @@ class AccountModel(
 
     // ------------------------------------------------------------ organizations
 
-    fun createOrg(name: String, about: String?, onDone: (Org) -> Unit) {
+    fun createOrg(name: String, onDone: (Org) -> Unit) {
         val a = api ?: return
         run({ e -> if (e is HubException && e.status == 409) "An organization with that name already exists." else generic(e) }) {
-            val org = a.createOrg(name.trim(), about?.trim())
+            val org = a.createOrg(name.trim())
             refresh()
             onDone(org)
         }
@@ -160,20 +170,35 @@ class AccountModel(
 
     suspend fun org(id: String): Result<OrgPage> = call { it.org(id) }
 
-    suspend fun previewInvite(code: String): Result<InvitePreview> = call { it.previewInvite(code) }
+    /**
+     * Joins with an invite code. The hub has no preview route (library.md), so the code is used right
+     * away and the welcome card shows the org that was joined. Already a member comes back as a 409.
+     */
+    suspend fun join(code: String): Result<InvitePreview> =
+        call { api -> api.join(code).let { org -> InvitePreview(org, role = org.role ?: "learner", joined = true) } }
+            .also { if (it.isSuccess) refresh() }
 
-    fun acceptInvite(code: String, onDone: (Org) -> Unit) {
+    /** Accepts an invite sent to me by name. */
+    fun acceptInvite(invite: OrgInvite, onDone: (Org) -> Unit) {
         val a = api ?: return
         run(::inviteError) {
-            val org = a.acceptInvite(code)
+            val org = a.acceptInvite(invite.id)
             refresh()
             onDone(org)
         }
     }
 
-    suspend fun createInvite(orgId: String, role: OrgRole, hours: Int?, uses: Int?): Result<OrgInvite> = call { it.createInvite(orgId, role, hours, uses) }
+    /** Declines an invite sent to me by name. */
+    suspend fun declineInvite(invite: OrgInvite): Result<Unit> {
+        val orgId = invite.org?.id ?: return Result.failure(java.io.IOException("This invite has no organization."))
+        return call { it.revokeInvite(orgId, invite.id) }.also { if (it.isSuccess) refresh() }
+    }
 
-    suspend fun revokeInvite(orgId: String, code: String): Result<Unit> = call { it.revokeInvite(orgId, code) }
+    /** A code invite: [hours] until it expires (null = the hub's longest, 90 days), [uses] null for no limit. */
+    suspend fun createInvite(orgId: String, role: OrgRole, hours: Int?, uses: Int?): Result<OrgInvite> =
+        call { it.createInvite(orgId, role, inviteDays(hours), uses) }
+
+    suspend fun revokeInvite(orgId: String, inviteId: String): Result<Unit> = call { it.revokeInvite(orgId, inviteId) }
 
     suspend fun setRole(orgId: String, userId: String, role: OrgRole): Result<Unit> = call { it.setRole(orgId, userId, role) }
 
@@ -230,12 +255,16 @@ class AccountModel(
             val detail = h.detail.lowercase()
             return when {
                 h.status == 409 -> "You are already in this organization."
+                h.status == 429 -> "Too many tries. Wait a minute, then try again."
                 "expired" in detail -> "That code has expired. Ask the admin for a new one."
                 "used" in detail -> "That code has been used up. Ask the admin for a new one."
                 h.status in setOf(400, 404, 410) -> "That code does not work. Check it with the admin."
                 else -> generic(e)
             }
         }
+
+        /** Hours to the hub's `expires_days` (0.01 to 90). Null, "Never" on screen, becomes the 90 day limit. */
+        fun inviteDays(hours: Int?): Double = ((hours ?: (90 * 24)) / 24.0).coerceIn(0.01, 90.0)
 
         fun generic(e: IOException): String =
             if (e is HubException) e.detail.replaceFirstChar(Char::uppercase) else "Could not reach the hub. Check the Wi-Fi and try again."

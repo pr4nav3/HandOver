@@ -36,11 +36,15 @@ import com.handover.app.ui.theme.Hairline
 object MistakeCopy {
     /** The hub's text, verbatim, with the contract's fallbacks when it is blank. */
     fun message(m: Mistake): String = m.message.ifBlank {
-        if (m.kind == MistakeKind.Ahead) "You're ahead." else "This still looks like step ${m.looksLike + 1}."
+        when {
+            m.kind == MistakeKind.Ahead -> "You're ahead."
+            m.kind == MistakeKind.Live -> m.label?.takeIf { it.isNotBlank() }?.let { "Check this: $it." } ?: "Something looks off. Check the clip."
+            else -> "This still looks like step ${(m.looksLike ?: m.step) + 1}."
+        }
     }
 
     /** "Show Step <looks_like + 1>" (1-based for people). */
-    fun showStep(m: Mistake): String = "Show Step ${m.looksLike + 1}"
+    fun showStep(m: Mistake): String = "Show Step ${(m.looksLike ?: m.step) + 1}"
 }
 
 /**
@@ -79,7 +83,8 @@ fun MistakeCard(
         }
         Row(Modifier.fillMaxWidth().padding(top = HOSpace.xs), horizontalArrangement = Arrangement.spacedBy(HOSpace.xs, Alignment.End)) {
             val kind = if (onVideo) ButtonKind.Glass else ButtonKind.Quiet
-            if (mistake.kind == MistakeKind.Behind) {
+            // Behind offers the step it looks like; ahead and live (advisory, no looks_like) only dismiss.
+            if (mistake.kind == MistakeKind.Behind && mistake.looksLike != null) {
                 HOButton(MistakeCopy.showStep(mistake), onShowStep, kind = kind, size = ButtonSize.Small)
                 HOButton("I'm Fine", onDismiss, kind = kind, size = ButtonSize.Small)
             } else {

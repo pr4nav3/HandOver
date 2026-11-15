@@ -23,7 +23,13 @@ android {
     }
 
     buildTypes {
+        // Phones that run HandOver are 64-bit ARM; packing only arm64-v8a native code (CameraX, media3, the
+        // glasses toolkit) keeps the APK small. An x86_64 emulator needs this line removed locally.
+        debug {
+            ndk { abiFilters += "arm64-v8a" }
+        }
         release {
+            ndk { abiFilters += "arm64-v8a" }
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")

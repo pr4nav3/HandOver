@@ -52,10 +52,16 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.handover.app.core.HubUrl
+import com.handover.app.core.HubUser
+import com.handover.app.core.Org
+import com.handover.app.core.OrgInvite
+import com.handover.app.core.OrgLesson
+import com.handover.app.core.OrgMember
+import com.handover.app.core.OrgPage
+import com.handover.app.core.OrgRole
 import com.handover.app.ui.components.ButtonSize
 import com.handover.app.ui.components.EmptyState
 import com.handover.app.ui.components.HOCard
@@ -107,15 +113,25 @@ fun orgMeta(org: Org): String? = listOfNotNull(
     org.members?.let { "$it member${if (it == 1) "" else "s"}" },
 ).joinToString(", ").ifEmpty { null }
 
-/** My organizations (22.1). */
+/** My organizations (22.1), with invites sent to me by name above the list. */
 @Composable
-fun OrgsListPage(orgs: List<Org>, canCreate: Boolean, onJoin: () -> Unit, onCreate: () -> Unit, onOpen: (Org) -> Unit, onBack: (() -> Unit)?) {
+fun OrgsListPage(
+    orgs: List<Org>,
+    canCreate: Boolean,
+    onJoin: () -> Unit,
+    onCreate: () -> Unit,
+    onOpen: (Org) -> Unit,
+    onBack: (() -> Unit)?,
+    invites: List<OrgInvite> = emptyList(),
+    onAccept: (OrgInvite) -> Unit = {},
+    onDecline: (OrgInvite) -> Unit = {},
+) {
     Column(Modifier.fillMaxSize().paper()) {
         PushedBar("Organizations", onBack) {
             TextButton(onJoin) { Icon(Icons.Outlined.QrCodeScanner, null, tint = HandOver.colors.accentInk, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Join", color = HandOver.colors.accentInk) }
             if (canCreate) TextButton(onCreate, modifier = Modifier.semantics { contentDescription = "New Organization" }) { Icon(Icons.Outlined.Add, null, tint = HandOver.colors.accentInk) }
         }
-        if (orgs.isEmpty()) {
+        if (orgs.isEmpty() && invites.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 EmptyState(
                     "No organizations yet",
@@ -127,8 +143,28 @@ fun OrgsListPage(orgs: List<Org>, canCreate: Boolean, onJoin: () -> Unit, onCrea
                 }
             }
         } else {
-            Column(Modifier.verticalScroll(rememberScrollState()).padding(HOSpace.l)) {
-                FormGroup { orgs.sortedBy { it.name.lowercase() }.forEach { o -> row { OrgRow(o) { onOpen(o) } } } }
+            Column(Modifier.verticalScroll(rememberScrollState()).padding(HOSpace.l), verticalArrangement = Arrangement.spacedBy(HOSpace.xl)) {
+                if (invites.isNotEmpty()) {
+                    FormSection("Invitations") {
+                        FormGroup {
+                            invites.forEach { inv ->
+                                row {
+                                    Row(Modifier.fillMaxWidth().heightIn(min = 60.dp).padding(start = HOSpace.l, end = HOSpace.xs), verticalAlignment = Alignment.CenterVertically) {
+                                        OrgAvatar(inv.org?.name ?: "?", 36.dp)
+                                        Spacer(Modifier.width(HOSpace.m))
+                                        Column(Modifier.weight(1f)) {
+                                            Text(inv.org?.name ?: "Organization", style = HandOver.type.bodyMedium, color = HandOver.colors.ink, maxLines = 1)
+                                            Text("Joins as ${OrgRole.from(inv.role).title}" + (inv.createdBy?.let { ", from $it" } ?: ""), style = HandOver.type.callout, color = HandOver.colors.ink2)
+                                        }
+                                        TextButton({ onDecline(inv) }) { Text("Decline", color = HandOver.colors.ink2) }
+                                        TextButton({ onAccept(inv) }) { Text("Join", color = HandOver.colors.accentInk) }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if (orgs.isNotEmpty()) FormGroup { orgs.sortedBy { it.name.lowercase() }.forEach { o -> row { OrgRow(o) { onOpen(o) } } } }
             }
         }
     }
@@ -136,19 +172,17 @@ fun OrgsListPage(orgs: List<Org>, canCreate: Boolean, onJoin: () -> Unit, onCrea
 
 /** New Organization (22.2). */
 @Composable
-fun CreateOrgPage(state: AccountState, onCreate: (String, String) -> Unit, onBack: () -> Unit) {
+fun CreateOrgPage(state: AccountState, onCreate: (String) -> Unit, onBack: () -> Unit) {
     var name by remember { mutableStateOf("") }
-    var about by remember { mutableStateOf("") }
     Column(Modifier.fillMaxSize().paper()) {
         PushedBar("New Organization", onBack)
         FormPage(
-            "New Organization", null, "Create", name.trim().length in 2..40 && !state.busy, { onCreate(name, about) }, busy = state.busy,
+            "New Organization", null, "Create", name.trim().length in 2..60 && !state.busy, { onCreate(name) }, busy = state.busy,
             footer = "You become the admin. You can invite people next.",
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(HOSpace.l)) {
                 Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { OrgAvatar(name.ifBlank { "?" }, 72.dp) }
-                FormSection("Name") { HOField(name, { name = it.take(40) }, "Bike Shop Crew", keyboard = KeyboardOptions(capitalization = KeyboardCapitalization.Words, imeAction = ImeAction.Next), label = "Name") }
-                FormSection("About", footer = "Optional.") { HOField(about, { about = it.take(200) }, "What this group learns together.", label = "About") }
+                FormSection("Name") { HOField(name, { name = it.take(60) }, "Bike Shop Crew", keyboard = KeyboardOptions(capitalization = KeyboardCapitalization.Words, imeAction = ImeAction.Done), label = "Name") }
                 FieldError(state.error)
             }
         }
@@ -187,7 +221,7 @@ fun JoinOrgPage(
         val normalized = InviteCode.normalize(raw) ?: run { step = JoinStep.Failed("That code does not work. Check it with the admin."); shakes++; haptics.play(HOHaptic.Error); return }
         step = JoinStep.Checking
         scope.launch {
-            model.previewInvite(normalized).fold(
+            model.join(normalized).fold(
                 { step = JoinStep.Preview(normalized, it) },
                 { e -> step = JoinStep.Failed(AccountModel.inviteError(e.cause as? java.io.IOException ?: java.io.IOException(e.message))); shakes++; haptics.play(HOHaptic.Error) },
             )
@@ -207,7 +241,7 @@ fun JoinOrgPage(
                     QrCamera({ text ->
                         when (val link = PairingLink.parse(text)) {
                             is PairingLink.Join -> if (link.target != null && onOtherHub != null) onOtherHub(link) else { mode = "Type Code"; code = InviteCode.grouped(link.code); check(link.code) }
-                            else -> InviteCode.normalize(text)?.takeIf { text.length <= 40 }?.let { mode = "Type Code"; code = InviteCode.grouped(it); check(it) }
+                            else -> InviteCode.normalize(text)?.takeIf { text.length <= InviteCode.MAX }?.let { mode = "Type Code"; code = InviteCode.grouped(it); check(it) }
                                 ?: run { problem = "That is not an invite code."; shakes++; haptics.play(HOHaptic.Error) }
                         }
                     })
@@ -222,7 +256,7 @@ fun JoinOrgPage(
         when (val s = step) {
             is JoinStep.Preview -> OrgWelcomeCard(
                 s.preview, busy = state.busy, error = state.error,
-                onJoin = { model.acceptInvite(s.code) { org -> haptics.play(HOHaptic.Success); onJoined(org) } },
+                onJoin = { onJoined(s.preview.org) },
                 onOpen = { onJoined(s.preview.org) },
                 onDifferent = { step = JoinStep.Form; code = "" },
             )
@@ -234,9 +268,10 @@ fun JoinOrgPage(
                 Column(rememberShake(shakes.takeIf { it > 0 }), verticalArrangement = Arrangement.spacedBy(HOSpace.s)) {
                     FormSection("Invite code") {
                         HOField(
-                            code, { v -> code = v.uppercase().filter { it.isLetterOrDigit() || it == ' ' || it == '-' }.take(40) }, "K7QM 2XPA",
+                            // Case sensitive: the hub's codes mix upper and lower case, digits, - and _.
+                            code, { v -> code = v.filter { it.isLetterOrDigit() || it == ' ' || it == '-' || it == '_' }.take(InviteCode.MAX) }, "k7Qm 2x_P aZ9w E4r-",
                             style = HandOver.type.code.copy(fontSize = 20.sp, letterSpacing = 2.sp),
-                            keyboard = KeyboardOptions(capitalization = KeyboardCapitalization.Characters, autoCorrectEnabled = false, imeAction = ImeAction.Go),
+                            keyboard = KeyboardOptions(capitalization = KeyboardCapitalization.None, autoCorrectEnabled = false, imeAction = ImeAction.Go),
                             error = s is JoinStep.Failed, label = "Invite code",
                         )
                         FieldError((s as? JoinStep.Failed)?.message)
@@ -260,25 +295,30 @@ fun OrgWelcomeCard(preview: InvitePreview, busy: Boolean, error: String?, onJoin
                     Spacer(Modifier.size(HOSpace.xs))
                     Text(org.name, style = HandOver.type.display, color = c.ink, textAlign = TextAlign.Center)
                     org.members?.let { Text("$it member${if (it == 1) "" else "s"}", style = HandOver.type.callout, color = c.ink2) }
-                    org.about?.takeIf { it.isNotBlank() }?.let { Text(it, style = HandOver.type.body, color = c.ink2, textAlign = TextAlign.Center, maxLines = 3) }
+                }
+                if (lessons.isNotEmpty()) {
+                    Spacer(Modifier.size(HOSpace.l))
+                    Text("Lessons in ${org.name}", style = HandOver.type.section, color = c.ink2)
+                    Spacer(Modifier.size(HOSpace.s))
+                    lessons.take(3).forEach { l -> Text("${l.title}, ${l.steps} steps", style = HandOver.type.body, color = c.ink, modifier = Modifier.padding(vertical = 2.dp)) }
                 }
                 Spacer(Modifier.size(HOSpace.l))
-                Text("Lessons in ${org.name}", style = HandOver.type.section, color = c.ink2)
-                Spacer(Modifier.size(HOSpace.s))
-                if (lessons.isEmpty()) Text("No lessons here yet.", style = HandOver.type.callout, color = c.ink2)
-                else lessons.take(3).forEach { l -> Text("${l.title}, ${l.steps} steps", style = HandOver.type.body, color = c.ink, modifier = Modifier.padding(vertical = 2.dp)) }
-                Spacer(Modifier.size(HOSpace.l))
                 Text(
-                    if (preview.alreadyMember) "You are already in ${org.name}." else "You join as ${OrgRole.from(preview.role).title}.",
+                    when {
+                        preview.joined -> "You joined as ${OrgRole.from(preview.role).title}."
+                        preview.alreadyMember -> "You are already in ${org.name}."
+                        else -> "You join as ${OrgRole.from(preview.role).title}."
+                    },
                     style = HandOver.type.bodyMedium, color = c.ink,
                 )
             }
             FieldError(error)
         }
         Column(Modifier.fillMaxWidth().padding(HOSpace.l), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(HOSpace.s)) {
-            if (preview.alreadyMember) PrimaryButton("Open", onOpen, fullWidth = true)
+            if (preview.joined) PrimaryButton("Open ${org.name}", onOpen, fullWidth = true)
+            else if (preview.alreadyMember) PrimaryButton("Open", onOpen, fullWidth = true)
             else PrimaryButton("Join ${org.name}", onJoin, enabled = !busy, fullWidth = true, haptic = null)
-            QuietButton("Use a Different Code", onDifferent, size = ButtonSize.Regular)
+            if (!preview.joined) QuietButton("Use a Different Code", onDifferent, size = ButtonSize.Regular)
         }
     }
 }
@@ -296,7 +336,7 @@ fun OrgDetailPage(
 ) {
     val c = HandOver.colors
     val org = page.org
-    val admin = org.isAdmin
+    val admin = page.canManage
     val admins = page.members.count { it.orgRole == OrgRole.Admin }
     val lastAdmin = admin && admins <= 1
     var tab by remember { mutableStateOf("Lessons") }
@@ -308,7 +348,6 @@ fun OrgDetailPage(
             Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(HOSpace.s)) {
                 OrgAvatar(org.name, 72.dp)
                 Text(org.name, style = HandOver.type.display, color = c.ink, textAlign = TextAlign.Center)
-                org.about?.takeIf { it.isNotBlank() }?.let { Text(it, style = HandOver.type.body, color = c.ink2, textAlign = TextAlign.Center, maxLines = 3) }
                 orgMeta(org.copy(members = org.members ?: page.members.size.takeIf { it > 0 }, lessons = org.lessons ?: page.lessons.size))?.let {
                     Text(it, style = HandOver.type.callout, color = c.ink2)
                 }
@@ -384,7 +423,6 @@ fun MemberRow(m: OrgMember, isMe: Boolean, canManage: Boolean, onSetRole: (OrgRo
         Spacer(Modifier.width(HOSpace.m))
         Column(Modifier.weight(1f)) {
             Text(if (isMe) "${m.name} (You)" else m.name, style = HandOver.type.bodyMedium, color = c.ink, maxLines = 1)
-            m.username?.let { Text("@$it", style = HandOver.type.callout, color = c.ink2) }
         }
         if (canManage) {
             Box {
@@ -403,12 +441,27 @@ fun MemberRow(m: OrgMember, isMe: Boolean, canManage: Boolean, onSetRole: (OrgRo
 
 /** Invite to <org> (22.5), Invite Code half: the new code form and active codes. */
 @Composable
-fun InvitePage(org: Org, invites: List<OrgInvite>, hub: HubUrl?, hubName: String?, onCreate: (OrgRole, Int?, Int?) -> Unit, onRevoke: (OrgInvite) -> Unit, busy: Boolean, error: String?, onBack: () -> Unit) {
+fun InvitePage(
+    org: Org,
+    invites: List<OrgInvite>,
+    hub: HubUrl?,
+    hubName: String?,
+    onCreate: (OrgRole, Int?, Int?) -> Unit,
+    onRevoke: (OrgInvite) -> Unit,
+    busy: Boolean,
+    error: String?,
+    onBack: () -> Unit,
+    /** The code just made: the hub shows it only in the create reply, so this is the one chance to share it. */
+    fresh: OrgInvite? = null,
+) {
     var role by remember { mutableStateOf(OrgRole.Member) }
     var expiry by remember { mutableStateOf(Expiry.Week) }
     var uses by remember { mutableStateOf(Uses.NoLimit) }
     var revoking by remember { mutableStateOf<OrgInvite?>(null) }
-    val active = invites.filter { !it.expired }
+    // The hub lists only live invites; a listed code invite has no code (it keeps a hash), except the fresh one.
+    val active = invites.filter { it.kind == "code" }.map { inv -> if (fresh != null && inv.id == fresh.id) fresh else inv }
+        .let { list -> if (fresh != null && list.none { it.id == fresh.id }) listOf(fresh) + list else list }
+        .sortedByDescending { it.code != null }
     Column(Modifier.fillMaxSize().paper()) {
         PushedBar("Invite to ${org.name}", onBack)
         Column(Modifier.verticalScroll(rememberScrollState()).padding(horizontal = HOSpace.l).padding(bottom = HOSpace.xxl), verticalArrangement = Arrangement.spacedBy(HOSpace.xl)) {
@@ -442,7 +495,8 @@ fun InvitePage(org: Org, invites: List<OrgInvite>, hub: HubUrl?, hubName: String
     }
 }
 
-enum class Expiry(val title: String, val hours: Int?) { Hour("In 1 Hour", 1), Day("In 1 Day", 24), Week("In 7 Days", 168), Month("In 30 Days", 720), Never("Never", null) }
+/** Hub limit: 0.01 to 90 days (library.md), so the longest choice is 90 days rather than never. */
+enum class Expiry(val title: String, val hours: Int?) { Hour("In 1 Hour", 1), Day("In 1 Day", 24), Week("In 7 Days", 168), Month("In 30 Days", 720), Quarter("In 90 Days", 2160) }
 enum class Uses(val title: String, val count: Int?) { One("1", 1), Ten("10", 10), Fifty("50", 50), NoLimit("No Limit", null) }
 
 @Composable
@@ -467,35 +521,46 @@ fun joinLink(code: String, hub: HubUrl?, hubName: String?): String {
     return b.toString()
 }
 
-/** The invite code card (DESIGN.md 3.25): code in groups of four, QR below, meta, Share, Copy, Revoke. */
+/**
+ * The invite code card (DESIGN.md 3.25): code in groups of four, QR below, meta, Share, Copy, Revoke.
+ * A listed code without its text (the hub keeps only a hash) shows the meta and Revoke only.
+ */
 @Composable
 fun InviteCodeCard(inv: OrgInvite, org: Org, hub: HubUrl?, hubName: String?, onRevoke: () -> Unit) {
     val c = HandOver.colors
     val context = LocalContext.current
-    val link = joinLink(inv.code, hub, hubName)
+    val code = inv.code
     HOCard {
         Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(HOSpace.m)) {
-            SelectionContainer {
-                Text(
-                    InviteCode.grouped(inv.code), style = HandOver.type.code.copy(fontSize = 22.sp, letterSpacing = 3.sp),
-                    color = if (inv.expired) c.ink3 else c.ink, textDecoration = if (inv.expired) TextDecoration.LineThrough else null,
-                    modifier = Modifier.semantics { contentDescription = InviteCode.spoken(inv.code) },
-                )
+            if (code != null) {
+                val link = joinLink(code, hub, hubName)
+                SelectionContainer {
+                    Text(
+                        InviteCode.grouped(code), style = HandOver.type.code.copy(fontSize = 22.sp, letterSpacing = 3.sp), color = c.ink,
+                        modifier = Modifier.semantics { contentDescription = InviteCode.spoken(code) },
+                    )
+                }
+                QrImage(link, 160.dp)
+            } else {
+                Text("Invite code", style = HandOver.type.bodyMedium, color = c.ink)
             }
-            if (!inv.expired) QrImage(link, 160.dp)
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text("Joins as ${OrgRole.from(inv.role).title}", style = HandOver.type.callout, color = c.ink2)
-                Text(inv.expires?.let { "Expires ${it.replace('T', ' ').take(16)}" } ?: "Never expires", style = HandOver.type.callout, color = c.ink2)
-                Text("Used ${inv.uses} time${if (inv.uses == 1) "" else "s"}" + (inv.maxUses?.let { ", ${(it - inv.uses).coerceAtLeast(0)} uses left" } ?: ""), style = HandOver.type.callout, color = c.ink2)
+                inv.expires?.let { Text("Expires ${it.replace('T', ' ').take(16)}", style = HandOver.type.callout, color = c.ink2) }
+                Text("Used ${inv.uses} time${if (inv.uses == 1) "" else "s"}" + (inv.maxUses?.let { ", ${(it - inv.uses).coerceAtLeast(0)} uses left" } ?: ", no limit"), style = HandOver.type.callout, color = c.ink2)
+                if (code == null) Text("The hub shows a code only when it is made.", style = HandOver.type.caption, color = c.ink3, textAlign = TextAlign.Center)
             }
             Row(horizontalArrangement = Arrangement.spacedBy(HOSpace.s)) {
-                SecondaryButton("Share", {
-                    val text = "Join ${org.name} on HandOver: ${InviteCode.grouped(inv.code)}. Or open $link."
-                    context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text), null))
-                }, icon = Icons.Outlined.Share)
-                SecondaryButton("Copy", {
-                    (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("Invite code", inv.code))
-                }, icon = Icons.Outlined.ContentCopy)
+                if (code != null) {
+                    val link = joinLink(code, hub, hubName)
+                    SecondaryButton("Share", {
+                        val text = "Join ${org.name} on HandOver: ${InviteCode.grouped(code)}. Or open $link."
+                        context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text), null))
+                    }, icon = Icons.Outlined.Share)
+                    SecondaryButton("Copy", {
+                        (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("Invite code", code))
+                    }, icon = Icons.Outlined.ContentCopy)
+                }
                 com.handover.app.ui.components.HOButton("Revoke", onRevoke, kind = com.handover.app.ui.components.ButtonKind.Destructive, size = ButtonSize.Regular)
             }
         }

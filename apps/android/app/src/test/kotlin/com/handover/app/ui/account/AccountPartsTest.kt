@@ -1,6 +1,7 @@
 package com.handover.app.ui.account
 
 import com.handover.app.core.HubUrl
+import com.handover.app.core.Org
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
