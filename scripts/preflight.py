@@ -5,6 +5,9 @@
     .venv/bin/python scripts/preflight.py --fetch    git fetch origin main first, so ahead/behind is current
     .venv/bin/python scripts/preflight.py --json     machine-readable output
 
+On Windows run it as .venv/Scripts/python.exe scripts/preflight.py; every check has a Windows path (netstat for
+port owners, the UDP route trick for the LAN IP, GlobalMemoryStatusEx for memory) and the fixes name Windows commands.
+
 Each line is OK (green), WARN (amber), FAIL (red) or SKIP (not applicable), with a fix
 for anything that is not OK. The last line is READY, READY WITH WARNINGS or NOT READY.
 Exit code: 0 for READY and READY WITH WARNINGS, 1 for NOT READY, 2 on bad usage.
@@ -43,7 +46,7 @@ OK, WARN, FAIL, SKIP = "OK", "WARN", "FAIL", "SKIP"
 _RANK = {SKIP: 0, OK: 0, WARN: 1, FAIL: 2}
 
 IMPORTS = ("fastapi", "google.genai", "anthropic", "PIL")
-DEMO_LESSONS = ("fortune-teller-v1", "front-wheel-v1")
+DEMO_LESSONS = ("fortune-teller-v1",)  # the bike front wheel lesson was never recorded
 SECRET_NAMES = ("ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "DATABRICKS_TOKEN")
 DATABRICKS_NAMES = ("DATABRICKS_HOST", "DATABRICKS_TOKEN", "DATABRICKS_WAREHOUSE_ID")
 FFMPEG_MIN = (5, 1)
@@ -53,7 +56,14 @@ CERT_SOON_DAYS = 7
 DISK_WARN_GB, DISK_FAIL_GB = 10.0, 2.0
 MEM_WARN_PCT, MEM_FAIL_PCT = 20, 10
 INTERFACES = ("en0", "en1", "en2", "bridge100")
+WINDOWS = os.name == "nt"
 INSTALL_FIX = "uv pip install -r server/requirements.lock"
+PY_CMD = r".venv\Scripts\python.exe" if WINDOWS else ".venv/bin/python"
+RUN_HUB = r"scripts\run_server.ps1" if WINDOWS else "scripts/run_server.sh"
+FFMPEG_FIX = "winget install Gyan.FFmpeg" if WINDOWS else "brew install ffmpeg"
+CERTS_FIX = ("mkcert -cert-file certs/cert.pem -key-file certs/key.pem <laptop IP> localhost 127.0.0.1"
+             if WINDOWS else "scripts/certs.sh")
+HUB_PORTS_NOTE = "the hub needs these ports free when it starts"
 BUILD_FIX = "npm --prefix web ci && npm --prefix web run build"
 
 
@@ -140,8 +150,23 @@ def try_import(name: str):
 
 
 
+def route_ip() -> Optional[str]:
+    """The address of the interface that routes outward, as server.main lan_ip() and run_server.ps1 find it.
+    Connecting a UDP socket sends no packet."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("10.255.255.255", 1))
+            ip = s.getsockname()[0]
+    except OSError:
+        return None
+    return None if ip.startswith("127.") or ip == "0.0.0.0" else ip
+
+
 def lan_ip() -> Optional[str]:
-    """LAN or hotspot IP, same order as scripts/certs.sh: en0, en1, en2, bridge100, then ifconfig."""
+    """LAN or hotspot IP. Mac: same order as scripts/certs.sh (en0, en1, en2, bridge100, then ifconfig).
+    Windows: the outward route, the address the hub prints and pairs with."""
+    if WINDOWS:
+        return route_ip()
     for ifc in INTERFACES:
         rc, out, _ = run(["ipconfig", "getifaddr", ifc], timeout=2)
         if rc == 0 and out.strip():
@@ -226,7 +251,8 @@ def parse_lock(path: Path) -> dict[str, tuple[str, bool]]:
 
 def check_python(repo: Path = REPO) -> list[Row]:
     A = "Python"
-    py = repo / ".venv" / "bin" / "python"
+    py = next((c for c in (repo / ".venv" / "Scripts" / "python.exe", repo / ".venv" / "bin" / "python")
+               if c.exists()), repo / ".venv" / "bin" / "python")
     if not py.exists():
         return [Row(A, "venv", FAIL, ".venv not found",
                     f"uv venv .venv --python 3.12 && {INSTALL_FIX}")]
@@ -234,12 +260,12 @@ def check_python(repo: Path = REPO) -> list[Row]:
     try:
         info = json.loads(out.strip().splitlines()[-1])
     except (ValueError, IndexError):
-        return [Row(A, "venv", FAIL, f".venv/bin/python does not run ({(err.strip() or 'no output')[:80]})",
+        return [Row(A, "venv", FAIL, f"{PY_CMD} does not run ({(err.strip() or 'no output')[:80]})",
                     f"rm -rf .venv && uv venv .venv --python 3.12 && {INSTALL_FIX}")]
     rows = []
     if Path(sys.prefix).resolve() != (repo / ".venv").resolve():
         rows.append(Row(A, "interpreter", WARN, f"preflight runs under {sys.executable}, not .venv: "
-                        "provider and budget lines may be wrong", ".venv/bin/python scripts/preflight.py"))
+                        "provider and budget lines may be wrong", f"{PY_CMD} scripts/preflight.py"))
     rows += [Row(A, "venv", OK if info["python"].startswith("3.12") else WARN,
                 f".venv, Python {info['python']}",
                 "" if info["python"].startswith("3.12") else "the lock is for Python 3.12: uv venv .venv --python 3.12")]
@@ -303,19 +329,19 @@ def check_ffmpeg(repo: Path = REPO) -> list[Row]:
     for name in ("ffmpeg", "ffprobe"):
         path, problem = find_tool(name)
         if not path:
-            rows.append(Row("Media", name, FAIL, problem, "brew install ffmpeg (or fix HANDOVER_FFMPEG)"))
+            rows.append(Row("Media", name, FAIL, problem, f"{FFMPEG_FIX} (or fix HANDOVER_FFMPEG)"))
             continue
         rc, out, err = run([path, "-version"], timeout=5)
         first = (out.strip().splitlines() or [""])[0]
         ver = parse_ff_version(first)
         if rc != 0:
-            rows.append(Row("Media", name, FAIL, f"{path} does not run ({err.strip()[:60]})", "brew reinstall ffmpeg"))
+            rows.append(Row("Media", name, FAIL, f"{path} does not run ({err.strip()[:60]})", "winget install Gyan.FFmpeg" if WINDOWS else "brew reinstall ffmpeg"))
         elif ver is None:
             rows.append(Row("Media", name, WARN, f"{path}, version unknown ({first[:40]})",
-                            "use a release build: brew install ffmpeg"))
+                            f"use a release build: {FFMPEG_FIX}"))
         elif ver < FFMPEG_MIN:
             rows.append(Row("Media", name, FAIL, f"{path}, version {ver[0]}.{ver[1]} (need 5.1 or newer)",
-                            "brew upgrade ffmpeg"))
+                            "winget upgrade Gyan.FFmpeg" if WINDOWS else "brew upgrade ffmpeg"))
         else:
             rows.append(Row("Media", name, OK, f"{ver[0]}.{ver[1]} at {path}"))
     return rows
@@ -528,7 +554,7 @@ def check_lessons(repo: Path = REPO) -> list[Row]:
             rep = lint.lint(folder)
         except Exception as e:
             rows.append(Row(A, folder.name, FAIL, f"lint crashed ({type(e).__name__})",
-                            f".venv/bin/python scripts/lesson_lint.py {folder}"))
+                            f"{PY_CMD} scripts/lesson_lint.py {folder}"))
             continue
         c, result = rep.counts(), rep.result()
         status = {"OK": OK, "WARN": WARN, "FAIL": FAIL}[result]
@@ -537,7 +563,7 @@ def check_lessons(repo: Path = REPO) -> list[Row]:
         if problems:
             detail += f"; {_short(problems[0], 70)}" + (f" (+{len(problems) - 1} more)" if len(problems) > 1 else "")
         rows.append(Row(A, folder.name, status, detail,
-                        "" if status == OK else f".venv/bin/python scripts/lesson_lint.py lessons/{folder.name}",
+                        "" if status == OK else f"{PY_CMD} scripts/lesson_lint.py lessons/{folder.name}",
                         {"counts": c}))
     names = {f.name for f in folders if (f / "lesson.json").is_file()}
     for lid in DEMO_LESSONS:
@@ -609,32 +635,33 @@ def check_certs(repo: Path = REPO, ip: Optional[str] = None) -> list[Row]:
     if not cert.is_file() or not key.is_file():
         gone = " and ".join(p.name for p in (cert, key) if not p.is_file())
         return [Row(A, "certs", FAIL, f"{gone} missing: Safari /capture needs HTTPS",
-                    "brew install mkcert, then scripts/certs.sh")]
+                    "winget install FiloSottile.mkcert, mkcert -install, then " + CERTS_FIX if WINDOWS
+                    else "brew install mkcert, then scripts/certs.sh")]
     rows = [Row(A, "certs", OK, f"cert.pem and key.pem in {certs.name}/")]
     rc, out, _ = run(["openssl", "x509", "-noout", "-ext", "subjectAltName", "-in", str(cert)], timeout=5)
     if rc != 0 or "IP Address" not in out:  # LibreSSL has no -ext
         rc, out, _ = run(["openssl", "x509", "-noout", "-text", "-in", str(cert)], timeout=5)
     sans = parse_san(out) if rc == 0 else []
     if rc != 0:
-        rows.append(Row(A, "cert IP", WARN, "openssl could not read cert.pem", "rerun scripts/certs.sh"))
+        rows.append(Row(A, "cert IP", WARN, "openssl could not read cert.pem", f"rerun {CERTS_FIX}"))
     elif ip is None:
         rows.append(Row(A, "cert IP", WARN, f"no LAN IP to compare (cert has {', '.join(sans) or 'no IPs'})",
                         "join Wi-Fi or the hotspot"))
     elif ip in sans:
         rows.append(Row(A, "cert IP", OK, f"covers {ip}"))
     else:
-        rows.append(Row(A, "cert IP", FAIL, f"made for {', '.join(sans) or 'no IP'}, but this Mac is {ip} now",
-                        "rerun scripts/certs.sh (the network IP changed)"))
+        rows.append(Row(A, "cert IP", FAIL, f"made for {', '.join(sans) or 'no IP'}, but this {'PC' if WINDOWS else 'Mac'} is {ip} now",
+                        f"rerun {CERTS_FIX} (the network IP changed)"))
     rc, out, _ = run(["openssl", "x509", "-noout", "-enddate", "-in", str(cert)], timeout=5)
     end = parse_enddate(out) if rc == 0 else None
     if end is None:
-        rows.append(Row(A, "cert expiry", WARN, "could not read the expiry date", "rerun scripts/certs.sh"))
+        rows.append(Row(A, "cert expiry", WARN, "could not read the expiry date", f"rerun {CERTS_FIX}"))
     else:
         days = (end - datetime.now(timezone.utc)).days
         if days < 0:
-            rows.append(Row(A, "cert expiry", FAIL, f"expired {end:%b %d %Y}", "rerun scripts/certs.sh"))
+            rows.append(Row(A, "cert expiry", FAIL, f"expired {end:%b %d %Y}", f"rerun {CERTS_FIX}"))
         elif days < CERT_SOON_DAYS:
-            rows.append(Row(A, "cert expiry", WARN, f"expires {end:%b %d %Y} ({days} days)", "rerun scripts/certs.sh"))
+            rows.append(Row(A, "cert expiry", WARN, f"expires {end:%b %d %Y} ({days} days)", f"rerun {CERTS_FIX}"))
         else:
             rows.append(Row(A, "cert expiry", OK, f"valid until {end:%b %d %Y}"))
     return rows
@@ -676,20 +703,20 @@ def check_hub(repo: Path = REPO, ip: Optional[str] = None) -> list[Row]:
     A = "Hub"
     p = port()
     if not hub_running(p):
-        return [Row(A, "hub", SKIP, f"not running on port {p}", "start it with scripts/run_server.sh")]
+        return [Row(A, "hub", SKIP, f"not running on port {p}", f"start it with {RUN_HUB}")]
     base = f"http://127.0.0.1:{p}"
     try:
         lessons = http_json(base + "/api/lessons")
     except (OSError, ValueError) as e:
         return [Row(A, "hub", FAIL, f"port {p} answers but /api/lessons failed ({type(e).__name__})",
-                    f"another program may own port {p}: lsof -nP -iTCP:{p} -sTCP:LISTEN")]
+                    f"another program may own port {p}: {owner_hint(p)}")]
     rows = [Row(A, "hub", OK, f"running on port {p}, {_count(len(lessons), 'lesson')}: "
                 f"{', '.join(str(x.get('id')) for x in lessons[:5])}")]
     try:
         st = read_state(f"ws://127.0.0.1:{p}/ws/ui")
     except Exception as e:
         rows.append(Row(A, "ui socket", FAIL, f"/ws/ui gave no state ({type(e).__name__})",
-                        "restart the hub: scripts/run_server.sh"))
+                        f"restart the hub: {RUN_HUB}"))
         return rows
     lid = st.get("lesson_id")
     if lid:
@@ -701,7 +728,7 @@ def check_hub(repo: Path = REPO, ip: Optional[str] = None) -> list[Row]:
     cam = st.get("camera") or {}
     if not st.get("camera_connected"):
         rows.append(Row(A, "camera", WARN, "not connected",
-                        f"open the iPhone app, or https://{ip or '<mac ip>'}:{https_port()}/capture in Safari"))
+                        f"open the iPhone app, or https://{ip or '<laptop ip>'}:{https_port()}/capture in Safari"))
     elif cam.get("source") == "file":
         rows.append(Row(A, "camera", WARN, f"{cam.get('name')} (replay: the Recording banner shows)",
                         "connect the live camera before judging"))
@@ -717,7 +744,81 @@ def check_hub(repo: Path = REPO, ip: Optional[str] = None) -> list[Row]:
     return rows
 
 
-# ---------------------------------------------------------------- 10. network
+# ---------------------------------------------------------------- 10. ports
+
+def owner_hint(p: int) -> str:
+    return f"netstat -ano | findstr :{p}" if WINDOWS else f"lsof -nP -iTCP:{p} -sTCP:LISTEN"
+
+
+def listener_pids(p: int) -> list[int]:
+    """PIDs listening on TCP port p (any address): netstat -ano on Windows, lsof elsewhere. [] when unknown."""
+    if WINDOWS:
+        rc, out, _ = run(["netstat", "-ano", "-p", "TCP"], timeout=5)
+        pids: list[int] = []
+        for line in out.splitlines() if rc == 0 else []:
+            parts = line.split()
+            # TCP  0.0.0.0:8000  0.0.0.0:0  LISTENING  42320 (the state word is localized, the :0 peer is not)
+            if len(parts) >= 5 and parts[0] == "TCP" and parts[1].rsplit(":", 1)[-1] == str(p) \
+                    and parts[2].rsplit(":", 1)[-1] == "0" and parts[-1].isdigit():
+                pid = int(parts[-1])
+                if pid and pid not in pids:
+                    pids.append(pid)
+        return pids
+    rc, out, _ = run(["lsof", "-nP", f"-iTCP:{p}", "-sTCP:LISTEN", "-t"], timeout=3)
+    return sorted({int(x) for x in out.split() if x.isdigit()}) if rc == 0 else []
+
+
+def process_command(pid: int) -> str:
+    """The command line of pid, or "" when it cannot be read."""
+    if WINDOWS:
+        rc, out, _ = run(["powershell", "-NoProfile", "-NonInteractive", "-Command",
+                          f"(Get-CimInstance Win32_Process -Filter 'ProcessId={pid}').CommandLine"], timeout=6)
+    else:
+        rc, out, _ = run(["ps", "-o", "command=", "-p", str(pid)], timeout=3)
+    return out.strip() if rc == 0 else ""
+
+
+def describe_command(cmd: str) -> str:
+    """A command line as its program name, arguments and folder: 'python.exe -m server.main (in C:/Python312)'."""
+    cmd = cmd.strip()
+    if not cmd:
+        return "command unknown"
+    if cmd.startswith('"'):
+        exe, _, rest = cmd[1:].partition('"')
+    else:
+        exe, _, rest = cmd.partition(" ")
+    folder, name = os.path.split(exe)
+    text = " ".join(f"{name or exe} {rest}".split())
+    return _short(text, 60) + (f" (in {folder})" if folder else "")
+
+
+def check_ports(repo: Path = REPO) -> list[Row]:
+    """Who already listens on the hub's ports. A hub started from this checkout is OK; anything else (a stale
+    hub from another folder or interpreter, another app) is named with its PID, since the new hub cannot bind."""
+    A = "Ports"
+    rows = []
+    known: dict[int, str] = {}
+    for name, p in (("http port", port()), ("https port", https_port())):
+        pids = listener_pids(p)
+        if not pids:
+            rows.append(Row(A, name, OK, f"{p} is free" if can_bind("0.0.0.0", p) else f"{p} has no listener"))
+            continue
+        for pid in pids:
+            if pid not in known:
+                known[pid] = process_command(pid)
+        cmds = {pid: known[pid] for pid in pids}
+        ours = all("server.main" in c and str(repo).lower() in c.lower() for c in cmds.values())
+        who = "; ".join(f"PID {pid}: {describe_command(c)}" for pid, c in cmds.items())
+        if ours:
+            rows.append(Row(A, name, OK, f"{p} held by this checkout's hub: {who}", data={"pids": pids}))
+        else:
+            kill = " ; ".join(f"Stop-Process -Id {pid}" if WINDOWS else f"kill {pid}" for pid in pids)
+            rows.append(Row(A, name, WARN, f"{p} already held by {who}; {HUB_PORTS_NOTE}",
+                            f"if it is a stale hub: {kill}", {"pids": pids}))
+    return rows
+
+
+# ---------------------------------------------------------------- 11. network
 
 def can_bind(host: str, p: int) -> bool:
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -742,7 +843,7 @@ def check_network(repo: Path = REPO, ip: Optional[str] = None) -> list[Row]:
     A = "Network"
     p = port()
     if ip is None:
-        return [Row(A, "LAN IP", FAIL, "no network IP: the phone cannot reach this Mac",
+        return [Row(A, "LAN IP", FAIL, f"no network IP: the phone cannot reach this {'PC' if WINDOWS else 'Mac'}",
                     "join Wi-Fi or the phone's hotspot")]
     rows = [Row(A, "LAN IP", OK, ip)]
     if hub_running(p):
@@ -750,19 +851,50 @@ def check_network(repo: Path = REPO, ip: Optional[str] = None) -> list[Row]:
             rows.append(Row(A, "port", OK, f"hub answers on {ip}:{p}"))
         else:
             rows.append(Row(A, "port", FAIL, f"hub runs but not on {ip}:{p}",
-                            "the hub must bind 0.0.0.0; check the macOS firewall"))
+                            "the hub must bind 0.0.0.0; " + ("allow Python on Private networks in Windows Defender Firewall"
+                                                             if WINDOWS else "check the macOS firewall")))
     elif can_bind(ip, p):
         rows.append(Row(A, "port", OK, f"{ip}:{p} is free for the hub"))
     else:
         rows.append(Row(A, "port", FAIL, f"{ip}:{p} is taken by another program",
-                        f"lsof -nP -iTCP:{p} -sTCP:LISTEN, or set HANDOVER_PORT"))
+                        f"{owner_hint(p)}, or set HANDOVER_PORT"))
     rows.append(Row(A, "phone", OK, f"test from the phone: http://{ip}:{p}/ and https://{ip}:{https_port()}/capture"))
     return rows
 
 
-# ---------------------------------------------------------------- 11. mac health
+# ---------------------------------------------------------------- 12. machine health
+
+def win_memory_free_pct() -> Optional[int]:
+    """Free physical memory in percent from GlobalMemoryStatusEx, or None."""
+    import ctypes
+
+    class MemoryStatus(ctypes.Structure):
+        _fields_ = [("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong)] + \
+                   [(n, ctypes.c_ulonglong) for n in ("total", "avail", "page_total", "page_avail", "virt_total",
+                                                      "virt_avail", "ext_avail")]
+    st = MemoryStatus()
+    st.dwLength = ctypes.sizeof(MemoryStatus)
+    try:
+        if not ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(st)):  # type: ignore[attr-defined]
+            return None
+    except (AttributeError, OSError):
+        return None
+    return 100 - int(st.dwMemoryLoad)
+
 
 def check_health(repo: Path = REPO) -> list[Row]:
+    if WINDOWS:
+        A = "PC"
+        rows = [Row(A, "load", SKIP, "no load average on Windows (watch Task Manager)")]
+        pct = win_memory_free_pct()
+        if pct is None:
+            rows.append(Row(A, "memory", SKIP, "GlobalMemoryStatusEx unavailable"))
+        else:
+            lvl = FAIL if pct < MEM_FAIL_PCT else WARN if pct < MEM_WARN_PCT else OK
+            rows.append(Row(A, "memory", lvl, f"{pct}% free", "" if lvl == OK else "quit apps, emulators and browsers"))
+        rows.append(Row(A, "thermal", SKIP, "no thermal reading on Windows; keep the laptop on power"))
+        rows += _disk_rows(A, repo)
+        return rows
     A = "Mac"
     rows = []
     rc, out, _ = run(["sysctl", "-n", "vm.loadavg", "hw.ncpu"], timeout=2)
@@ -792,17 +924,20 @@ def check_health(repo: Path = REPO) -> list[Row]:
             rows.append(Row(A, "thermal", WARN, "the Mac is throttling for heat", "let it cool; close heavy apps"))
         else:
             rows.append(Row(A, "thermal", OK, "no thermal warning"))
+    return rows + _disk_rows(A, repo)
+
+
+def _disk_rows(A: str, repo: Path) -> list[Row]:
     try:
         free = shutil.disk_usage(repo).free / 1e9
-        lvl = FAIL if free < DISK_FAIL_GB else WARN if free < DISK_WARN_GB else OK
-        rows.append(Row(A, "disk", lvl, f"{free:.0f} GB free on the repo volume",
-                        "" if lvl == OK else "remove old build output or raw footage you no longer need"))
     except OSError:
-        rows.append(Row(A, "disk", SKIP, "could not read disk usage"))
-    return rows
+        return [Row(A, "disk", SKIP, "could not read disk usage")]
+    lvl = FAIL if free < DISK_FAIL_GB else WARN if free < DISK_WARN_GB else OK
+    return [Row(A, "disk", lvl, f"{free:.0f} GB free on the repo volume",
+                "" if lvl == OK else "remove old build output or raw footage you no longer need")]
 
 
-# ---------------------------------------------------------------- 12. git
+# ---------------------------------------------------------------- 13. git
 
 def check_git(repo: Path = REPO, fetch: bool = False) -> list[Row]:
     A = "Git"
@@ -845,6 +980,7 @@ def collect(repo: Path = REPO, probe: bool = False, fetch: bool = False) -> list
         lambda: check_web(repo),
         lambda: check_certs(repo, ip),
         lambda: check_hub(repo, ip),
+        lambda: check_ports(repo),
         lambda: check_network(repo, ip),
         lambda: check_health(repo),
         lambda: check_git(repo, fetch),

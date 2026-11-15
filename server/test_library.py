@@ -218,7 +218,8 @@ def test_setup_login_logout():
     stored = json.loads((DATA / "users.json").read_text())["users"][0]
     assert stored["passcode"].startswith("scrypt$") and "owner-pass" not in json.dumps(stored)
     assert token not in (DATA / "tokens.json").read_text()  # only a hash is stored
-    assert oct((DATA / "users.json").stat().st_mode)[-3:] == "600"
+    if os.name == "posix":  # Windows has no mode bits; the file inherits the user profile's owner-only ACL
+        assert oct((DATA / "users.json").stat().st_mode)[-3:] == "600"
     r = client.post("/api/auth/login", json={"name": "hana", "passcode": "nope"})
     assert r.status_code == 401 and r.json()["detail"] == "wrong name or passcode"
     r = client.post("/api/auth/login", json={"name": "  HANA ", "passcode": "owner-pass"})

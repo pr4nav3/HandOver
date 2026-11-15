@@ -3,9 +3,9 @@
 Every Claude call (live checks and teach) asks allow() first and passes the response's
 usage to record() afterwards. The ledger lives in <repo>/logs/claude_spend.json (logs/
 is gitignored): daily totals keyed by local date plus an all-time total, in USD and
-tokens. Writes are atomic (temp file, then rename) and serialized with a thread lock
-and, where the OS has it, a file lock, so the hub and a CLI run at the same time do not
-lose each other's calls.
+tokens. Writes are atomic (temp file, then rename); reads and writes are serialized with a
+thread lock and a file lock (fcntl, or msvcrt on Windows), so the hub and a CLI run at the
+same time do not lose each other's calls.
 
 Path: HANDOVER_CLAUDE_SPEND_FILE overrides the default. Caps (config.py): HANDOVER_CLAUDE_BUDGET_DAY_USD (default 20) and
 HANDOVER_CLAUDE_BUDGET_TOTAL_USD (default 50). Once either is reached, allow() is False:
@@ -23,6 +23,7 @@ import logging
 import os
 import tempfile
 import threading
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -98,22 +99,47 @@ def _empty() -> dict:
     return {f: 0 for f in _FIELDS} | {"usd": 0.0}
 
 
+LOCK_WAIT_S = 10.0  # Windows: how long to wait for another process before giving up
+
+
 @contextlib.contextmanager
 def _file_lock(path: Path):
-    """Cross-process lock next to the ledger. fcntl exists on macOS and Linux; on Windows the
-    thread lock alone still protects the hub process."""
+    """Cross-process lock on <ledger>.lock: fcntl.flock on macOS and Linux, msvcrt.locking
+    on Windows (one byte, retried until LOCK_WAIT_S). Raises OSError if it cannot be taken."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = path.with_suffix(".lock")
     try:
         import fcntl
     except ImportError:
-        yield
+        fcntl = None  # type: ignore[assignment]
+    if fcntl is not None:
+        with open(lock_path, "a") as f:
+            fcntl.flock(f, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(f, fcntl.LOCK_UN)
         return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path.with_suffix(".lock"), "a") as f:
-        fcntl.flock(f, fcntl.LOCK_EX)
+    import msvcrt
+    fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        deadline = time.monotonic() + LOCK_WAIT_S
+        while True:
+            try:
+                os.lseek(fd, 0, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+                break
+            except OSError:
+                if time.monotonic() > deadline:
+                    raise
+                time.sleep(0.005)
         try:
             yield
         finally:
-            fcntl.flock(f, fcntl.LOCK_UN)
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+    finally:
+        os.close(fd)
 
 
 class Ledger:
@@ -169,7 +195,11 @@ class Ledger:
         total_cap = float(config.get("HANDOVER_CLAUDE_BUDGET_TOTAL_USD"))  # type: ignore[arg-type]
         today = self._today()
         with self._lock:
-            data = self._load()
+            try:
+                with _file_lock(self.path):
+                    data = self._load()
+            except OSError:  # lock not available (read-only folder, timeout): read anyway
+                data = self._load()
         if data is None:
             return Status(today, 0.0, 0.0, 0, 0, day_cap, total_cap, "ledger")
         day = data["days"].get(today, _empty())

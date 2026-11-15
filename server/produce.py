@@ -230,18 +230,33 @@ FONT_CANDIDATES = (
     "/System/Library/Fonts/SFNS.ttf",
     "/System/Library/Fonts/HelveticaNeue.ttc",
     "/System/Library/Fonts/Helvetica.ttc",
+    "C:/Windows/Fonts/SegUIVar.ttf",  # Segoe UI Variable (Windows 11): weight and optical size axes
     "C:/Windows/Fonts/segoeui.ttf",
+    "C:/Windows/Fonts/arial.ttf",
     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
 )
+# Static (non-variable) faces: the sibling file that carries a heavier weight.
+STATIC_WEIGHT_FILES = {
+    "segoeui.ttf": {"semibold": "seguisb.ttf", "bold": "segoeuib.ttf"},
+    "arial.ttf": {"semibold": "arialbd.ttf", "bold": "arialbd.ttf"},
+    "DejaVuSans.ttf": {"semibold": "DejaVuSans-Bold.ttf", "bold": "DejaVuSans-Bold.ttf"},
+}
 WEIGHTS = {"regular": 400, "medium": 510, "semibold": 590, "bold": 700}
 _font_cache: dict[tuple, ImageFont.FreeTypeFont] = {}
 
 
-def font_path() -> Optional[str]:
+def font_path(weight: str = "regular") -> Optional[str]:
+    """HANDOVER_PRODUCE_FONT, else the first system UI font found; for a static face, its file for weight."""
     override = _setting("HANDOVER_PRODUCE_FONT")
     if override and Path(str(override)).is_file():
         return str(override)
-    return next((p for p in FONT_CANDIDATES if Path(p).is_file()), None)
+    base = next((Path(p) for p in FONT_CANDIDATES if Path(p).is_file()), None)
+    if base is None:
+        return None
+    sibling = STATIC_WEIGHT_FILES.get(base.name, {}).get(weight)
+    if sibling and (base.parent / sibling).is_file():
+        return str(base.parent / sibling)
+    return str(base)
 
 
 def font(size: float, weight: str = "regular") -> ImageFont.FreeTypeFont:
@@ -251,7 +266,7 @@ def font(size: float, weight: str = "regular") -> ImageFont.FreeTypeFont:
     key = (size, weight)
     if key in _font_cache:
         return _font_cache[key]
-    path = font_path()
+    path = font_path(weight)
     if path is None:
         f = ImageFont.load_default(size)
     else:
@@ -263,7 +278,7 @@ def font(size: float, weight: str = "regular") -> ImageFont.FreeTypeFont:
                 name = axis["name"].decode() if isinstance(axis["name"], bytes) else str(axis["name"])
                 if name == "Weight":
                     values.append(WEIGHTS[weight])
-                elif name == "Optical Size":
+                elif name.lower() == "optical size":
                     values.append(max(axis["minimum"], min(axis["maximum"], size)))
                 else:
                     values.append(axis["default"])
@@ -817,7 +832,7 @@ class Graph:
         return len(self.inputs) - 1
 
     def still(self, path: Path, fps: float, seconds: float) -> int:
-        return self.input("-loop", "1", "-framerate", f"{fps:g}", "-t", f"{seconds:.3f}", "-i", str(path))
+        return self.input("-loop", "1", "-framerate", f"{fps:g}", "-t", f"{seconds:.3f}", "-i", Path(path).as_posix())
 
     def label(self, prefix: str = "v") -> str:
         self._n += 1
@@ -998,14 +1013,14 @@ def step_graph(plan: StepPlan, assets: dict) -> Graph:
     layout = Layout(plan.probe.width, plan.probe.height)
     u, m = layout.u, layout.margin
     W, H, fps, D = plan.probe.width, plan.probe.height, plan.probe.fps, plan.probe.duration
-    clip = g.input("-i", str(plan.clip))
+    clip = g.input("-i", plan.clip.as_posix())
     base = g.label()
     g.add(f"[{clip}:v]fps={fps:g},format=yuv420p,setsar=1[{base}]")
 
     if "ring" in assets:
         pattern, (rx, ry) = assets["ring"]
         start, _ = ring_window(plan)  # type: ignore[misc]
-        k = g.input("-framerate", f"{fps:g}", "-start_number", "0", "-i", str(pattern))
+        k = g.input("-framerate", f"{fps:g}", "-start_number", "0", "-i", Path(pattern).as_posix())
         src, out = g.label("o"), g.label()
         g.add(f"[{k}:v]format=rgba,setpts=PTS-STARTPTS+{start:.3f}/TB[{src}]")
         g.add(f"[{base}][{src}]overlay=x={rx}:y={ry}:eof_action=pass[{out}]")
@@ -1126,7 +1141,7 @@ def course_graph(steps: Sequence[tuple[Path, float]], intro_bg: Path, intro_text
 
     segs.append(card(intro_bg, intro_text, INTRO_S))
     for path, seconds in steps:
-        k = g.input("-i", str(path))
+        k = g.input("-i", Path(path).as_posix())
         v, a = g.label("s"), g.label("a")
         g.add(f"[{k}:v]fps={fps:g},format=yuv420p,setsar=1,settb=AVTB[{v}]")
         g.add(f"[{k}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo[{a}]")

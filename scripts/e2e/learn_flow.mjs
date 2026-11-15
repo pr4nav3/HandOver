@@ -82,12 +82,27 @@ function watch(page, label) {
 const stepCount = (page) => page.getByText(/^Step \d+ of \d+$/).first()
 const waitStep = (page, text, timeout) => page.getByText(text, { exact: true }).first().waitFor({ state: 'visible', timeout })
 
-const browser = await chromium.launch({
-  // Installed Chrome decodes the H.264 clips; E2E_CHANNEL=msedge also works.
-  channel: process.env.E2E_CHANNEL || 'chrome',
-  headless: process.env.E2E_HEADED !== '1',
-  args: ['--autoplay-policy=no-user-gesture-required'],
-})
+// Installed Chrome decodes the H.264 clips; without it, installed Edge does too.
+// E2E_CHANNEL pins one (chrome or msedge).
+async function launch() {
+  const channels = process.env.E2E_CHANNEL ? [process.env.E2E_CHANNEL] : ['chrome', 'msedge']
+  let last
+  for (const channel of channels) {
+    try {
+      const b = await chromium.launch({
+        channel,
+        headless: process.env.E2E_HEADED !== '1',
+        args: ['--autoplay-policy=no-user-gesture-required'],
+      })
+      console.log(`browser ${channel} ${b.version()}`)
+      return b
+    } catch (e) {
+      last = e
+    }
+  }
+  throw last
+}
+const browser = await launch()
 
 try {
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } })

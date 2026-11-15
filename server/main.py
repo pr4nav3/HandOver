@@ -2175,6 +2175,21 @@ def startup_cleanup(now: Optional[float] = None) -> list[Path]:
     return stale
 
 
+def port_free(port: int) -> bool:
+    """True when nothing listens on 0.0.0.0:port. Binds the way uvicorn will (SO_REUSEADDR only off Windows,
+    where it would let two listeners share a port), so a taken port is named before any server starts."""
+    import socket
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        if os.name != "nt":
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            s.bind(("0.0.0.0", port))
+        except OSError:
+            return False
+    return True
+
+
 def serve() -> None:
     """Serve http and (when certs exist) https from ONE process, so both share the same learn session."""
     import uvicorn
@@ -2201,6 +2216,12 @@ def serve() -> None:
         def capture_signals(self):  # signals are handled once below, for both servers
             yield
 
+    for c in configs:
+        if not port_free(c.port):
+            hint = f"netstat -ano | findstr :{c.port}" if os.name == "nt" else f"lsof -nP -iTCP:{c.port} -sTCP:LISTEN"
+            log.error("port %d is already in use (often a stale hub): find it with  %s  and stop it, "
+                      "or set HANDOVER_PORT / HANDOVER_HTTPS_PORT", c.port, hint)
+            raise SystemExit(1)
     servers = [Server(c) for c in configs]
     info = hub_info()
     if info["hub_url"]:
@@ -2215,7 +2236,8 @@ def serve() -> None:
                 s.should_exit = True
 
         loop = asyncio.get_running_loop()
-        for sig in (signal.SIGINT, signal.SIGTERM):
+        # SIGBREAK: Ctrl+Break in a Windows console, and what scripts/e2e_demo.py sends for a clean stop.
+        for sig in (signal.SIGINT, signal.SIGTERM, *([signal.SIGBREAK] if hasattr(signal, "SIGBREAK") else [])):
             try:
                 loop.add_signal_handler(sig, stop)
             except (NotImplementedError, RuntimeError):  # Windows event loops have no add_signal_handler
