@@ -228,6 +228,7 @@ function render() {
     version: app.snap.version,
     search: ui.themeSearch,
     checks: off,
+    checkInterval: s?.check_interval_s ?? null,
     camera: prefs.camera ? CAMERA_WORD[prefs.camera] : "Not chosen yet",
     account: app.me?.user ? `${app.me.user.name}, ${app.me.user.role}` : "",
   });
@@ -505,6 +506,7 @@ bindSettings($("settings"), {
     render();
   },
   set: (patch) => void setSettings(patch),
+  checkInterval: (seconds) => void call("setCheckInterval", { seconds }).catch(showError),
   search: (text) => {
     ui.themeSearch = text;
     render();

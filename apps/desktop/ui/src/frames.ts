@@ -3,8 +3,8 @@
 //   time; events that arrive meanwhile collapse into the newest, so the picture never lags.
 //   Decoding is createImageBitmap (off the main thread in WebKit, Chromium and WebView2), and
 //   drawing waits for the next animation frame. No object URLs are made, so none can leak.
-// - This computer as the camera: getUserMedia at about 15 fps, scaled to a long side of 640 and
-//   encoded as JPEG at quality 0.5. A frame is captured only when the last one has been handed
+// - This computer as the camera: about 12 fps (CONTRACT.md 6), scaled to a long side of 640 and
+//   encoded as JPEG at quality 0.55. A frame is captured only when the last one has been handed
 //   to the core, which itself keeps only the newest unsent frame.
 
 /** Runs `work` on the newest value only. A value offered while work is running replaces any
@@ -111,9 +111,9 @@ export class LiveCanvas {
 export type LocalState = "off" | "starting" | "on" | "denied" | "missing" | "error";
 
 /** Frames per second, long side and JPEG quality for this computer's webcam. */
-export const LOCAL_FPS = 15;
+export const LOCAL_FPS = 12;
 export const LOCAL_LONG_SIDE = 640;
-export const LOCAL_QUALITY = 0.5;
+export const LOCAL_QUALITY = 0.55;
 
 /** Output size for a source frame: the long side scaled down to `long`, never up. */
 export function fitLongSide(w: number, h: number, long = LOCAL_LONG_SIDE): { w: number; h: number } {
