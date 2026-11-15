@@ -347,7 +347,7 @@ def check_extras(rep: Report, name: str, step: dict, n: int, start: float | None
         if (not isinstance(st, dict) or st.get("own") not in ANSWERS or st.get("prev") not in ANSWERS
                 or not isinstance(st.get("ok"), bool)):
             rep.fail(name, 'self_test must be {"own":"yes|no|unsure","prev":"yes|no|unsure","ok":bool}')
-        elif not st["ok"]:
+        elif not st["ok"] and step.get("check_type", "camera") != "manual":
             rep.warn(name, "teach-time self-test failed; consider making this step manual")
     rep.ok(name, "fields valid")
 

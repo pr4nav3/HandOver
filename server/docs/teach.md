@@ -29,7 +29,22 @@ From the repo root.
 
 # Rebuild clips after editing lesson.json
 .venv/bin/python -m server.teach --recut lessons/fortune-teller-v1
+
+# Known task, silent take: template as a prior, titles and questions from the frames, failing steps manual
+.venv/bin/python -m server.teach take.mov --id fortune-teller-v2 --title "Fold a fortune teller" \
+  --prior lessons/templates/fortune-teller.steps.json --retitle --strict-self-test
 ```
+
+Windows, the whole pipeline in one command (teach, contact sheet, voiceover, lint, step table):
+
+```powershell
+scripts\make_lesson.ps1 -Video takes\fold2.mov -Id fortune-teller-v2 -Title "Fold a fortune teller" `
+    -Template lessons\templates\fortune-teller.steps.json
+# look at lessons\fortune-teller-v2\review\sheet.jpg, move start/end in lesson.json, then
+scripts\make_lesson.ps1 -Id fortune-teller-v2 -Recut
+```
+
+`-Recut` recuts from the edited lesson.json, chooses every reference frame again (`-KeepRefTimes` keeps hand-set `ref_time` values that still fall inside their step), rewrites the questions from the new frames (`-Retitle` also the titles), self-tests, redraws the sheet and voices again. `-NoVoice` skips the voiceover. A new build refuses an existing id.
 
 | Argument | Meaning |
 |---|---|
@@ -38,7 +53,13 @@ From the repo root.
 | `--title` | Defaults to the id |
 | `--concat FILE...` | More videos appended after `VIDEO` |
 | `--steps-json FILE` | Skip Gemini, use these steps and transcript |
-| `--recut LESSON_DIR` | Rebuild from the folder's `lesson.json` and `extraction.json` |
+| `--recut LESSON_DIR` | Rebuild from the folder's `lesson.json` and `extraction.json`. Drops a `voiceover` field (the new clips carry the take's audio) |
+| `--prior FILE` | Known task: a steps template (`lessons/templates/*.steps.json`) sent to the Claude extraction as a strong prior (order, titles, questions); its times are ignored. Gemini ignores it |
+| `--retitle` | After the cut, rewrite every title, check question and common mistake from the step's BEFORE, DURING and DONE frames in one call, so title and question name the same shape. A question the model calls `manual` makes the step manual; step 1 stays manual |
+| `--strict-self-test` | Every step that fails the automatic self-test becomes manual (default: only steps whose own reference fails) |
+| `--repick` | With `--recut`: clear every `ref_time` first, so all reference frames are chosen again |
+| `--self-test LESSON_DIR` | Run the self-test only |
+| `--table LESSON_DIR` | Print the step table (n, title, start, end, check type, question, self-test) |
 
 The web Teach screen does the same through `POST /api/lesson`, with job status `queued`, `normalizing`, `extracting`, `cutting`, `done` or `error` at `GET /api/jobs/{job}`. A failed job removes its half-built folder.
 
@@ -98,14 +119,38 @@ Every timestamp is validated before anything is cut. A step under 0.2 s after cl
 | | Rule |
 |---|---|
 | Live | Stillest, not black frame in the last 15% of the clip (the model's `ref_time` hint is used when it is valid); the time is saved as `ref_time`. Without one, the last frame of the clip. Step 1 is made manual on new extractions. Questions that name colors are reworded or made manual |
+| Hands-free | That frame must be hands-free still (mean 96x96 gray difference to its neighbours at 10 fps of 0.8 or less). If not, a still frame elsewhere in the window wins, else the first still pause up to 2.5 s after the step end (saved as a null `ref_time`; found again on every recut) |
+| Hands always in frame | When no hands-free still exists at all, the stillest 0.5 s window (mean frame-to-frame difference) in the last `HANDOVER_REF_TAIL` of the step (default 25%) replaces the frame when it moves at most 80% as much. Among windows within 20% of the stillest, the one with the most bright pixels wins (the light sheet least covered by hands) |
+| Override | Set `ref_time` (`MM:SS.s`, inside the step) in lesson.json and run `--recut` without `--repick` (or `make_lesson.ps1 -Recut -KeepRefTimes`): a valid `ref_time` is used as is. Empty or null means choose again. `scripts/contact_sheet.py --lesson` shows each step's reference next to its first, middle and last frame |
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `HANDOVER_REF_TAIL` | 0.25 (0.05 to 0.5) | fraction of a step, back from its end, searched for the stillest window when the hands never leave the frame |
 
 ## Self-test (live)
 
 At teach time each step's question is asked against its own reference (expect yes) and the previous step's reference (expect no). Steps that fail are suggested as manual. Result saved as `self_test: {own, prev, ok}`.
 
-## Voiceover (in progress)
+## Voiceover
 
-A narrated voiceover for lessons is being built by another agent (`server/voice.py`). A recut through the hub drops a stale `voiceover` field from `lesson.json`, because the recut clips carry the original audio.
+`server/voice.py` narrates a lesson whose expert said little or nothing. Live on macOS and Windows.
+
+```sh
+.venv/bin/python -m server.voice lessons/<id> --dry-run          # write and print the script only
+.venv/bin/python -m server.voice lessons/<id> --mode auto        # replace when the take has no narration, else duck
+.venv/bin/python -m server.voice lessons/<id> --undo             # put the original clips and captions back
+```
+
+| Part | How |
+|---|---|
+| Script | One Claude call (`HANDOVER_VOICE_SCRIPT_MODEL`, default Haiku) with each step's title, question, tip, a middle frame and the reference frame. One or two calm, concrete sentences per step, at most 2.5 words per second of clip and never more than 22 words. Fix the wording in `SYSTEM` in voice.py, not in the output |
+| Speech | Kokoro (kokoro-onnx, CPU), voice `HANDOVER_VOICE` (af_heart). Model files (354 MB) download once to `~/.cache/handover/kokoro`; espeak-ng comes from the espeakng-loader wheel, so nothing else to install on Windows. macOS `say` is the fallback on a Mac only |
+| Mix | `duck`: take audio at -18 dB under the voice; `replace`: voice only. Voice normalized to -16 LUFS |
+| Captions | `captions/NN.vtt` rewritten with one cue per spoken sentence, timed from the synthesized audio |
+| Undo | `clips/NN.orig.mp4` and `captions/NN.orig.vtt` keep the originals; `--undo` restores them and removes the field |
+| lesson.json | Top-level `voiceover: {engine, voice, model, script_model, mode}` |
+
+A recut (CLI or hub) drops the `voiceover` field and the backups, because the recut clips carry the take's own audio: run the voiceover again after every recut (`make_lesson.ps1` does).
 
 ## Lesson folder
 
@@ -117,6 +162,7 @@ lessons/<id>/
   clips/01.mp4 ...
   captions/01.vtt ...
   frames/01.jpg ...
+  review/sheet.jpg   contact sheet from make_lesson.ps1 (not read by the hub)
 ```
 
 `.recut_tmp/` and `.recut_old/` exist only during a cut. Uploads wait in `server/uploads/` and are deleted when the job ends.
@@ -139,7 +185,7 @@ Example: the boundary between steps 3 and 4 is 1 s late.
    .venv/bin/python -m server.teach --recut lessons/<id>
    ```
 
-4. Play both clips in the Teach screen.
+4. Play both clips in the Teach screen, or draw the boundaries: `.venv/bin/python scripts/contact_sheet.py --lesson lessons/<id>` (writes `lessons/<id>/review/sheet.jpg`). For a whole take: `scripts/contact_sheet.py lessons/<id>/norm.mp4 --every 2 --cols 6 --out sheet.jpg`.
 
 A bad timestamp returns 400 with the reason and the old `lesson.json` is restored.
 

@@ -19,3 +19,5 @@ rehearsal.log
 *.log
 *.spec.bak
 /data/
+*.orig.mp4
+*.orig.vtt

@@ -10,7 +10,7 @@
   "steps": [
     {
       "n": 1,
-      "title": "Fold the strip in half again",
+      "title": "Fold the sheet in half into a square",
       "start": "00:00",
       "end": "00:09.2",
       "clip": "clips/01.mp4",
@@ -20,32 +20,32 @@
       "check_type": "manual",
       "check_question": "",
       "prerequisites": [],
-      "common_mistake": "Keep the folded edges aligned."
+      "common_mistake": "Align the edges exactly before creasing the fold."
     },
     {
       "n": 2,
-      "title": "Fold the square diagonally into a triangle",
+      "title": "Fold the square in half into a rectangle",
       "start": "00:09.2",
       "end": "00:24.9",
       "clip": "clips/02.mp4",
       "captions": "captions/02.vtt",
       "ref_frame": "frames/02.jpg",
       "ref_time": "00:22.5",
-      "check_type": "camera",
-      "check_question": "Is the paper now a rectangle with a single crease down its middle?",
+      "check_type": "manual",
+      "check_question": "",
       "prerequisites": [
         1
       ],
-      "common_mistake": "Match corners exactly to form the triangle.",
+      "common_mistake": "Match the edges exactly before folding.",
       "self_test": {
         "own": "yes",
-        "prev": "yes",
+        "prev": "unsure",
         "ok": false
       }
     },
     {
       "n": 3,
-      "title": "Fold the triangle into a smaller triangle",
+      "title": "Fold the rectangle corner diagonally into a triangle",
       "start": "00:24.9",
       "end": "00:31.4",
       "clip": "clips/03.mp4",
@@ -53,11 +53,11 @@
       "ref_frame": "frames/03.jpg",
       "ref_time": null,
       "check_type": "camera",
-      "check_question": "Is the paper now a single triangle with exactly three corners?",
+      "check_question": "Is the paper a triangle with three corners and a diagonal fold line along one edge?",
       "prerequisites": [
         2
       ],
-      "common_mistake": "Press along the crease firmly.",
+      "common_mistake": "Fold along the diagonal, not across the width.",
       "self_test": {
         "own": "yes",
         "prev": "no",
@@ -66,19 +66,19 @@
     },
     {
       "n": 4,
-      "title": "Fold the triangle corners into a flat shape",
+      "title": "Fold the top corner down across the triangle",
       "start": "00:31.4",
       "end": "00:43.2",
       "clip": "clips/04.mp4",
       "captions": "captions/04.vtt",
       "ref_frame": "frames/04.jpg",
       "ref_time": null,
-      "check_type": "camera",
-      "check_question": "Is the paper a triangle with a visible fold line running across its middle?",
+      "check_type": "manual",
+      "check_question": "",
       "prerequisites": [
         3
       ],
-      "common_mistake": "Keep the folded layers aligned.",
+      "common_mistake": "Keep the flap's edge aligned with the triangle's edge.",
       "self_test": {
         "own": "yes",
         "prev": "yes",
@@ -94,12 +94,12 @@
       "captions": "captions/05.vtt",
       "ref_frame": "frames/05.jpg",
       "ref_time": null,
-      "check_type": "camera",
-      "check_question": "Are the two side corners folded inward so the triangle has a central seam?",
+      "check_type": "manual",
+      "check_question": "",
       "prerequisites": [
         4
       ],
-      "common_mistake": "Fold both sides symmetrically.",
+      "common_mistake": "Fold both corners equally toward the center line.",
       "self_test": {
         "own": "yes",
         "prev": "yes",
@@ -116,11 +116,11 @@
       "ref_frame": "frames/06.jpg",
       "ref_time": "01:06.6",
       "check_type": "camera",
-      "check_question": "Is the paper a four-cornered diamond with a flap folded over one side?",
+      "check_question": "Is the paper a square with four corners and diagonal creases meeting at its center?",
       "prerequisites": [
         5
       ],
-      "common_mistake": "Open the flaps gently to avoid tearing.",
+      "common_mistake": "Open gently so creases stay sharp and aligned.",
       "self_test": {
         "own": "yes",
         "prev": "no",
@@ -129,7 +129,7 @@
     },
     {
       "n": 7,
-      "title": "Fold the corners to the center to form a kite",
+      "title": "Fold corners to the center into a square",
       "start": "01:06.8",
       "end": "01:27.8",
       "clip": "clips/07.mp4",
@@ -141,28 +141,28 @@
       "prerequisites": [
         6
       ],
-      "common_mistake": "Fold each corner to the exact center point.",
+      "common_mistake": "Fold each corner exactly to the center point.",
       "self_test": {
-        "own": "unsure",
-        "prev": "no",
+        "own": "no",
+        "prev": "unsure",
         "ok": false
       }
     },
     {
       "n": 8,
-      "title": "Fold the flaps into a small square packet",
+      "title": "Fold the flaps in to a small packet",
       "start": "01:27.8",
       "end": "02:09.7",
       "clip": "clips/08.mp4",
       "captions": "captions/08.vtt",
       "ref_frame": "frames/08.jpg",
       "ref_time": "02:09.5",
-      "check_type": "camera",
-      "check_question": "Is the paper a small flat rectangle with a vertical crease down its center?",
+      "check_type": "manual",
+      "check_question": "",
       "prerequisites": [
         7
       ],
-      "common_mistake": "Keep the folds crisp and aligned.",
+      "common_mistake": "Tuck flaps fully inside before pressing flat.",
       "self_test": {
         "own": "yes",
         "prev": "unsure",
@@ -179,16 +179,23 @@
       "ref_frame": "frames/09.jpg",
       "ref_time": "02:35.7",
       "check_type": "camera",
-      "check_question": "Is the paper now a three-dimensional pocket with an open top and a pointed flap?",
+      "check_question": "Does the folded paper show a pocket with an open top and flaps tucked inside?",
       "prerequisites": [
         8
       ],
-      "common_mistake": "Tuck the flap fully into the pocket.",
+      "common_mistake": "Tuck the flaps inside, not outside.",
       "self_test": {
         "own": "yes",
         "prev": "no",
         "ok": true
       }
     }
-  ]
+  ],
+  "voiceover": {
+    "engine": "kokoro",
+    "voice": "af_heart",
+    "model": "kokoro-v1.0",
+    "script_model": "claude-haiku-5-5",
+    "mode": "replace"
+  }
 }

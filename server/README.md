@@ -75,7 +75,7 @@ flowchart LR
 | `mistake.py` | When to run the k-1, k, k+1 compare and what message to send | Live |
 | `spend.py` | Claude spend ledger and budget caps | Live |
 | `teach.py` | Normalize, extract steps (Gemini, or Claude plus local Whisper narration), cut clips, captions, reference frames, self-test, recut | Live |
-| `voice.py` | Voiceover for lessons | In progress (another agent) |
+| `voice.py` | Voiceover: Claude-written narration spoken by Kokoro, mixed into clips with timed captions, undo | Live |
 | `replay.py` | Stream an MP4 into `/ws/camera`, with hello | Live |
 | `databricks.py` | Learn events to a local JSON lines mirror and, with credentials, to Databricks | Live |
 | `static/capture.html` | Safari camera page | Live |
