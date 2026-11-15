@@ -74,7 +74,10 @@
       "name": "f8b5b91a",
       "displayName": "ds_mistakes",
       "queryLines": [
-        "SELECT * FROM workspace.handover.ds_mistakes_real"
+        "SELECT lesson_id, n, step_label,\n",
+        "  CASE mistake_kind WHEN 'live' THEN 'Live' ELSE mistake_kind END AS mistake_kind,\n",
+        "  mistakes, avg_confidence\n",
+        "FROM workspace.handover.ds_mistakes_real"
       ]
     },
     {
@@ -292,42 +295,42 @@
                 "fields": [
                   {
                     "fieldName": "lesson_id",
-                    "displayName": "lesson_id",
+                    "displayName": "Lesson",
                     "queryName": "filter_lesson_ds_lessons"
                   },
                   {
                     "fieldName": "lesson_id",
-                    "displayName": "lesson_id",
+                    "displayName": "Lesson",
                     "queryName": "filter_lesson_ds_runs"
                   },
                   {
                     "fieldName": "lesson_id",
-                    "displayName": "lesson_id",
+                    "displayName": "Lesson",
                     "queryName": "filter_lesson_ds_advances"
                   },
                   {
                     "fieldName": "lesson_id",
-                    "displayName": "lesson_id",
+                    "displayName": "Lesson",
                     "queryName": "filter_lesson_ds_check_latency_rows"
                   },
                   {
                     "fieldName": "lesson_id",
-                    "displayName": "lesson_id",
+                    "displayName": "Lesson",
                     "queryName": "filter_lesson_ds_time_per_step"
                   },
                   {
                     "fieldName": "lesson_id",
-                    "displayName": "lesson_id",
+                    "displayName": "Lesson",
                     "queryName": "filter_lesson_ds_advance_method"
                   },
                   {
                     "fieldName": "lesson_id",
-                    "displayName": "lesson_id",
+                    "displayName": "Lesson",
                     "queryName": "filter_lesson_ds_mistakes"
                   },
                   {
                     "fieldName": "lesson_id",
-                    "displayName": "lesson_id",
+                    "displayName": "Lesson",
                     "queryName": "filter_lesson_ds_step_summary"
                   }
                 ]
@@ -644,16 +647,6 @@
               "widgetType": "bar",
               "encodings": {
                 "x": {
-                  "fieldName": "step_label",
-                  "scale": {
-                    "type": "categorical"
-                  },
-                  "displayName": "Step",
-                  "axis": {
-                    "title": "Step"
-                  }
-                },
-                "y": {
                   "fieldName": "sum(seconds)",
                   "scale": {
                     "type": "quantitative"
@@ -661,6 +654,16 @@
                   "displayName": "Seconds",
                   "axis": {
                     "title": "Seconds"
+                  }
+                },
+                "y": {
+                  "fieldName": "step_label",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Step",
+                  "axis": {
+                    "title": "Step"
                   }
                 },
                 "label": {
@@ -681,14 +684,14 @@
                       }
                     ]
                   },
-                  "displayName": "series"
+                  "displayName": "Who"
                 }
               },
               "frame": {
                 "showTitle": true,
                 "title": "Time per step: learners vs the expert",
                 "showDescription": true,
-                "description": "The step where the dark bar towers over the light one is where people get stuck."
+                "description": "Where the dark bar is far longer than the light one, people get stuck. Learner bars appear once live runs are logged."
               },
               "mark": {
                 "layout": "group"
@@ -733,16 +736,6 @@
               "widgetType": "bar",
               "encodings": {
                 "x": {
-                  "fieldName": "step_label",
-                  "scale": {
-                    "type": "categorical"
-                  },
-                  "displayName": "Step",
-                  "axis": {
-                    "title": "Step"
-                  }
-                },
-                "y": {
                   "fieldName": "sum(advances)",
                   "scale": {
                     "type": "quantitative"
@@ -750,6 +743,16 @@
                   "displayName": "Advances",
                   "axis": {
                     "title": "Advances"
+                  }
+                },
+                "y": {
+                  "fieldName": "step_label",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Step",
+                  "axis": {
+                    "title": "Step"
                   }
                 },
                 "label": {
@@ -774,7 +777,7 @@
                       }
                     ]
                   },
-                  "displayName": "method"
+                  "displayName": "Passed by"
                 }
               },
               "frame": {
@@ -823,16 +826,6 @@
               "widgetType": "bar",
               "encodings": {
                 "x": {
-                  "fieldName": "step_label",
-                  "scale": {
-                    "type": "categorical"
-                  },
-                  "displayName": "Step",
-                  "axis": {
-                    "title": "Step"
-                  }
-                },
-                "y": {
                   "fieldName": "sum(mistakes)",
                   "scale": {
                     "type": "quantitative"
@@ -840,6 +833,16 @@
                   "displayName": "Mistakes",
                   "axis": {
                     "title": "Mistakes"
+                  }
+                },
+                "y": {
+                  "fieldName": "step_label",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Step",
+                  "axis": {
+                    "title": "Step"
                   }
                 },
                 "label": {
@@ -859,19 +862,19 @@
                         "color": "#FFCC66"
                       },
                       {
-                        "value": "live",
+                        "value": "Live",
                         "color": "#C27C0E"
                       }
                     ]
                   },
-                  "displayName": "mistake_kind"
+                  "displayName": "Kind"
                 }
               },
               "frame": {
                 "showTitle": true,
                 "title": "Mistakes the camera caught, per step",
                 "showDescription": true,
-                "description": "Behind = still looks like the previous step. Ahead = already on the next one."
+                "description": "Behind = still looks like the previous step. Ahead = already on the next one. Live = a known mistake spotted mid-fold (advisory)."
               }
             }
           },
@@ -1260,42 +1263,42 @@
                 "fields": [
                   {
                     "fieldName": "lesson_id",
-                    "displayName": "lesson_id",
+                    "displayName": "Lesson",
                     "queryName": "filter_lesson_ds_checks"
                   },
                   {
                     "fieldName": "lesson_id",
-                    "displayName": "lesson_id",
+                    "displayName": "Lesson",
                     "queryName": "filter_lesson_ds_check_latency_by_step"
                   },
                   {
                     "fieldName": "lesson_id",
-                    "displayName": "lesson_id",
+                    "displayName": "Lesson",
                     "queryName": "filter_lesson_ds_check_latency_overall"
                   },
                   {
                     "fieldName": "lesson_id",
-                    "displayName": "lesson_id",
+                    "displayName": "Lesson",
                     "queryName": "filter_lesson_ds_manual_rate"
                   },
                   {
                     "fieldName": "lesson_id",
-                    "displayName": "lesson_id",
+                    "displayName": "Lesson",
                     "queryName": "filter_lesson_ds_false_passes"
                   },
                   {
                     "fieldName": "lesson_id",
-                    "displayName": "lesson_id",
+                    "displayName": "Lesson",
                     "queryName": "filter_lesson_ds_abandoned"
                   },
                   {
                     "fieldName": "lesson_id",
-                    "displayName": "lesson_id",
+                    "displayName": "Lesson",
                     "queryName": "filter_lesson_ds_check_offline"
                   },
                   {
                     "fieldName": "lesson_id",
-                    "displayName": "lesson_id",
+                    "displayName": "Lesson",
                     "queryName": "filter_lesson_ds_lessons"
                   }
                 ]
@@ -1360,16 +1363,6 @@
               "widgetType": "bar",
               "encodings": {
                 "x": {
-                  "fieldName": "step_label",
-                  "scale": {
-                    "type": "categorical"
-                  },
-                  "displayName": "Step",
-                  "axis": {
-                    "title": "Step"
-                  }
-                },
-                "y": {
                   "fieldName": "count(*)",
                   "scale": {
                     "type": "quantitative"
@@ -1377,6 +1370,16 @@
                   "displayName": "Checks",
                   "axis": {
                     "title": "Checks"
+                  }
+                },
+                "y": {
+                  "fieldName": "step_label",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Step",
+                  "axis": {
+                    "title": "Step"
                   }
                 },
                 "label": {
@@ -1401,7 +1404,7 @@
                       }
                     ]
                   },
-                  "displayName": "verdict"
+                  "displayName": "Answer"
                 }
               },
               "frame": {
@@ -1450,16 +1453,6 @@
               "widgetType": "bar",
               "encodings": {
                 "x": {
-                  "fieldName": "step_label",
-                  "scale": {
-                    "type": "categorical"
-                  },
-                  "displayName": "Step",
-                  "axis": {
-                    "title": "Step"
-                  }
-                },
-                "y": {
                   "fieldName": "sum(latency_ms)",
                   "scale": {
                     "type": "quantitative"
@@ -1467,6 +1460,16 @@
                   "displayName": "ms",
                   "axis": {
                     "title": "ms"
+                  }
+                },
+                "y": {
+                  "fieldName": "step_label",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Step",
+                  "axis": {
+                    "title": "Step"
                   }
                 },
                 "label": {
@@ -1487,7 +1490,7 @@
                       }
                     ]
                   },
-                  "displayName": "stat"
+                  "displayName": "Latency"
                 }
               },
               "frame": {
@@ -1533,16 +1536,6 @@
               "widgetType": "bar",
               "encodings": {
                 "x": {
-                  "fieldName": "step_label",
-                  "scale": {
-                    "type": "categorical"
-                  },
-                  "displayName": "Step",
-                  "axis": {
-                    "title": "Step"
-                  }
-                },
-                "y": {
                   "fieldName": "avg(manual_rate)",
                   "scale": {
                     "type": "quantitative"
@@ -1550,6 +1543,16 @@
                   "displayName": "Share by Next",
                   "axis": {
                     "title": "Share by Next"
+                  }
+                },
+                "y": {
+                  "fieldName": "step_label",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Step",
+                  "axis": {
+                    "title": "Step"
                   }
                 },
                 "label": {
@@ -1603,16 +1606,6 @@
               "widgetType": "bar",
               "encodings": {
                 "x": {
-                  "fieldName": "step_label",
-                  "scale": {
-                    "type": "categorical"
-                  },
-                  "displayName": "Step",
-                  "axis": {
-                    "title": "Step"
-                  }
-                },
-                "y": {
                   "fieldName": "avg(confidence)",
                   "scale": {
                     "type": "quantitative"
@@ -1620,6 +1613,16 @@
                   "displayName": "Confidence (0 to 1)",
                   "axis": {
                     "title": "Confidence (0 to 1)"
+                  }
+                },
+                "y": {
+                  "fieldName": "step_label",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Step",
+                  "axis": {
+                    "title": "Step"
                   }
                 },
                 "label": {
@@ -1813,16 +1816,6 @@
               "widgetType": "bar",
               "encodings": {
                 "x": {
-                  "fieldName": "step_label",
-                  "scale": {
-                    "type": "categorical"
-                  },
-                  "displayName": "Step",
-                  "axis": {
-                    "title": "Step"
-                  }
-                },
-                "y": {
                   "fieldName": "sum(abandoned_runs)",
                   "scale": {
                     "type": "quantitative"
@@ -1830,6 +1823,16 @@
                   "displayName": "Runs",
                   "axis": {
                     "title": "Runs"
+                  }
+                },
+                "y": {
+                  "fieldName": "step_label",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Step",
+                  "axis": {
+                    "title": "Step"
                   }
                 },
                 "label": {

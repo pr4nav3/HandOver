@@ -21,10 +21,10 @@ Everything below runs on the demo laptop: Pranav's Windows laptop, repo at `C:\U
   - `events_real`, `runs_real`: events and runs without those runs and without `selftest` rows. In `events_real`, advance reasons `ahead_confirm` and `understand_override` count as `camera`; the original is in `reason_detail`.
   - `ds_<name>`: the 13 datasets of `02_dashboard_datasets.sql`, unfiltered.
   - `ds_<name>_real`: the same over `events_real` and `runs_real`, plus the review fixes: checks-off rows need a reason, latency leaves out mock and errored checks, timed out means `error_kind = 'timeout'`.
-- Dashboard "HandOver: learner runs": 15 datasets. 13 are `SELECT * FROM workspace.handover.ds_<name>_real`, 2 are small queries over `events_real`. Layout in `dashboard.md`.
+- Dashboard "HandOver: learner runs": 15 datasets. 12 are `SELECT * FROM workspace.handover.ds_<name>_real`, `ds_mistakes` selects the same view with `live` shown as `Live`, and 2 are small queries over `events_real`. Layout in `dashboard.md`.
 - Genie space "HandOver learner runs": `events_real`, `runs_real`, `lessons`, `steps`, 8 tested examples. Details in `genie.md`.
 
-Test data. `synthetic-fortune-teller-v1` is a rendered test lesson, not learners. Its runs pass the `_real` filter, so pick the real lesson in the dashboard's Lesson filter. Genie leaves lesson ids starting `synthetic-`, `test-`, `TEST-` or `e2e-` out unless asked. `synthetic-fortune-teller-v1` has no `steps` rows, so its per-step charts stay empty. The real lessons for the demo: `fortune-teller-v2` (origami) and `front-wheel-v1` (bike).
+Test data. `synthetic-fortune-teller-v1` is a rendered test lesson, not learners. Its runs pass the `_real` filter, so pick the real lesson in the dashboard's Lesson filter. Genie leaves lesson ids starting `synthetic-`, `test-`, `TEST-` or `e2e-` out unless asked. `synthetic-fortune-teller-v1` has no `steps` rows, so its per-step charts stay empty. Real lessons: `fortune-teller-v1` is the one lesson in the workspace now (9 steps). The live demo lesson `fortune-teller-v2` (origami) and the showcase `front-wheel-v1` (bike) appear in the Lesson filter once the hub uploads them (it does on the first run, or `--upload <id>`).
 
 ## Files
 
@@ -89,7 +89,7 @@ Then do one real run on the hub and look at the dashboard: Runs goes up by one a
 ## 4. Before judges
 
 1. Warm the warehouse: open the published dashboard once, or run `.venv\Scripts\python -m server.databricks --warm` (expect `warm: ok`). The warehouse stops after about 10 idle minutes; warm again if judges are more than 10 minutes apart.
-2. Dashboard: open the published link, pick the real lesson in the Lesson filter (`fortune-teller-v2` or `front-wheel-v1`).
+2. Dashboard: open the published link, pick the lesson you ran in the Lesson filter (`fortune-teller-v2` for the live demo once uploaded; until then only `fortune-teller-v1` is there).
 3. Genie: open the space, start a new chat, click "Which step do people get stuck on?". Screenshot the answer as a fallback.
 4. Do not edit the dashboard, Genie or the views during judging. Never set a refresh schedule.
 
