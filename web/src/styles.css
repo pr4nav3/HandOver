@@ -5,8 +5,9 @@
   --border: rgba(255, 255, 255, 0.08);
   --border-strong: rgba(255, 255, 255, 0.14);
   --text: #f5f5f7;
-  --muted: rgba(235, 235, 245, 0.56);
-  --faint: rgba(235, 235, 245, 0.32);
+  /* Both pass 4.5:1 on --bg, --panel and --panel-2 (faint is 4.8:1 at worst). */
+  --muted: rgba(235, 235, 245, 0.66);
+  --faint: rgba(235, 235, 245, 0.52);
   --green: #30d158;
   --grey: #8e8e93;
   --red: #ff6961;
@@ -371,11 +372,11 @@ a {
 }
 
 /* Any sliver left by rounding shows a calm surface, not black bars. */
-.panel.live:has(img:not(.hidden)) {
+.panel.live:has(canvas:not(.hidden)) {
   background: var(--panel-2);
 }
 
-.live img {
+.live canvas {
   position: absolute;
   inset: 0;
   width: 100%;
@@ -386,7 +387,7 @@ a {
 
 /* Camera dropped: the last frame stays so the learner keeps context, dimmed so
    nobody takes it for live. */
-.live img.lost {
+.live canvas.lost {
   filter: grayscale(0.7) brightness(0.35);
 }
 
@@ -404,11 +405,12 @@ a {
   white-space: nowrap;
 }
 
-/* A replayed video must never pass for a live camera. */
+/* A replayed video must never pass for a live camera. Top right, so the
+   pane label keeps the top left. */
 .rec {
   position: absolute;
   top: 14px;
-  left: 14px;
+  right: 14px;
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -490,6 +492,11 @@ a {
   place-items: center;
 }
 
+.clip-media {
+  position: absolute;
+  inset: 0;
+}
+
 .clip video {
   position: absolute;
   inset: 0;
@@ -498,17 +505,21 @@ a {
   object-fit: contain;
 }
 
+/* The standby clip buffers the next step underneath, out of sight. */
+.clip video.standby {
+  visibility: hidden;
+}
+
 /* Lift captions off the bottom edge of the picture. */
 video::-webkit-media-text-track-container {
   transform: translateY(-10px);
 }
 
-/* ::cue ignores padding, so a same-color outline adds side room. Chrome draws
-   the cue background at about 50% black whatever alpha is set here, so both
-   use 0.5 and the outline blends in seamlessly, including on wrapped lines. */
+/* ::cue ignores padding, so a same-color outline adds side room. 72% black is
+   DESIGN.md captionFill: white text keeps 9:1 even over a white frame. */
 video::cue {
-  background-color: rgba(0, 0, 0, 0.5);
-  outline: 0.3em solid rgba(0, 0, 0, 0.5);
+  background-color: rgba(0, 0, 0, 0.72);
+  outline: 0.3em solid rgba(0, 0, 0, 0.72);
   color: #fff;
   font-family: var(--font);
   font-size: clamp(18px, 1.4vw, 30px);
@@ -574,6 +585,13 @@ video::cue {
   font-size: clamp(16px, 1.3vw, 22px);
   font-weight: 600;
   min-width: 0;
+}
+
+.mistake-label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--amber);
 }
 
 .mistake-actions {
@@ -648,6 +666,21 @@ video::cue {
   color: var(--muted);
 }
 
+/* Says plainly that steps pass on a timer, not by the camera. */
+.mode-pill {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px dashed var(--border-strong);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
 .badge-dot {
   width: 8px;
   height: 8px;
@@ -655,22 +688,10 @@ video::cue {
   background: var(--grey);
 }
 
-/* One steady pulse while the camera is watching. Checking and watching share
-   this class, so the server toggling between them never restarts it. */
+/* A steady, brighter dot while a camera is watching (DESIGN.md principle 8:
+   status dots never pulse). Checking and watching share this class. */
 .badge.watching.live .badge-dot {
-  animation: pulse 1.6s ease-in-out infinite;
-}
-
-@keyframes pulse {
-  0%,
-  100% {
-    opacity: 1;
-    transform: scale(1);
-  }
-  50% {
-    opacity: 0.35;
-    transform: scale(0.8);
-  }
+  background: var(--text);
 }
 
 /* A filled check, a stronger fill and weight: distinct from Watching at a glance. */
@@ -747,6 +768,128 @@ video::cue {
   cursor: default;
 }
 
+/* Which pane is which: Expert (the clip) and You (the live camera). */
+.pane-label {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  z-index: 2;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.6);
+  border: 1px solid var(--border-strong);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  pointer-events: none;
+}
+
+/* The line sits right under the title; the info block keeps the room of a
+   two line title plus this line, so the layout never moves between steps. */
+.step-info:has(.step-do) {
+  min-height: calc(13px * 1.4 + 4px + 2.4 * clamp(22px, 1.9vw, 32px) + 6px + 15px * 1.4);
+}
+
+.step-info:has(.step-do) .step-title {
+  min-height: 0;
+}
+
+.step-do {
+  margin: 6px 0 0;
+  font-size: 15px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.end-button {
+  height: 30px;
+  white-space: nowrap;
+}
+
+/* No camera yet: how to connect one. */
+.connect {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  max-width: 520px;
+  padding: 24px;
+  text-align: center;
+}
+
+.connect-title {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.connect-text {
+  margin: 0;
+  font-size: 15px;
+  color: var(--muted);
+}
+
+.connect-hint {
+  margin: 6px 0;
+  font-size: 14px;
+  color: var(--faint);
+}
+
+.connect code,
+.connect-hint code {
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 12px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--muted);
+}
+
+.connect-codes {
+  display: flex;
+  justify-content: center;
+  gap: 28px;
+  margin: 10px 0 6px;
+}
+
+.connect-codes figure {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  width: clamp(120px, 11vw, 168px);
+}
+
+.connect-codes figcaption {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.connect-codes figcaption code {
+  white-space: nowrap;
+}
+
+.qr {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 10px;
+}
+
+.connect-button {
+  display: inline-block;
+  margin-top: 6px;
+  text-decoration: none;
+}
+
 /* Start overlay */
 
 .overlay {
@@ -789,6 +932,96 @@ video::cue {
 .start-card .primary {
   height: 50px;
   font-size: 16px;
+}
+
+.start-how {
+  margin: -6px 0 0;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+/* The lesson list: one calm row per lesson, the chosen one outlined. */
+.lesson-picker {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: min(320px, 40vh);
+  overflow-y: auto;
+  text-align: left;
+}
+
+.lesson-option {
+  width: 100%;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  transition: border-color 0.2s, background 0.2s;
+}
+
+.lesson-option:hover {
+  border-color: var(--border-strong);
+}
+
+.lesson-option.on {
+  border-color: rgba(255, 255, 255, 0.55);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.lesson-option-title {
+  font-weight: 500;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lesson-option-meta {
+  flex: none;
+  font-size: 13px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.lesson-picker-empty {
+  margin: 0;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.confirm-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.confirm-actions .primary,
+.confirm-actions .secondary {
+  flex: 1;
+  height: 48px;
+}
+
+.secondary {
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 12px 20px;
+  font-weight: 600;
+}
+
+.secondary:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.primary.danger {
+  background: var(--red);
+  color: #000;
 }
 
 .start-hint {

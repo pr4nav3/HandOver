@@ -45,7 +45,12 @@ final class HubClient: ObservableObject {
     private var sendingResetTask: Task<Void, Never>?
     private var titlesTask: Task<Void, Never>?
     private var attempt = 0
-    private var sendInFlight = false
+    private var sendInFlight = false {
+        didSet { sendBusy.set(sendInFlight) }
+    }
+    /// True while a frame is being sent. Camera sources read it on their own
+    /// queues and skip encoding, so frames never queue behind a slow network.
+    nonisolated let sendBusy = LockedFlag(false)
     private var lessonRev: Int?
     private var stepTitles: [String] = []
 
@@ -109,8 +114,11 @@ final class HubClient: ObservableObject {
     }
 
     /// Sends one JPEG as a binary message. Drops the frame if the previous send is still in flight.
-    func send(frame: Data) {
+    /// `source` is the camera that made it; the hub hears a new hello before the first frame from a
+    /// different camera, so it never shows "glasses" before a glasses frame exists.
+    func send(frame: Data, source frameSource: String) {
         guard connected, let task = task, !sendInFlight else { return }
+        setSource(frameSource)
         sendInFlight = true
         task.send(.data(frame)) { [weak self] error in
             let ok = (error == nil)
@@ -206,7 +214,8 @@ final class HubClient: ObservableObject {
         task?.cancel(with: .normalClosure, reason: nil)
         task = nil
         resetConnectionState()
-        errorMessage = "Replaced by a newer connection from this device (close 4000). Not reconnecting."
+        // The session note says what happened and what to do; no second, technical message.
+        errorMessage = nil
         onReplaced?()
     }
 

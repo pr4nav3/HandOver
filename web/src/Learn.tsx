@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { RefObject } from 'react'
+import type { RefObject, SyntheticEvent } from 'react'
 import { getLesson, lessonUrl, listLessons, toSeconds } from './api'
-import type { AdvanceMsg, CheckOfflineReason, Lesson, LessonSummary, Mistake, MistakeMsg, StateMsg } from './api'
+import type { AdvanceMsg, CheckOfflineReason, Lesson, LessonSummary, Mistake, MistakeMsg, NextClip, StateMsg, Step } from './api'
 import { playChime, unlockAudio } from './chime'
 import { TopBar } from './TopBar'
+import { useClipPair } from './useClipPair'
+import { ConnectCamera } from './ConnectCamera'
+import { useLiveCanvas } from './useLiveCanvas'
 import { useFitBox } from './useFitBox'
 import { useUiSocket } from './useUiSocket'
 import { useVoice, voiceSupported } from './useVoice'
@@ -21,10 +24,15 @@ const BADGE_LABEL: Record<Badge, string> = {
 }
 
 const OFFLINE_REASON: Record<CheckOfflineReason, string> = {
-  no_key: 'No Gemini key',
+  no_key: 'No API key',
   rate_limited: 'Rate limited',
   errors: 'Check errors',
+  budget: 'AI budget reached',
 }
+
+// Sources that are a live camera. Anything else (a replay file, an unknown
+// sender) gets the Recording banner so it never passes for a live view.
+const LIVE_SOURCES = ['phone', 'glasses', 'browser']
 
 // A check reason is shown only when the model was at least this sure (CONTRACT.md 7).
 const REASON_MIN_CONF = 0.7
@@ -65,26 +73,22 @@ export function Learn() {
   const [flashVerified, setFlashVerified] = useState(false)
   // Voice is off until the learner turns it on (quiet rooms only, see docs/SCOPE.md).
   const [voiceOn, setVoiceOn] = useState(false)
+  // True while the "End this lesson?" card is open.
+  const [confirmEnd, setConfirmEnd] = useState(false)
   // True between re-sending select_lesson after a reconnect and the server's answer.
   const [resuming, setResuming] = useState(false)
   const resumingRef = useRef(false)
   resumingRef.current = resuming
 
-  // Two stacked <img>s: a new frame decodes in the hidden one, then the two swap, so
-  // the picture never blanks between frames. Only the front one is visible.
-  const liveRef = useRef<HTMLImageElement>(null)
-  const liveBackRef = useRef<HTMLImageElement>(null)
-  const frontIsA = useRef(true)
-  const frameUrl = useRef<string | null>(null)
-  const decoding = useRef(false)
-  const pendingFrame = useRef<Blob | null>(null)
-  const mounted = useRef(true)
+  const liveRef = useRef<HTMLCanvasElement>(null)
+  const hasFrameRef = useRef(false)
+  const staleRef = useRef(false)
+  staleRef.current = stale
   // The live panel hugs the camera's real shape (glasses and replays are landscape,
   // a phone held upright is portrait). Null until the first frame decodes.
   const liveCellRef = useRef<HTMLElement>(null)
   const [liveAspect, setLiveAspect] = useState<number | null>(null)
   const liveBox = useFitBox(liveCellRef, liveAspect ?? 1)
-  const videoRef = useRef<HTMLVideoElement>(null)
   const clipAreaRef = useRef<HTMLDivElement>(null)
   const [aspect, setAspect] = useState(16 / 9)
   const infoRef = useRef<HTMLDivElement>(null)
@@ -98,68 +102,37 @@ export function Learn() {
 
   // Sets state only when the shape changes, so frames of the same size never
   // re-render or move the layout.
-  const noteAspect = useCallback((img: HTMLImageElement) => {
-    if (!img.naturalWidth || !img.naturalHeight) return
-    const next = img.naturalWidth / img.naturalHeight
+  const onLiveSize = useCallback((w: number, h: number) => {
+    const next = w / h
     setLiveAspect((prev) => (prev !== null && Math.abs(prev - next) < 0.01 ? prev : next))
   }, [])
+  const drawFrame = useLiveCanvas(liveRef, onLiveSize)
 
-  // Live frames go straight to the <img>s so React does not re-render per frame.
-  // One decode at a time; frames arriving meanwhile keep only the newest, so a
-  // slow decode drops frames instead of building up delay.
-  const showFrame = useCallback(
-    (jpeg: Blob) => {
-      const front = frontIsA.current ? liveRef.current : liveBackRef.current
-      const back = frontIsA.current ? liveBackRef.current : liveRef.current
-      if (!front || !back) return
-      decoding.current = true
-      const url = URL.createObjectURL(jpeg)
-      back.src = url
-      const finish = (ok: boolean) => {
-        decoding.current = false
-        if (!mounted.current) {
-          URL.revokeObjectURL(url)
-          return
-        }
-        if (ok) {
-          back.style.opacity = '1'
-          front.style.opacity = '0'
-          frontIsA.current = !frontIsA.current
-          // The old frame is off screen now, so its URL can go.
-          if (frameUrl.current) URL.revokeObjectURL(frameUrl.current)
-          frameUrl.current = url
-          noteAspect(back)
-          setHasFrame(true)
-          setStale(false)
-        } else URL.revokeObjectURL(url) // a bad JPEG: keep showing the last good frame
-        const pending = pendingFrame.current
-        pendingFrame.current = null
-        if (pending) showFrame(pending)
-      }
-      back.decode().then(
-        () => finish(true),
-        () => finish(false),
-      )
-    },
-    [noteAspect],
-  )
+  // Live frames go straight to the canvas so React does not re-render per frame.
   const onFrame = useCallback(
     (jpeg: Blob) => {
-      if (decoding.current) pendingFrame.current = jpeg
-      else showFrame(jpeg)
+      drawFrame(jpeg)
+      if (!hasFrameRef.current) {
+        hasFrameRef.current = true
+        setHasFrame(true)
+      }
+      if (staleRef.current) setStale(false)
     },
-    [showFrame],
+    [drawFrame],
   )
 
   // For the done screen: when this run began, and how each step was finished.
   const runStart = useRef(0)
   const advancedBy = useRef(new Map<number, AdvanceMsg['reason']>())
-  // Time spent on each step (summed if revisited), counted from state changes
-  // so next, back, goto and camera advances are all covered.
+  // Time spent on each step (summed if revisited), counted from position
+  // changes so next, back, goto and camera advances are all covered. Advance
+  // messages count too: the hub may skip states for a slow client, but never
+  // an advance (it always comes before its state).
   const spentMs = useRef(new Map<number, number>())
   const lastPos = useRef(0)
   const lastPosAt = useRef(0)
-  const mistakeCount = useRef(0)
+  // Each mistake once, however often the hub repeats it (message and state).
+  const mistakeKeys = useRef(new Set<string>())
   const resetRun = () => {
     const now = performance.now()
     runStart.current = now
@@ -167,15 +140,43 @@ export function Learn() {
     spentMs.current = new Map()
     lastPos.current = 0
     lastPosAt.current = now
-    mistakeCount.current = 0
+    mistakeKeys.current = new Set()
     setMistake(null)
     // A Verified flash from the previous run should not carry into the new one.
     window.clearTimeout(flashTimer.current)
     setFlashVerified(false)
   }
 
+  // The clip pair: a step change to the buffered next clip is a swap, not a load.
+  const clips = useClipPair((v) => {
+    if (v.videoWidth && v.videoHeight) setAspect(v.videoWidth / v.videoHeight)
+  })
+  const lessonRef = useRef<Lesson | null>(null)
+  const revRef = useRef(0)
+
+  // Charge the time since the last change to the step we left. `pos` is the
+  // step, or `total` when done.
+  const moveTo = (pos: number, total: number) => {
+    if (!runStart.current || pos === lastPos.current) return
+    const now = performance.now()
+    if (lastPos.current < total) {
+      const spent = spentMs.current
+      spent.set(lastPos.current, (spent.get(lastPos.current) ?? 0) + now - lastPosAt.current)
+    }
+    lastPos.current = pos
+    lastPosAt.current = now
+  }
+
   const onAdvance = useCallback((msg: AdvanceMsg) => {
     if (msg.to > msg.from) advancedBy.current.set(msg.from, msg.reason)
+    const total = lessonRef.current?.steps.length
+    if (total) moveTo(Math.min(msg.to, total), total)
+    // Show the next clip now rather than after the state message and a render.
+    const l = lessonRef.current
+    const s = l?.steps[msg.to]
+    if (l && s && startedRef.current) {
+      clips.show(lessonUrl(l.id, s.clip, revRef.current), lessonUrl(l.id, s.captions, revRef.current), true)
+    }
     if (msg.reason !== 'camera') return
     playChime()
     setFlashVerified(true)
@@ -186,6 +187,8 @@ export function Learn() {
   // If the server restarts mid lesson it comes back with no lesson; pick ours
   // again, once per connection. `resumeId` is the lesson the learner started.
   const resumeId = useRef<string | null>(null)
+  // The position to return to after the hub comes back (it restarts at step 0).
+  const resumeStep = useRef(0)
   const resentThisConnection = useRef(false)
   const sendRef = useRef<(m: object) => void>(() => {})
 
@@ -203,35 +206,52 @@ export function Learn() {
 
   const onState = useCallback((msg: StateMsg) => {
     setState(msg)
-    // Per-step time: charge the time since the last change to the step we left.
-    const pos = msg.status === 'done' ? msg.total : msg.step
-    if (runStart.current && pos !== lastPos.current) {
-      const now = performance.now()
-      if (lastPos.current < msg.total) {
-        const spent = spentMs.current
-        spent.set(lastPos.current, (spent.get(lastPos.current) ?? 0) + now - lastPosAt.current)
-      }
-      lastPos.current = pos
-      lastPosAt.current = now
+    if (msg.lesson_id === null) {
+      // The hub restarted (or lost the lesson): pick ours again and remember
+      // where the learner was. The run and its times carry on.
+      if (resumeId.current && !resentThisConnection.current) {
+        resentThisConnection.current = true
+        resumingRef.current = true
+        setResuming(true)
+        resumeStep.current = lastPos.current
+        setMistake(null)
+        sendRef.current({ type: 'select_lesson', id: resumeId.current })
+      } else if (!resumingRef.current) setResuming(false)
+      return
     }
+    if (resumingRef.current) {
+      resumingRef.current = false
+      setResuming(false)
+      const to = resumeStep.current
+      // select_lesson starts at step 0; go back to the learner's step.
+      if (to > 0 && to < msg.total && msg.step !== to) {
+        sendRef.current({ type: 'goto', step: to })
+        return
+      }
+    }
+    moveTo(msg.status === 'done' ? msg.total : msg.step, msg.total)
     // Older servers omit `mistake`; only an explicit value replaces ours.
-    if (msg.mistake !== undefined) setMistake(msg.mistake)
-    if (msg.lesson_id !== null) setResuming(false)
-    else if (resumeId.current && !resentThisConnection.current) {
-      resentThisConnection.current = true
-      resumingRef.current = true
-      setResuming(true)
-      resetRun()
-      sendRef.current({ type: 'select_lesson', id: resumeId.current })
-    } else setResuming(false)
+    if (msg.mistake !== undefined) {
+      setMistake(msg.mistake)
+      if (msg.mistake) countMistake(msg.mistake)
+    }
   }, [])
+
+  // True the first time this mistake is seen in the run.
+  const countMistake = (m: Mistake) => {
+    if (!startedRef.current) return false
+    const key = `${m.step}:${m.kind}:${m.looks_like ?? ''}`
+    if (mistakeKeys.current.has(key)) return false
+    mistakeKeys.current.add(key)
+    return true
+  }
 
   // The catch: show the banner and say the message once.
   const onMistake = useCallback((msg: MistakeMsg) => {
     const { type: _type, ...m } = msg
     setMistake(m)
     if (!startedRef.current) return
-    mistakeCount.current += 1
+    if (!countMistake(m)) return // already shown and spoken
     if ('speechSynthesis' in window) {
       window.speechSynthesis.cancel()
       window.speechSynthesis.speak(new SpeechSynthesisUtterance(m.message))
@@ -245,17 +265,13 @@ export function Learn() {
   const { down, send } = useUiSocket({ onFrame, onState, onAdvance, onError, onMistake, onOpen })
   sendRef.current = send
 
-  useEffect(() => {
-    mounted.current = true
-    return () => {
-      mounted.current = false
-      pendingFrame.current = null
+  useEffect(
+    () => () => {
       window.clearTimeout(flashTimer.current)
       window.clearTimeout(errorTimer.current)
-      if (frameUrl.current) URL.revokeObjectURL(frameUrl.current)
-      frameUrl.current = null
-    }
-  }, [])
+    },
+    [],
+  )
 
   // Lesson list for the picker.
   useEffect(() => {
@@ -274,6 +290,8 @@ export function Learn() {
   // Fetch the full lesson whenever the server switches lessons or recuts it.
   const lessonId = state?.lesson_id ?? null
   const rev = state?.rev ?? 0
+  lessonRef.current = lesson
+  revRef.current = rev
   useEffect(() => {
     if (!lessonId) {
       setLesson(null)
@@ -289,7 +307,10 @@ export function Learn() {
   }, [lessonId, rev])
 
   useEffect(() => {
-    if (state && !state.camera_connected) setStale(true)
+    if (state && !state.camera_connected) {
+      staleRef.current = true
+      setStale(true)
+    }
   }, [state?.camera_connected])
 
   const steps = lesson?.steps ?? []
@@ -298,38 +319,34 @@ export function Learn() {
   const idx = Math.max(0, Math.min(state?.step ?? 0, steps.length - 1))
   const step = steps.length ? steps[idx] : null
 
-  // Load the clip and its captions on every step change. Done imperatively
-  // so the <video> element stays put (no layout jump) and the caption track
-  // is guaranteed to reload.
-  // Reloads only when the clip URL (path or rev) changes, never on other
-  // re-renders, so playback position is not reset under the learner.
+  // Show the clip and its captions on every step change. Done imperatively
+  // so the <video> elements stay put (no layout jump) and the caption track
+  // is guaranteed to reload. Acts only when the clip URL (path or rev)
+  // changes, never on other re-renders, so playback is not reset under the
+  // learner. An advance usually swapped the clip in already (onAdvance).
   const clipKey = lesson && step ? lessonUrl(lesson.id, step.clip, rev) : ''
-  const loadedClip = useRef('')
+  const captionsKey = lesson && step ? lessonUrl(lesson.id, step.captions, rev) : ''
   useEffect(() => {
-    const video = videoRef.current
-    if (!video || !lesson || !step || loadedClip.current === clipKey) return
-    loadedClip.current = clipKey
-    // Disable the old track first so its last cue does not linger over the new clip.
-    video.querySelectorAll('track').forEach((t) => {
-      t.track.mode = 'disabled'
-      t.remove()
-    })
-    const track = document.createElement('track')
-    track.kind = 'captions'
-    track.srclang = 'en'
-    track.label = 'English'
-    track.default = true
-    track.src = lessonUrl(lesson.id, step.captions, rev)
-    video.appendChild(track)
-    track.track.mode = 'showing'
-    video.src = clipKey
-    video.load()
-    if (started && !isDone) video.play().catch(() => {})
+    if (clipKey) clips.show(clipKey, captionsKey, started && !isDone)
   }, [clipKey, started, isDone])
+
+  // Buffer the next clip in the standby element once the current one can play,
+  // so the two downloads never compete.
+  const upcoming = isDone ? null : nextClipFor(lesson, steps, idx, rev, state?.next_clip)
+  const upClip = upcoming?.clip ?? ''
+  const upCaptions = upcoming?.captions ?? ''
+  useEffect(() => {
+    const video = clips.active()
+    if (!upClip || !video) return
+    const go = () => clips.preload(upClip, upCaptions)
+    if (video.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) return go()
+    video.addEventListener('canplay', go, { once: true })
+    return () => video.removeEventListener('canplay', go)
+  }, [upClip, upCaptions, clipKey])
 
   // Play once started, and stop the last clip looping on the done screen.
   useEffect(() => {
-    const video = videoRef.current
+    const video = clips.active()
     if (!video || !started || !video.src) return
     if (isDone) video.pause()
     else video.play().catch(() => {})
@@ -349,8 +366,14 @@ export function Learn() {
   }, [send, lessonId, shownStep])
 
   // The expert's narration through the speakers can sound like a command.
+  // Only the clip on screen sets the shape; the standby reports on swap.
+  const onClipMetadata = (e: SyntheticEvent<HTMLVideoElement>) => {
+    const v = e.currentTarget
+    if (v === clips.active() && v.videoWidth && v.videoHeight) setAspect(v.videoWidth / v.videoHeight)
+  }
+
   const clipAudible = useCallback(() => {
-    const v = videoRef.current
+    const v = clips.active()
     return !!v && !v.paused && !v.muted && v.volume > 0
   }, [])
   const { listening } = useVoice(started && voiceOn, (cmd) => (cmd === 'next' ? next('voice') : back()), clipAudible)
@@ -358,9 +381,12 @@ export function Learn() {
 
   // Keyboard: Right or Space for next, Left for back.
   useEffect(() => {
-    if (!started) return
+    if (!started || confirmEnd) return
     const onKey = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return
+      const t = e.target instanceof Element ? e.target : null
+      if (t?.closest('input, select, textarea, [contenteditable="true"]')) return
+      // Space belongs to the focused control (the mic, Show step, OK), not to Next.
+      if (e.key === ' ' && t?.closest('button, a, summary, [role="button"]')) return
       if (e.key === 'ArrowRight' || e.key === ' ') {
         e.preventDefault()
         next('button')
@@ -371,7 +397,7 @@ export function Learn() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [started, next, back])
+  }, [started, confirmEnd, next, back])
 
   const start = () => {
     unlockAudio()
@@ -384,10 +410,34 @@ export function Learn() {
     setStarted(true)
   }
 
+  // A fresh select_lesson, not goto 0, so the hub starts a new run (with its
+  // own run id in Databricks) for the second attempt.
   const restart = () => {
+    const id = lessonId ?? resumeId.current
+    if (!id) return
     resetRun()
-    send({ type: 'goto', step: 0 })
+    send({ type: 'select_lesson', id })
   }
+
+  // End: back to the lesson list. Asks first unless the lesson is finished.
+  const endLesson = () => {
+    setConfirmEnd(false)
+    resumeId.current = null
+    clips.active()?.pause()
+    if ('speechSynthesis' in window) window.speechSynthesis.cancel()
+    setVoiceOn(false)
+    setMistake(null)
+    setStarted(false)
+    // The hub stops the run and unloads the lesson; the ids make it ignore a stale End (older hubs ignore it).
+    if (state?.lesson_id) send({ type: 'end_lesson', lesson_id: state.lesson_id, run_id: state.run_id ?? undefined })
+  }
+  const askEnd = () => (isDone ? endLesson() : setConfirmEnd(true))
+  useEffect(() => {
+    if (!confirmEnd) return
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setConfirmEnd(false)
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [confirmEnd])
 
   // A mistake belongs to one step; it never outlives that step or the lesson.
   const activeMistake = mistake && !isDone && mistake.step === state?.step ? mistake : null
@@ -425,11 +475,13 @@ export function Learn() {
       expertS: rows.reduce((a, r) => a + r.expertS, 0),
       camera,
       byHand: reasons.length - camera,
-      mistakes: mistakeCount.current,
+      mistakes: mistakeKeys.current.size,
       rows,
     })
   }, [isDone])
 
+  // Mock checks pass on a timer and never look at the camera; say so.
+  const mockChecks = state?.check_mode === 'mock'
   const offline = !!state?.check_offline
   const offlineReason = state?.check_offline_reason ? OFFLINE_REASON[state.check_offline_reason] : ''
   let badge: Badge = 'watching'
@@ -449,11 +501,21 @@ export function Learn() {
     if (lc.reason && lc.done === 'no' && lc.confidence >= REASON_MIN_CONF) metaBottom = lc.reason
   }
 
+  // What to do now, one line under the step title. Always a line, so the layout never moves.
+  let doNow = '\u00a0'
+  if (step && !isDone) {
+    const autoChecks = cameraStep && badge !== 'manual' && !!state?.camera_connected && !offline
+    if (!autoChecks) doNow = 'Do this step, then press Next.'
+    else if (mockChecks) doNow = 'Do this step. Mock checks move on after a short wait.'
+    else doNow = 'Do this step. HandOver moves on when it sees it done.'
+  }
+
   // A frozen frame while the socket is down would mislead, so show the placeholder.
   // A camera that drops after sending frames leaves its last frame, dimmed.
   const showLive = !down && hasFrame && (!!state?.camera_connected || stale)
   const cameraLost = showLive && (stale || !state?.camera_connected)
-  const recording = showLive && !cameraLost && state?.camera?.source === 'file'
+  const source = state?.camera?.source
+  const recording = showLive && !cameraLost && !!source && !LIVE_SOURCES.includes(source)
   const cameraName = !down && state?.camera_connected ? state?.camera?.name : undefined
   const checkInterval = state?.check_interval_s
   const setCheckInterval = (seconds: number) => send({ type: 'set_check_interval', seconds })
@@ -467,7 +529,7 @@ export function Learn() {
       <div className="progress" role="progressbar" aria-valuemin={0} aria-valuemax={total} aria-valuenow={isDone ? total : idx}>
         {Array.from({ length: Math.max(total, 1) }, (_, i) => {
           let cls = !total ? 'upcoming' : isDone || i < idx ? 'done' : i === idx ? 'current' : 'upcoming'
-          if (i === idx && activeMistake?.kind === 'behind') cls = 'mistake'
+          if (i === idx && activeMistake && activeMistake.kind !== 'ahead') cls = 'mistake'
           return <span key={i} className={`seg ${cls}`} />
         })}
       </div>
@@ -495,6 +557,11 @@ export function Learn() {
             })}
           </span>
         )}
+        {started && !showPicker && (
+          <button type="button" className="ghost end-button" onClick={askEnd}>
+            End lesson
+          </button>
+        )}
         {voiceAvailable && (
           <button
             type="button"
@@ -510,30 +577,40 @@ export function Learn() {
       </TopBar>
 
       <main className="learn-grid" ref={gridRef} style={sideWidth ? { gridTemplateColumns: `minmax(0, 1fr) ${sideWidth}px` } : undefined}>
-        <section className="live-cell" ref={liveCellRef} aria-label="Live camera">
-          <div className="panel live" style={liveAspect && liveBox ? { width: liveBox.w, height: liveBox.h } : undefined}>
-            <img ref={liveRef} alt="Live camera" style={FRONT_STYLE} className={showLive ? (cameraLost ? 'lost' : '') : 'hidden'} />
-            <img ref={liveBackRef} alt="" aria-hidden="true" style={BACK_STYLE} className={showLive ? (cameraLost ? 'lost' : '') : 'hidden'} />
+        <section className="live-cell" ref={liveCellRef} aria-label="You, live camera">
+          <div className="panel live" style={showLive && liveAspect && liveBox ? { width: liveBox.w, height: liveBox.h } : undefined}>
+            <canvas ref={liveRef} role="img" aria-label="Live camera" className={showLive ? (cameraLost ? 'lost' : '') : 'hidden'} />
+            {showLive && <span className="pane-label">You</span>}
             {cameraLost && (
               <p className="live-note" role="status">
                 Camera lost. Keep going with Next.
               </p>
             )}
             {recording && (
-              <span className="rec" title="Frames come from a recorded video, not a live camera">
+              <span
+                className="rec"
+                title={source === 'file' ? 'Frames come from a recorded video, not a live camera' : `Camera source "${source}" is not a known live camera`}
+              >
                 <span className="rec-dot" />
                 Recording
               </span>
             )}
-            {!showLive && (
-              <div className="placeholder">
-                <CameraIcon />
-                <p className="placeholder-title">Waiting for camera</p>
-                <p className="placeholder-hint">
-                  Open <code>/capture</code> on the phone
-                </p>
-              </div>
-            )}
+            {!showLive &&
+              (down ? (
+                <div className="placeholder">
+                  <CameraIcon />
+                  <p className="placeholder-title">Reconnecting to HandOver</p>
+                  <p className="placeholder-hint">Your camera shows here again once it is back.</p>
+                </div>
+              ) : state?.camera_connected ? (
+                <div className="placeholder">
+                  <CameraIcon />
+                  <p className="placeholder-title">Camera connected</p>
+                  <p className="placeholder-hint">Waiting for its first picture.</p>
+                </div>
+              ) : (
+                <ConnectCamera />
+              ))}
           </div>
         </section>
 
@@ -546,11 +623,14 @@ export function Learn() {
               {activeMistake && (
                 <div className="mistake-banner" role="alert">
                   <WarningIcon />
-                  <p className="mistake-text">{activeMistake.message}</p>
+                  <p className="mistake-text">
+                    {activeMistake.label && <span className="mistake-label">{activeMistake.label}</span>}
+                    {activeMistake.message}
+                  </p>
                   <div className="mistake-actions">
-                    {activeMistake.kind === 'behind' ? (
+                    {activeMistake.kind === 'behind' && typeof activeMistake.looks_like === 'number' ? (
                       <>
-                        <button type="button" className="ghost small" onClick={() => showStep(activeMistake.looks_like)}>
+                        <button type="button" className="ghost small" onClick={() => showStep(activeMistake.looks_like as number)}>
                           Show step {activeMistake.looks_like + 1}
                         </button>
                         <button type="button" className="ghost small" onClick={dismissMistake}>
@@ -565,17 +645,11 @@ export function Learn() {
                   </div>
                 </div>
               )}
-              <video
-                ref={videoRef}
-                loop
-                playsInline
-                preload="auto"
-                className={step && !isDone ? '' : 'hidden'}
-                onLoadedMetadata={(e) => {
-                  const v = e.currentTarget
-                  if (v.videoWidth && v.videoHeight) setAspect(v.videoWidth / v.videoHeight)
-                }}
-              />
+              {step && !isDone && <span className="pane-label">Expert</span>}
+              <div className={`clip-media ${step && !isDone ? '' : 'hidden'}`}>
+                <video ref={clips.refA} data-slot="a" loop playsInline preload="auto" onLoadedMetadata={onClipMetadata} />
+                <video ref={clips.refB} data-slot="b" loop playsInline preload="auto" muted className="standby" onLoadedMetadata={onClipMetadata} />
+              </div>
               {isDone && summary && (
                 <div className="finish">
                   <dl className="finish-stats">
@@ -592,7 +666,7 @@ export function Learn() {
                       </div>
                     )}
                     <div>
-                      <dt>By camera</dt>
+                      <dt>{mockChecks ? 'By timer (mock)' : 'By camera'}</dt>
                       <dd>{summary.camera}</dd>
                     </div>
                     <div>
@@ -622,7 +696,9 @@ export function Learn() {
                               {r.title}
                             </td>
                             <td className="how">
-                              {r.how === 'camera' ? (
+                              {r.how === 'camera' && mockChecks ? (
+                                <span title="Mock checks pass on a timer and do not look at the camera">Timer (mock)</span>
+                              ) : r.how === 'camera' ? (
                                 <>
                                   <SmallCameraIcon />
                                   Camera
@@ -658,6 +734,7 @@ export function Learn() {
               <p className="step-count">{step ? (isDone ? `All ${total} steps done` : `Step ${idx + 1} of ${total}`) : ' '}</p>
               {/* The lesson title is already in the top bar, so the done screen does not repeat it. */}
               <h1 className="step-title">{step ? (isDone ? 'Lesson complete' : step.title) : ' '}</h1>
+              {!isDone && <p className="step-do">{doNow}</p>}
             </div>
           </div>
 
@@ -671,6 +748,11 @@ export function Learn() {
                 {badge === 'verified' ? <BadgeCheckIcon /> : <span className="badge-dot" />}
                 {BADGE_LABEL[badge]}
               </span>
+              {mockChecks && (
+                <span className="mode-pill" title="Steps pass on a timer. The camera is not checked.">
+                  Mock checks
+                </span>
+              )}
               <span className="check-meta">
                 <span>{metaTop}</span>
                 <span className="check-reason">{metaBottom}</span>
@@ -698,42 +780,70 @@ export function Learn() {
         <div className="overlay">
           <div className="start-card">
             <p className="start-eyebrow">HandOver</p>
-            <h2>{started ? 'Pick a lesson' : 'Ready when you are'}</h2>
-            <label className="field">
-              <span>Lesson</span>
-              <select value={picked} onChange={(e) => setPicked(e.target.value)} disabled={!lessons?.length}>
-                {lessons === null && <option value="">Loading</option>}
-                {lessons?.length === 0 && <option value="">No lessons yet</option>}
-                {lessons?.map((l) => (
-                  <option key={l.id} value={l.id}>
-                    {l.title} ({l.steps} steps)
-                  </option>
+            <h2>Pick a lesson</h2>
+            <p className="start-how">The expert shows each step. You do it in front of a camera, and HandOver moves on when it sees it done.</p>
+            {lessons && lessons.length > 0 ? (
+              <ul className="lesson-picker" role="radiogroup" aria-label="Lessons">
+                {lessons.map((l) => (
+                  <li key={l.id}>
+                    <button
+                      type="button"
+                      role="radio"
+                      aria-checked={picked === l.id}
+                      data-id={l.id}
+                      className={`lesson-option ${picked === l.id ? 'on' : ''}`}
+                      onClick={() => setPicked(l.id)}
+                      onDoubleClick={() => {
+                        setPicked(l.id)
+                        if (picked === l.id) start()
+                      }}
+                    >
+                      <span className="lesson-option-title">{l.title}</span>
+                      <span className="lesson-option-meta">
+                        {l.steps} {l.steps === 1 ? 'step' : 'steps'}
+                      </span>
+                    </button>
+                  </li>
                 ))}
-              </select>
-            </label>
+              </ul>
+            ) : (
+              <p className="lesson-picker-empty">
+                {lessons === null ? (
+                  'Loading lessons'
+                ) : (
+                  <>
+                    No lessons yet. Make one in <a href="#/teach">Teach</a>.
+                  </>
+                )}
+              </p>
+            )}
             <button className="primary" onClick={start} disabled={!picked}>
               Start lesson
             </button>
-            <p className="start-hint">
-              {lessons?.length === 0 ? (
-                <>
-                  Create one in <a href="#/teach">Teach</a>.
-                </>
-              ) : (
-                'Turns on sound. Voice commands are off until you click the mic.'
-              )}
-            </p>
+            {!!lessons?.length && <p className="start-hint">Turns on sound. Voice commands stay off until you click the mic.</p>}
+          </div>
+        </div>
+      )}
+
+      {confirmEnd && !showPicker && (
+        <div className="overlay" onClick={(e) => e.target === e.currentTarget && setConfirmEnd(false)}>
+          <div className="start-card confirm-card" role="alertdialog" aria-modal="true" aria-labelledby="end-title">
+            <h2 id="end-title">End this lesson?</h2>
+            <p className="start-how">You go back to the lesson list.</p>
+            <div className="confirm-actions">
+              <button type="button" className="secondary" onClick={() => setConfirmEnd(false)} autoFocus>
+                Keep going
+              </button>
+              <button type="button" className="primary danger" onClick={endLesson}>
+                End lesson
+              </button>
+            </div>
           </div>
         </div>
       )}
     </div>
   )
 }
-
-// Initial opacity of the two live <img>s; showFrame flips them from then on. Constant
-// objects, so React sets them once at mount and never overwrites the flips.
-const FRONT_STYLE = { opacity: 1 } as const
-const BACK_STYLE = { opacity: 0 } as const
 
 // Gap between the clip and the step title; matches .clip-area in styles.css.
 const CLIP_GAP = 18
@@ -779,6 +889,29 @@ function useSideWidth(
     return () => ro.disconnect()
   }, [gridRef, aspect, infoRef, controlsRef, liveAspect])
   return width
+}
+
+/**
+ * The clip to buffer next, as URLs: the hub's `next_clip` when it sends one
+ * (null = nothing next), else the following step's clip.
+ */
+function nextClipFor(lesson: Lesson | null, steps: Step[], idx: number, rev: number, hint: NextClip | null | undefined) {
+  if (!lesson) return null
+  const clean = (p: string) => p.replace(/[?#].*$/, '').replace(`/lessons/${encodeURIComponent(lesson.id)}/`, '').replace(/^\/+/, '')
+  let clip: string
+  let captions: string | null | undefined
+  if (hint === undefined) {
+    const s = steps[idx + 1]
+    if (!s) return null
+    clip = s.clip
+    captions = s.captions
+  } else {
+    if (!hint) return null
+    clip = clean(typeof hint === 'string' ? hint : hint.clip)
+    captions = typeof hint === 'string' ? undefined : hint.captions
+    captions ??= steps.find((s) => clean(s.clip) === clip)?.captions
+  }
+  return { clip: lessonUrl(lesson.id, clip, rev), captions: captions ? lessonUrl(lesson.id, clean(captions), rev) : '' }
 }
 
 /** 75000 ms to "1:15", 3725000 ms to "1:02:05". */
