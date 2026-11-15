@@ -2,7 +2,7 @@
 # (the .xcodeproj is not committed). Signing team comes from HANDOVER_TEAM; leave it unset for simulator builds.
 name: HandOver
 options:
-  bundleIdPrefix: com.handover
+  bundleIdPrefix: com.soham109
   deploymentTarget:
     iOS: "18.0"
     macOS: "15.0"
@@ -14,6 +14,11 @@ settings:
     MARKETING_VERSION: "0.1.0"
     CURRENT_PROJECT_VERSION: "1"
     ENABLE_USER_SCRIPT_SANDBOXING: YES
+packages:
+  # Meta Wearables Device Access Toolkit, for the glasses recording source (iOS only, behind a feature flag).
+  MWDAT:
+    url: https://github.com/facebook/meta-wearables-dat-ios
+    exactVersion: 1.0.1
 settingGroups:
   signing:
     DEVELOPMENT_TEAM: "${HANDOVER_TEAM}"
@@ -32,13 +37,21 @@ targets:
     sources:
       - path: Sources
         excludes: ["**/README.md"]
+    dependencies:
+      - package: MWDAT
+        product: MWDATCore
+        platformFilter: iOS
+      - package: MWDAT
+        product: MWDATCamera
+        platformFilter: iOS
     settings:
       groups: [signing]
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.handover.app
+        PRODUCT_BUNDLE_IDENTIFIER: com.soham109.handover
         PRODUCT_NAME: HandOver
         TARGETED_DEVICE_FAMILY: "1,2"
         GENERATE_INFOPLIST_FILE: NO
+        # Glasses stream over Bluetooth Classic only, so the free personal team can sign the app.
         "CODE_SIGN_ENTITLEMENTS[sdk=macosx*]": Support/HandOver-macOS.entitlements
         ENABLE_HARDENED_RUNTIME: YES
         SUPPORTS_MACCATALYST: NO
@@ -60,6 +73,12 @@ targets:
         NSCameraUsageDescription: HandOver uses the camera to watch your hands, so it can tell when a step is done and play the next one.
         NSLocalNetworkUsageDescription: HandOver connects to the HandOver hub on this Wi-Fi network to load lessons and follow along.
         NSPhotoLibraryUsageDescription: HandOver opens the video you pick so it can turn it into a lesson.
+        NSSpeechRecognitionUsageDescription: HandOver recognizes "next" and "back" on this device to move between steps.
+        NSMicrophoneUsageDescription: HandOver records your narration with a take. Steps are found from what you say.
+        NSBluetoothAlwaysUsageDescription: HandOver uses Bluetooth to reach your Meta glasses when you record with them.
+        # Glasses over Bluetooth Classic.
+        UISupportedExternalAccessoryProtocols: [com.meta.ar.wearable]
+        UIBackgroundModes: [bluetooth-peripheral, external-accessory]
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
         ITSAppUsesNonExemptEncryption: false
@@ -73,7 +92,7 @@ targets:
     settings:
       groups: [signing]
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.handover.app.tests
+        PRODUCT_BUNDLE_IDENTIFIER: com.soham109.handover.tests
         GENERATE_INFOPLIST_FILE: YES
         TEST_HOST: $(BUILT_PRODUCTS_DIR)/HandOver.app/HandOver
         "TEST_HOST[sdk=macosx*]": $(BUILT_PRODUCTS_DIR)/HandOver.app/Contents/MacOS/HandOver

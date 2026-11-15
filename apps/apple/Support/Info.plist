@@ -40,19 +40,34 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>HandOver uses Bluetooth to reach your Meta glasses when you record with them.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>HandOver uses the camera to watch your hands, so it can tell when a step is done and play the next one.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>HandOver connects to the HandOver hub on this Wi-Fi network to load lessons and follow along.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>HandOver records your narration with a take. Steps are found from what you say.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>HandOver opens the video you pick so it can turn it into a lesson.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>HandOver recognizes "next" and "back" on this device to move between steps.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
 		<false/>
 	</dict>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>bluetooth-peripheral</string>
+		<string>external-accessory</string>
+	</array>
 	<key>UILaunchScreen</key>
 	<dict/>
+	<key>UISupportedExternalAccessoryProtocols</key>
+	<array>
+		<string>com.meta.ar.wearable</string>
+	</array>
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
