@@ -1041,7 +1041,7 @@ def test_understand_override_after_n_check_yes() -> None:
     with env(HANDOVER_UNDERSTAND="1", HANDOVER_GATE="0", HANDOVER_DEBOUNCE_N="2",
              HANDOVER_UNDERSTAND_OVERRIDE_N=None, HANDOVER_UNDERSTAND_OVERRIDE_CONF=None), \
             patched(check, check_frame=fake), patched(understand, understand_frame=und), \
-            patched(main, VERIFIED_HOLD=0.05, EVENT_SINKS=[events.append]), hub() as c, \
+            patched(main, VERIFIED_HOLD=0.05, EVENT_SINKS=[events.append], OVERRIDE_MIN_SECONDS=0.0), hub() as c, \
             c.websocket_connect("/ws/ui") as ui, c.websocket_connect("/ws/camera") as cam:
         select(ui)
         i = 0
@@ -1058,6 +1058,21 @@ def test_understand_override_after_n_check_yes() -> None:
     assert main.metrics["understand_overrides"] >= 1
 
 
+def test_understand_override_needs_a_time_span() -> None:
+    """Three confident check yes answers in quick succession are not enough while understanding says no: the
+    streak must also span OVERRIDE_MIN_SECONDS, so understanding's no is never just one extra check."""
+    yes, u_no = check.CheckResult("yes", 0.9, 1), check.CheckResult("no", 0.9, 1)
+    make_lesson()
+    clock = [100.0]
+    with env(HANDOVER_UNDERSTAND_OVERRIDE_N=None, HANDOVER_UNDERSTAND_OVERRIDE_CONF=None), \
+            patched(main.time, monotonic=lambda: clock[0]):
+        e = main.Engine()
+        e.select(LESSON)
+        assert [e._override_due(yes, u_no) for _ in range(5)] == [False] * 5  # same instant: never
+        clock[0] += main.OVERRIDE_MIN_SECONDS
+        assert e._override_due(yes, u_no) is True
+
+
 def test_understand_override_counting() -> None:
     """_override_due: only confident check yes answers with understanding not yes count; anything else from the
     check resets; both yes leaves the count alone; 0 turns it off; the count resets on a step change."""
@@ -1066,7 +1081,8 @@ def test_understand_override_counting() -> None:
     u_no, u_yes, u_unsure = (check.CheckResult("no", 0.9, 1), check.CheckResult("yes", 0.9, 1),
                              check.CheckResult("unsure", 0.0, 1))
     make_lesson()
-    with env(HANDOVER_UNDERSTAND_OVERRIDE_N=None, HANDOVER_UNDERSTAND_OVERRIDE_CONF=None):
+    with env(HANDOVER_UNDERSTAND_OVERRIDE_N=None, HANDOVER_UNDERSTAND_OVERRIDE_CONF=None), \
+            patched(main, OVERRIDE_MIN_SECONDS=0.0):
         e = main.Engine()
         e.select(LESSON)
         got = [e._override_due(r, u) for r, u in
@@ -1279,7 +1295,9 @@ def _ahead_run(compare_conf: float, n_frames: int = 60) -> tuple[list[dict], lis
     0.95, the compare names step 1 at compare_conf. Returns (ui messages, events, steps seen)."""
     make_lesson()
     ref_next = (main.LESSONS / LESSON / "frames" / "02.jpg").read_bytes()
-    fake = FakeCheck(lambda ref: check.CheckResult("yes" if ref == ref_next else "no", 0.95, 1))
+    # A missed advance: step 0's own check is an unsure no (0.6). A confident no would mean step 0 was skipped,
+    # which ahead_confirm must never paper over (test_ahead_confirm_blocked_when_own_check_says_no).
+    fake = FakeCheck(lambda ref: check.CheckResult("yes", 0.95, 1) if ref == ref_next else check.CheckResult("no", 0.6, 1))
     events: list[dict] = []
     compares: list[int] = []
 
@@ -1352,6 +1370,19 @@ def test_ahead_confirm_streak_resets_and_bounds() -> None:
         stale = main.CheckJob(0, "q", b"", FRAME, e.version)  # a verdict for a step already left
         e.ahead_streak = 5
         assert e._ahead_confirm_due(stale, True, 0.9) is False and e.step == 1
+
+
+def test_ahead_confirm_blocked_when_own_check_says_no() -> None:
+    """A confident "no" from step k's own check means k was skipped, not missed: ahead verdicts never move on."""
+    make_lesson()
+    with env(HANDOVER_AHEAD_CONFIRM_N=None, HANDOVER_AHEAD_CONFIRM_CONF=None):
+        e = main.Engine()
+        e.select(LESSON)
+        job = main.CheckJob(0, "q", b"", FRAME, e.version)
+        e.last_check = {"done": "no", "confidence": 0.9}
+        assert not any(e._ahead_confirm_due(job, True, 0.95) for _ in range(6)) and e.step == 0
+        e.last_check = {"done": "no", "confidence": 0.6}  # an unsure no does not block recovery
+        assert [e._ahead_confirm_due(job, True, 0.95) for _ in range(3)] == [False, False, True] and e.step == 1
 
 
 def test_mock_ahead_banner_by_default_skip_when_enabled() -> None:
@@ -1684,6 +1715,14 @@ def test_end_lesson_unloads_and_stops_run() -> None:
         assert st["total"] == 0 and st["step"] == 0
         assert main.engine.run is None and main.engine.lesson is None
         ui.send_text(json.dumps({"type": "end_lesson"}))  # nothing loaded: a quiet no-op
+        select(ui, "to-end")
+        run = main.engine.run_id()
+        ui.send_text(json.dumps({"type": "end_lesson", "lesson_id": "other-lesson"}))  # stale: ignored
+        ui.send_text(json.dumps({"type": "end_lesson", "lesson_id": "to-end", "run_id": "old-run"}))  # stale run
+        time.sleep(0.3)
+        assert main.engine.lesson_id == "to-end" and main.engine.run_id() == run
+        ui.send_text(json.dumps({"type": "end_lesson", "lesson_id": "to-end", "run_id": run}))
+        recv_json(ui, lambda m: is_state(m) and m["lesson_id"] is None)
         assert (main.LESSONS / "to-end").exists()  # ending never touches the lesson files
 
 
@@ -1693,6 +1732,9 @@ def test_hub_info_pairing_fields() -> None:
         port = info["http_port"]
         assert info["hub_url"] == f"http://192.168.1.20:{port}"
         assert info["pair_link"] == f"handover://connect?hub=http%3A%2F%2F192.168.1.20%3A{port}"
+        assert info["capture_url"] is None  # tests run without certs: no https camera page to point at
+    with hub() as c, patched(main, lan_ip=lambda: "192.168.1.20", has_certs=lambda: True):
+        info = c.get("/api/hub-info").json()
         assert info["capture_url"] == f"https://192.168.1.20:{info['https_port']}/capture"
     with hub() as c, patched(main, lan_ip=lambda: None):
         info = c.get("/api/hub-info").json()

@@ -37,6 +37,21 @@ fn contract_state_sample() {
     assert_eq!(s.offline_label(), None);
     // Present and null, which is not the same as absent.
     assert_eq!(s.mistake, Some(None));
+    // Revision 6.
+    assert_eq!(s.check_interval_s, Some(1.0));
+    assert_eq!(s.ui_fps, Some(15));
+}
+
+#[test]
+fn revision6_fields_are_optional() {
+    let s = state("state_revision1.json");
+    assert_eq!((s.check_interval_s, s.ui_fps), (None, None));
+    // Not sent back to the window when the hub did not send them.
+    let v = state_json(&s);
+    assert!(v.get("check_interval_s").is_none() && v.get("ui_fps").is_none());
+    let v = state_json(&state("state_contract.json"));
+    assert_eq!(v["check_interval_s"], 1.0);
+    assert_eq!(v["ui_fps"], 15);
 }
 
 #[test]
@@ -199,6 +214,18 @@ fn client_messages_match_contract() {
     assert_eq!(ClientMessage::Back { from: Some(2) }.to_json(), r#"{"type":"back","from":2}"#);
     assert_eq!(ClientMessage::Goto { step: 0 }.to_json(), r#"{"type":"goto","step":0}"#);
     assert_eq!(ClientMessage::DismissMistake.to_json(), r#"{"type":"dismiss_mistake"}"#);
+    let interval = |s: f64| ClientMessage::set_check_interval(s).map(|m| m.to_json());
+    assert_eq!(interval(0.5).as_deref(), Some(r#"{"type":"set_check_interval","seconds":0.5}"#));
+    assert_eq!(interval(2.0).as_deref(), Some(r#"{"type":"set_check_interval","seconds":2.0}"#));
+    // Clamped to the hub's 0.2 to 10; not a number is refused.
+    assert_eq!(interval(0.01).as_deref(), Some(r#"{"type":"set_check_interval","seconds":0.2}"#));
+    assert_eq!(interval(60.0).as_deref(), Some(r#"{"type":"set_check_interval","seconds":10.0}"#));
+    assert_eq!(interval(f64::NAN), None);
+    assert_eq!(ClientMessage::EndLesson { lesson_id: None, run_id: None }.to_json(), r#"{"type":"end_lesson"}"#);
+    assert_eq!(
+        ClientMessage::EndLesson { lesson_id: Some("l".into()), run_id: Some("r".into()) }.to_json(),
+        r#"{"type":"end_lesson","lesson_id":"l","run_id":"r"}"#
+    );
 }
 
 #[test]

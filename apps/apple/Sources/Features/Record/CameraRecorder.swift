@@ -10,8 +10,7 @@ final class CameraRecorder: RecordCaptureEngine {
     /// The preview layer the recorder view shows. Its rotation follows the device.
     let previewLayer: AVCaptureVideoPreviewLayer
     private let core = CaptureCore()
-    private var rotation: AVCaptureDevice.RotationCoordinator?
-    private var rotationObservation: NSKeyValueObservation?
+    private var rotation: CameraRotationFollower?
 
     init() {
         previewLayer = AVCaptureVideoPreviewLayer(session: core.session)
@@ -49,14 +48,14 @@ final class CameraRecorder: RecordCaptureEngine {
     }
 
     func stopSession() {
-        rotationObservation = nil
+        rotation?.stop()
         rotation = nil
         core.stop()
     }
 
+    /// The take is saved at the angle the phone is held at when recording starts, as in the Camera app.
     func startRecording(to url: URL) throws {
-        let angle = rotation?.videoRotationAngleForHorizonLevelCapture
-        try core.startRecording(to: url, rotation: angle)
+        try core.startRecording(to: url, rotation: rotation?.captureAngle)
     }
 
     func stopRecording() async throws -> URL { try await core.stopRecording() }
@@ -96,19 +95,13 @@ final class CameraRecorder: RecordCaptureEngine {
         #endif
     }
 
+    /// Turns the preview with the device; the movie's angle is read from the same coordinator at start.
     private func followRotation(of device: AVCaptureDevice) {
-        let coordinator = AVCaptureDevice.RotationCoordinator(device: device, previewLayer: previewLayer)
-        rotation = coordinator
-        applyPreviewRotation(coordinator.videoRotationAngleForHorizonLevelPreview)
-        rotationObservation = coordinator.observe(\.videoRotationAngleForHorizonLevelPreview, options: [.new]) { [weak self] _, change in
-            guard let angle = change.newValue else { return }
-            Task { @MainActor in self?.applyPreviewRotation(angle) }
-        }
-    }
-
-    private func applyPreviewRotation(_ angle: CGFloat) {
-        guard let connection = previewLayer.connection, connection.isVideoRotationAngleSupported(angle) else { return }
-        connection.videoRotationAngle = angle
+        guard rotation?.deviceID != device.uniqueID else { return }
+        let layer = previewLayer
+        rotation = CameraRotationFollower(device: device, previewLayer: layer, preview: { angle in
+            layer.connection?.apply(rotation: angle)
+        })
     }
 }
 

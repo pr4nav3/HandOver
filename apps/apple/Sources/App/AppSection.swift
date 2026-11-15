@@ -2,28 +2,28 @@ import SwiftUI
 
 /// The app's top-level places, in sidebar and tab order.
 enum AppSection: String, CaseIterable, Identifiable, Hashable {
-    case library, learn, teach, orgs, camera, settings
+    case library, learn, teach, camera, orgs, settings
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
-        case .library: "Library"
+        case .library: "Home"
         case .learn: "Learn"
         case .teach: "Teach"
         case .orgs: "Organizations"
-        case .camera: "Camera"
+        case .camera: "Be the Camera"
         case .settings: "Settings"
         }
     }
 
     var symbol: String {
         switch self {
-        case .library: "books.vertical"
+        case .library: "house"
         case .learn: "play.rectangle"
         case .teach: "video.badge.plus"
         case .orgs: "person.3"
-        case .camera: "camera"
+        case .camera: "video.circle"
         case .settings: "gearshape"
         }
     }
@@ -33,7 +33,7 @@ enum AppSection: String, CaseIterable, Identifiable, Hashable {
     var screen: some View {
         switch self {
         case .library: LibraryView()
-        case .learn: LearnView()
+        case .learn: LearnTab()
         case .teach: TeachView()
         case .orgs: OrgsListView()
         case .camera: CameraView()

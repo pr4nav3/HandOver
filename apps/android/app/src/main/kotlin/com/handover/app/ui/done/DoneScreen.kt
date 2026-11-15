@@ -73,6 +73,8 @@ fun DoneScreen(
     onStartOver: () -> Unit,
     onPracticeStep: (Int) -> Unit,
     modifier: Modifier = Modifier,
+    /** Back to Home, ending the lesson on this phone. Null hides the button (previews). */
+    onFinish: (() -> Unit)? = null,
 ) {
     BoxWithConstraints(modifier.fillMaxSize().paper()) {
         val wide = maxWidth >= 700.dp
@@ -80,7 +82,7 @@ fun DoneScreen(
             Row(Modifier.fillMaxSize().padding(HOSpace.xl), horizontalArrangement = Arrangement.spacedBy(HOSpace.xl)) {
                 Column(Modifier.width(380.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(HOSpace.l)) {
                     Summary(model)
-                    Buttons(model, connected, onPracticeWeakest, onStartOver)
+                    Buttons(model, connected, onPracticeWeakest, onStartOver, onFinish)
                 }
                 Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
                     Breakdown(model, onPracticeStep)
@@ -93,7 +95,7 @@ fun DoneScreen(
             ) {
                 Summary(model)
                 Breakdown(model, onPracticeStep)
-                Buttons(model, connected, onPracticeWeakest, onStartOver)
+                Buttons(model, connected, onPracticeWeakest, onStartOver, onFinish)
             }
         }
     }
@@ -233,13 +235,14 @@ private fun StepRow(s: StepView, scale: Double, onPracticeStep: (Int) -> Unit) {
 }
 
 @Composable
-private fun Buttons(model: DoneModel, connected: Boolean, onPracticeWeakest: (Int) -> Unit, onStartOver: () -> Unit) {
+private fun Buttons(model: DoneModel, connected: Boolean, onPracticeWeakest: (Int) -> Unit, onStartOver: () -> Unit, onFinish: (() -> Unit)?) {
     Column(Modifier.fillMaxWidth().padding(top = HOSpace.s), verticalArrangement = Arrangement.spacedBy(HOSpace.s)) {
         val weakest = model.weakest
         if (weakest != null) {
             HOButton("Practice the Weakest Step", { onPracticeWeakest(weakest.index) }, Modifier.fillMaxWidth(), ButtonKind.Primary, ButtonSize.Large, enabled = connected)
         }
         HOButton("Start Over", onStartOver, Modifier.fillMaxWidth(), if (weakest == null) ButtonKind.Primary else ButtonKind.Secondary, ButtonSize.Large, enabled = connected)
+        if (onFinish != null) HOButton("Back to Home", onFinish, Modifier.fillMaxWidth(), ButtonKind.Quiet, ButtonSize.Large)
         if (!connected) Text("Waiting for the hub.", style = HandOver.type.footnote, color = HandOver.colors.ink2, modifier = Modifier.align(Alignment.CenterHorizontally))
     }
 }

@@ -30,8 +30,8 @@ class CameraSocket(
     name: String,
     source: String = "phone",
     backoff: Backoff = Backoff(),
-    /** The hub drops frames closer than 0.2 s from one camera; leave a margin. */
-    private val minFrameGapMs: Long = 250,
+    /** Just under the 15 a second the senders aim for, so camera jitter never drops a due frame. */
+    private val minFrameGapMs: Long = 50,
     private val clock: () -> Long = System::currentTimeMillis,
 ) : HubSocket(hub.cameraSocket, http, scope, backoff) {
 
@@ -65,6 +65,12 @@ class CameraSocket(
         this.name = name
         this.source = source
         sendText(helloText())
+    }
+
+    /** True when a frame could not go out now: not open, or the last frame is still leaving the phone. */
+    fun isBusy(): Boolean {
+        val ws = currentSocket() ?: return true
+        return ws.queueSize() > 0 || clock() - lastFrameAt < minFrameGapMs
     }
 
     /**

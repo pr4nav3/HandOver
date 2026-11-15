@@ -114,7 +114,7 @@ A recut from the command line (`python -m server.teach --recut`) does not tell a
 | No hello | `name: "Camera <n>"`, `platform: "other"`, `source: "unknown"` (never guessed) |
 | `platform` in hello | `ios`, `android`, `web`, `macos`, `windows`, `linux`, `replay`; any other string becomes `other` and the hello still counts |
 | Same `device_id` reconnects | Older socket closed with code 4000 `replaced` |
-| Frames over 2 MB, or closer than 0.05 s (`HANDOVER_MIN_FRAME_GAP`) | Ignored. 0.05 s lets 15 fps senders through; a 640 px frame at JPEG quality 0.5 is about 30 to 60 KB, far under 2 MB |
+| Frames over 2 MB, or closer than 0.03 s (`HANDOVER_MIN_FRAME_GAP`) | Ignored. 0.03 s lets 15 fps senders through even when Wi-Fi bunches two frames; a 640 px frame at JPEG quality 0.5 is about 30 to 60 KB, far under 2 MB |
 
 Frames stay in memory. The engine never writes them to disk.
 

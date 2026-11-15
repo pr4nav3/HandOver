@@ -3,4 +3,4 @@
  "camera_connected":true,
  "camera":{"name":"Ray-Ban Meta via iPhone","platform":"ios","source":"glasses"},
  "check_offline":false,"check_offline_reason":null,
- "mistake":null}
+ "mistake":null,"check_interval_s":1.0,"ui_fps":15}

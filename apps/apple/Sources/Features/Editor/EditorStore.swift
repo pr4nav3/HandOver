@@ -496,7 +496,10 @@ final class EditorStore {
     }
 
     static func describe(_ error: any Error) -> String {
-        if let hubError = error as? HubError, hubError.isPermission { return "You do not have permission to do that." }
+        if let hubError = error as? HubError {
+            if hubError.isPermission { return "You do not have permission to do that. Ask the lesson's owner to make you an editor." }
+            if case .unreachable = hubError { return hubError.friendly }
+        }
         return (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
     }
 }

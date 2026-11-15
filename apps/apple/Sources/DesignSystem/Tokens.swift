@@ -50,6 +50,15 @@ enum HORadius {
     static let pip: CGFloat = 16
 }
 
+/// Layout breakpoints shared by screens.
+enum HOLayout {
+    /// Below this height a screen is short (iPhone landscape): pages scroll, pinned buttons move into the scroll,
+    /// and overlays take one row.
+    static let shortHeight: CGFloat = 480
+
+    static func isShort(_ height: CGFloat) -> Bool { height < shortHeight }
+}
+
 /// Hairlines: half a point in `line`.
 enum HOLine {
     static let width: CGFloat = 0.5

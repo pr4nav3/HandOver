@@ -3,11 +3,12 @@
 // onboarding using the whole window. The Rust core owns the hub connection; this file keeps the
 // screens in step with its events and turns clicks and keys into core calls.
 
-import { call, hub, invoke, onHub, type HubEvent, type HubState, type Lesson, type LinkStatus, type Settings, type Snapshot } from "./api";
+import { call, hub, invoke, onHub, sendCameraFrame, type HubEvent, type HubState, type Lesson, type LinkStatus, type Settings, type Snapshot } from "./api";
 import { unlockAudio } from "./chime";
-import { bindSheet, closeSheet, sheetOpen, orgAvatar } from "./components";
+import { bindSheet, closeSheet, openSheet, sheetOpen, orgAvatar } from "./components";
+import { LocalCamera } from "./frames";
 import { icons } from "./icons";
-import { app, canTeach, go, back, localProgress, saveProgress, setRenderer, setRouteHook, signedIn, toast, learn as learnHook, type Route } from "./state";
+import { app, canTeach, go, back, localProgress, prefs, saveProgress, setRenderer, setRouteHook, signedIn, toast, learn as learnHook, type Route } from "./state";
 import { applyTheme } from "./themes";
 import { html, modKey, paint, typing } from "./util";
 import { browseAction, browseInput, renderBrowse } from "./views/browse";
@@ -16,6 +17,7 @@ import { editorAction, editorChange, editorPointerDown, renderEditor } from "./v
 import { homeAction, renderHome, resetHome } from "./views/home";
 import { LearnView, type RunSummary } from "./views/learn";
 import { connectHub, onboardingAction, onboardingInput, onboardingSubmit, renderOnboarding, startOnboarding } from "./views/onboarding";
+import { CAMERA_WORD, cameraSheet, pairLive, pairSheet } from "./views/pair";
 import { joinSheet, orgsAction, orgsChange, renderOrg, renderOrgs } from "./views/orgs";
 import { profileAction, recordRun, refreshMe, renderProfile, signInSheet } from "./views/profile";
 import { bindSettings, renderSettings } from "./views/settings";
@@ -47,6 +49,8 @@ const ui = {
   /** The lesson this window started, picked again if the hub restarts with none. */
   resumeId: null as string | null,
   resentThisConnection: false,
+  /** This connection has seen the hub running our lesson (so losing it means someone ended it). */
+  sawLesson: false,
   /** Where Learn should go once the hub has selected the lesson. */
   pendingGoto: null as number | null,
   themeSearch: "",
@@ -59,8 +63,42 @@ const learn = new LearnView($("learn"), {
   goto: (step) => void call("goto", { step }).catch(showError),
   dismissMistake: () => void call("dismissMistake").catch(() => {}),
   library: () => leaveLearn(),
+  pick: () => {
+    exitLearn();
+    go({ name: "browse" });
+  },
+  pair: () => pairSheet(),
+  chooseCamera: () => cameraSheet(),
+  retryCamera: () => {
+    stopLocalCamera();
+    render();
+  },
   finished: (s) => onFinished(s),
 });
+
+// ---- This computer as the camera ----
+
+const PLATFORM = navigator.userAgent.includes("Mac") ? "macos" : navigator.userAgent.includes("Windows") ? "windows" : "linux";
+const CAMERA_NAME = { macos: "Mac camera", windows: "Windows camera", linux: "Linux camera" }[PLATFORM];
+const local = new LocalCamera(learn.localVideo, sendCameraFrame);
+local.onChange = () => render();
+
+/** Sends this computer's webcam to the hub only while Learn is open with it chosen. */
+function syncLocalCamera() {
+  const want = app.route.name === "learn" && prefs.camera === "computer" && app.link.link !== "idle";
+  if (want && local.state === "off")
+    void local.start().then((ok) => {
+      if (ok) void call("cameraStart", { name: CAMERA_NAME, platform: PLATFORM }).catch(showError);
+    });
+  else if (!want && local.state !== "off") stopLocalCamera();
+}
+
+function stopLocalCamera() {
+  const was = local.state;
+  local.stop();
+  app.cameraLink = "off";
+  if (was === "on" || was === "starting") void call("cameraStop").catch(() => {});
+}
 
 function showError(e: unknown) {
   toast(String((e as Error)?.message ?? e));
@@ -111,7 +149,7 @@ function renderLearnBar() {
   const camera = !app.down && s?.camera_connected && s?.camera?.source !== "file" ? s?.camera?.name : "";
   paint(
     $("learn-bar"),
-    html`<button class="icon-button" data-act="leave-learn" title="Close lesson" aria-label="Close lesson">${icons.close}</button>
+    html`<button class="secondary small end-button" data-act="end-lesson" title="${s?.lesson_id ? "End this lesson" : "Back to Home"}">${icons.close}<span>${s?.lesson_id ? "End" : "Close"}</span></button>
       <span class="learn-title">${ui.lesson?.title ?? ""}</span>
       <span class="learn-bar-right">
         ${camera ? html`<span class="topbar-camera" title="Active camera">${camera}</span>` : ""}
@@ -169,7 +207,17 @@ function render() {
   }
   if (learning) renderLearnBar();
   learn.setActive(learning);
-  learn.update({ state: app.state, lesson: ui.lesson, down: app.down, chime: app.snap.settings.chime });
+  syncLocalCamera();
+  const s0 = app.state;
+  const phase = s0?.lesson_id ? (ui.lesson?.id === s0.lesson_id ? "running" : "starting") : ui.resumeId && app.link.link !== "idle" ? "starting" : "none";
+  learn.update({
+    state: app.state,
+    lesson: ui.lesson,
+    down: app.down,
+    chime: app.snap.settings.chime,
+    phase,
+    camera: { choice: prefs.camera, local: local.state, link: app.cameraLink },
+  });
   const s = app.state;
   const off = s?.check_offline ? `Off: ${s.offline_label ?? "checks unavailable"}` : "Camera checks";
   renderSettings($("settings"), {
@@ -180,6 +228,8 @@ function render() {
     version: app.snap.version,
     search: ui.themeSearch,
     checks: off,
+    checkInterval: s?.check_interval_s ?? null,
+    camera: prefs.camera ? CAMERA_WORD[prefs.camera] : "Not chosen yet",
     account: app.me?.user ? `${app.me.user.name}, ${app.me.user.role}` : "",
   });
 }
@@ -190,8 +240,14 @@ setRouteHook((r) => {
 
 // ---- Learn ----
 
+/** Opens Learn on a lesson. The first time, asks how HandOver should see the learner's hands. */
 function startLesson(id: string, step = 0, restart = false) {
   unlockAudio();
+  if (!prefs.camera) return cameraSheet({ then: () => beginLesson(id, step, restart) });
+  beginLesson(id, step, restart);
+}
+
+function beginLesson(id: string, step: number, restart: boolean) {
   ui.resumeId = id;
   ui.resentThisConnection = false;
   if (restart || app.state?.lesson_id !== id) {
@@ -204,8 +260,40 @@ function startLesson(id: string, step = 0, restart = false) {
 learnHook.start = startLesson;
 
 function leaveLearn() {
+  ui.resumeId = null;
+  ui.pendingGoto = null;
   if (app.history.length) back();
   else go({ name: "home" });
+}
+
+/** Leaves Learn for Home. With `end`, tells the hub to stop the run and unload the lesson. */
+function exitLearn(end = false) {
+  const s = app.state;
+  if (end && s?.lesson_id)
+    void call("endLesson", { lessonId: s.lesson_id, runId: (s as { run_id?: string | null }).run_id ?? "" }).catch(showError);
+  ui.resumeId = null;
+  ui.pendingGoto = null;
+  app.history = [];
+  go({ name: "home" });
+}
+
+/** End, with a confirmation while the lesson is under way. */
+function endLesson() {
+  const s = app.state;
+  if (!s?.lesson_id || s.status === "done" || app.route.name !== "learn") return exitLearn(!!s?.lesson_id);
+  openSheet({
+    title: "End this lesson?",
+    body: () => html`<div class="form">
+      <p class="sheet-lede">${s.step > 0 ? "Your place is saved on this device, so you can continue from Home." : "You can start it again anytime."}</p>
+      <div class="form-actions"><button class="quiet" data-sheet="close">Keep Going</button>
+        <button class="danger" data-act="end">End Lesson</button></div>
+    </div>`,
+    onAction: (a) => {
+      if (a !== "end") return;
+      closeSheet();
+      exitLearn(true);
+    },
+  });
 }
 
 function onFinished(s: RunSummary) {
@@ -260,6 +348,7 @@ function onLink(l: LinkStatus) {
     downTimer = 0;
     app.down = false;
     ui.resentThisConnection = false;
+    ui.sawLesson = false;
     if (was !== "connected") resetHome();
   } else if (l.link === "idle") {
     window.clearTimeout(downTimer);
@@ -280,6 +369,13 @@ function onLink(l: LinkStatus) {
 function onState(s: HubState) {
   const prev = app.state;
   app.state = s;
+  if (s.lesson_id && s.lesson_id === ui.resumeId) ui.sawLesson = true;
+  // Someone ended the lesson (End on any screen): Learn says "No lesson running".
+  if (!s.lesson_id && ui.resumeId && ui.sawLesson) {
+    ui.resumeId = null;
+    ui.pendingGoto = null;
+    if (app.route.name === "learn") toast("The lesson was ended.");
+  }
   // The hub restarted and lost our lesson: pick it again, once per connection.
   if (!s.lesson_id && ui.resumeId && app.route.name === "learn" && !ui.resentThisConnection) {
     ui.resentThisConnection = true;
@@ -299,6 +395,7 @@ function onState(s: HubState) {
   if (app.snap.settings.notifications && prev && s.check_offline && !prev.check_offline)
     void invoke("notify", { title: "Checks off, use Next", body: s.offline_label ?? "" }).catch(() => {});
   void syncLesson();
+  pairLive();
   render();
 }
 
@@ -316,8 +413,15 @@ function onEvent(e: HubEvent | { kind: "upload"; sent: number; total: number }) 
       return learn.onFrame(e.n);
     case "upload":
       return onUploadProgress(e.sent, e.total);
+    case "camera":
+      app.cameraLink = e.camera;
+      return render();
     case "error":
-      if (app.route.name === "learn" && !app.state?.lesson_id) leaveLearn();
+      // A lesson that could not start: Learn says "No lesson running" and offers the list.
+      if (app.route.name === "learn" && !app.state?.lesson_id) {
+        ui.resumeId = null;
+        render();
+      }
       return toast(e.message);
   }
 }
@@ -340,6 +444,9 @@ function dispatchAction(act: string, t: HTMLElement) {
     return render();
   }
   if (act === "leave-learn") return leaveLearn();
+  if (act === "end-lesson") return endLesson();
+  if (act === "pair-phone") return pairSheet();
+  if (act === "camera-change") return cameraSheet();
   if (act === "join-code") return joinSheet();
   if (act === "sign-in") return signInSheet();
   const r = app.route.name;
@@ -399,6 +506,7 @@ bindSettings($("settings"), {
     render();
   },
   set: (patch) => void setSettings(patch),
+  checkInterval: (seconds) => void call("setCheckInterval", { seconds }).catch(showError),
   search: (text) => {
     ui.themeSearch = text;
     render();
@@ -412,6 +520,8 @@ bindSettings($("settings"), {
     app.orgs = [];
     startOnboarding(true);
   },
+  pair: () => pairSheet(),
+  camera: () => cameraSheet(),
   otherHub: () => {
     app.settingsOpen = false;
     startOnboarding(true);

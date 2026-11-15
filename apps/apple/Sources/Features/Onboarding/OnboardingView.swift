@@ -117,14 +117,18 @@ struct OnboardingView: View {
     }
 }
 
-/// iPhone: full screen. iPad: a centered 600 by 720 card on paper. Mac: the window content.
+/// iPhone: full screen. iPad: a centered 600 by 720 card on paper. Mac: the window content. A large iPhone on its
+/// side reports a regular width but a compact height; it stays full screen, since the card would not fit.
 private struct OnboardingFrame: ViewModifier {
     @Environment(\.horizontalSizeClass) private var sizeClass
+    #if os(iOS)
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+    #endif
     @Environment(\.theme) private var theme
 
     func body(content: Content) -> some View {
         #if os(iOS)
-        if sizeClass == .regular {
+        if sizeClass == .regular && verticalSizeClass == .regular {
             content
                 .frame(width: 600, height: 720)
                 .background(theme.colors.paper, in: RoundedRectangle(cornerRadius: HORadius.panel, style: .continuous))

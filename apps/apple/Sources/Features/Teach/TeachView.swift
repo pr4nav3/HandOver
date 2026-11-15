@@ -5,8 +5,11 @@ import UniformTypeIdentifiers
 /// Teach home (SCREENS.md 11): Record a Take, Choose from Photos, Choose from Files (drop a video on Mac), and
 /// the person's own lessons with their status. Picking a video opens the Make course sheet.
 struct TeachView: View {
+    /// Fixed lessons for previews and snapshots.
+    var preview: LibraryStore?
+
     var body: some View {
-        AccountScope { TeachScreen() }
+        AccountScope { TeachScreen(preset: preview) }
     }
 }
 
@@ -27,12 +30,13 @@ struct TeachVideoTransfer: Transferable {
 }
 
 private struct TeachScreen: View {
+    var preset: LibraryStore?
     @Environment(AppModel.self) private var model
     @Environment(AccountStore.self) private var accounts
     @Environment(\.theme) private var theme
     @Environment(\.horizontalSizeClass) private var sizeClass
     @State private var flow = UploadFlow()
-    @State private var lessons = LibraryStore()
+    @State private var lessons: LibraryStore
     @State private var launcher = LessonLauncher()
     @State private var showSheet = false
     @State private var showImporter = false
@@ -40,13 +44,25 @@ private struct TeachScreen: View {
     @State private var photoItem: PhotosPickerItem?
     @State private var preparing = false
     @State private var pickError: String?
+    @State private var pickTitle = "Can't open that video"
     @State private var editing: String?
     @State private var dropTargeted = false
+
+    init(preset: LibraryStore?) {
+        self.preset = preset
+        _lessons = State(initialValue: preset ?? LibraryStore())
+    }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: HOSpace.xl) {
+                Text("Show a task once. HandOver turns it into a lesson anyone can follow.")
+                    .font(theme.fonts.callout)
+                    .foregroundStyle(theme.colors.ink2)
+                    .fixedSize(horizontal: false, vertical: true)
+                if model.hub == nil { noHubBanner }
                 options
+                if showsHowItWorks { howItWorks }
                 yourLessons
             }
             .padding(.horizontal, isCompact ? HOSpace.l : HOSpace.xl)
@@ -68,7 +84,9 @@ private struct TeachScreen: View {
         .fileImporter(isPresented: $showImporter, allowedContentTypes: [.movie, .mpeg4Movie, .quickTimeMovie]) { result in
             switch result {
             case .success(let url): picked(TeachPickedVideo(url: url))
-            case .failure(let error): pickError = error.localizedDescription
+            case .failure(let error):
+                pickTitle = "Can't open that video"
+                pickError = "\(error.localizedDescription) Try a different video."
             }
         }
         .sheet(isPresented: $showSheet) {
@@ -95,7 +113,7 @@ private struct TeachScreen: View {
         #else
         .sheet(isPresented: $showRecorder) { recorder.frame(minWidth: 900, minHeight: 640) }
         #endif
-        .alert("Can't open that video", isPresented: Binding(get: { pickError != nil }, set: { if !$0 { pickError = nil } })) {
+        .alert(pickTitle, isPresented: Binding(get: { pickError != nil }, set: { if !$0 { pickError = nil } })) {
             Button("OK", role: .cancel) {}
         } message: { Text(pickError ?? "") }
         .navigationDestination(for: CourseRoute.self) { route in
@@ -134,82 +152,118 @@ private struct TeachScreen: View {
         "\(model.hub?.description ?? "")|\(String(describing: accounts.support))|\(accounts.user?.id ?? "")"
     }
 
-    private var isCompact: Bool {
-        #if os(iOS)
-        sizeClass == .compact
-        #else
-        false
-        #endif
-    }
+    /// iPhone layout. The Mac reports regular, so it keeps its own layout; snapshots ask for compact.
+    private var isCompact: Bool { sizeClass == .compact }
 
     // MARK: - Options
 
+    /// The two ways to make a lesson (SCREENS.md 11): record now, or use a video you already have.
     @ViewBuilder private var options: some View {
-        let cards = Group {
-            OptionCard(symbol: "record.circle", title: "Record a Take", line: recordLine) { showRecorder = true }
-            #if os(iOS)
-            PhotosPicker(selection: $photoItem, matching: .videos, preferredItemEncoding: .current) {
-                OptionCardLabel(symbol: "photo.on.rectangle", title: "Choose from Photos",
-                                line: "Pick a video you already recorded.")
+        VStack(alignment: .leading, spacing: HOSpace.s) {
+            Text("Make a Lesson").sectionHeaderStyle(theme)
+            let cards = Group {
+                OptionCard(symbol: "record.circle", title: "Record Now", line: recordLine) { showRecorder = true }
+                pickCard
             }
-            .buttonStyle(.plain)
-            OptionCard(symbol: "folder", title: "Choose from Files", line: "Pick a video from Files or a drive.") {
-                showImporter = true
+            if isCompact {
+                VStack(spacing: HOSpace.m) { cards }
+            } else {
+                HStack(alignment: .top, spacing: HOSpace.l) { cards }
             }
-            #else
-            OptionCard(symbol: "folder", title: "Choose a File", line: "Or drop a video on this window.") {
-                showImporter = true
+        }
+    }
+
+    /// Photos and Files on iPhone and iPad; a file or a drop on the Mac.
+    @ViewBuilder private var pickCard: some View {
+        #if os(iOS)
+        VStack(alignment: .leading, spacing: HOSpace.m) {
+            OptionCardHeader(symbol: "film", title: "Use a Video You Have",
+                             line: "One video of the whole task, with you talking through it.")
+            HStack(spacing: HOSpace.s) {
+                PhotosPicker(selection: $photoItem, matching: .videos, preferredItemEncoding: .current) {
+                    Label("Photos", systemImage: "photo.on.rectangle").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(HOButtonStyle(.secondary, fullWidth: true))
+                Button { showImporter = true } label: {
+                    Label("Files", systemImage: "folder").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(HOButtonStyle(.secondary, fullWidth: true))
             }
-            #endif
         }
-        if isCompact {
-            VStack(spacing: HOSpace.m) { cards }
-        } else {
-            HStack(alignment: .top, spacing: HOSpace.l) { cards }
+        .raisedCard()
+        #else
+        OptionCard(symbol: "film", title: "Use a Video You Have",
+                   line: "Choose a file, or drop a video on this window.") {
+            showImporter = true
         }
-        if model.hub == nil {
-            Label("Connect to a hub in Settings to make lessons.", systemImage: "desktopcomputer")
-                .font(theme.fonts.callout)
-                .foregroundStyle(theme.colors.ink2)
-        }
+        #endif
     }
 
     private var recordLine: String {
         #if os(iOS)
         GlassesFeature.isEnabled
-            ? "Use this iPhone or your Ray-Ban Meta glasses. Talk through each step."
-            : "Use this iPhone and talk through each step."
+            ? "Film the task with this \(DeviceWord.noun) or your Ray-Ban Meta glasses. Talk through each step."
+            : "Film the task with this \(DeviceWord.noun). Talk through each step as you go."
         #else
-        "Use this Mac's camera or Continuity Camera."
+        "Film the task with this Mac's camera or your iPhone. Talk through each step."
         #endif
+    }
+
+    private var noHubBanner: some View {
+        HOBanner(symbol: "desktopcomputer", tone: .caution,
+                 text: "Connect to a hub in Settings first. The hub is the HandOver app running on a laptop near you.")
+    }
+
+    // MARK: - How it works
+
+    /// Shown until the first lesson exists: what happens after the video goes up.
+    private var showsHowItWorks: Bool {
+        lessons.items.isEmpty && !flow.isWorking && flow.phase != .failed
+            && (lessons.phase == .loaded || model.isPreview || model.hub == nil)
+    }
+
+    private var howItWorks: some View {
+        VStack(alignment: .leading, spacing: HOSpace.s) {
+            Text("What Happens Next").sectionHeaderStyle(theme)
+            VStack(alignment: .leading, spacing: HOSpace.l) {
+                HowItWorksRow(number: 1, title: "Your video goes to the hub",
+                              line: "The hub is the HandOver app running on a laptop near you.")
+                HowItWorksRow(number: 2, title: "HandOver makes the steps",
+                              line: "It finds where each step starts, cuts a clip for each one, and adds captions.")
+                HowItWorksRow(number: 3, title: "You check them in the editor",
+                              line: "Fix any title or time, then publish so learners can find it.")
+            }
+            .raisedCard()
+        }
     }
 
     // MARK: - Your lessons
 
     @ViewBuilder private var yourLessons: some View {
-        VStack(alignment: .leading, spacing: HOSpace.m) {
-            Text("Your Lessons").sectionHeaderStyle(theme)
-            if flow.isWorking || flow.phase == .failed {
-                Button { showSheet = true } label: { processingRow }.buttonStyle(.plain)
-            }
-            if lessons.items.isEmpty && !flow.isWorking {
-                if lessons.phase == .loaded || model.isPreview {
-                    HOEmptyState(symbol: "video.badge.plus", title: "No lessons yet",
-                                 message: "Record a task once while you talk through it. HandOver cuts it into steps.")
+        if flow.isWorking || flow.phase == .failed || !lessons.items.isEmpty {
+            VStack(alignment: .leading, spacing: HOSpace.s) {
+                Text("Your Lessons").sectionHeaderStyle(theme)
+                if flow.isWorking || flow.phase == .failed {
+                    Button { showSheet = true } label: { processingRow }.buttonStyle(.plain)
                 }
-            } else if !lessons.items.isEmpty {
-                VStack(spacing: 0) {
-                    ForEach(Array(lessons.items.enumerated()), id: \.element.id) { index, item in
-                        NavigationLink(value: CourseRoute.editor(item.id)) { TeachLessonRow(item: item) }
-                            .buttonStyle(.plain)
-                        if index < lessons.items.count - 1 {
-                            Divider().overlay(theme.colors.line).padding(.leading, HOSpace.l + 64 + HOSpace.m)
+                if !lessons.items.isEmpty {
+                    VStack(spacing: 0) {
+                        ForEach(Array(lessons.items.enumerated()), id: \.element.id) { index, item in
+                            NavigationLink(value: CourseRoute.editor(item.id)) { TeachLessonRow(item: item) }
+                                .buttonStyle(.plain)
+                            if index < lessons.items.count - 1 {
+                                Divider().overlay(theme.colors.line).padding(.leading, HOSpace.l + 64 + HOSpace.m)
+                            }
                         }
                     }
+                    .background(theme.colors.raised, in: RoundedRectangle(cornerRadius: HORadius.card, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: HORadius.card, style: .continuous)
+                        .strokeBorder(theme.colors.line, lineWidth: HOLine.width))
+                    Text("Tap a lesson to review its steps in the editor.")
+                        .font(theme.fonts.footnote)
+                        .foregroundStyle(theme.colors.ink2)
+                        .padding(.horizontal, HOSpace.xs)
                 }
-                .background(theme.colors.raised, in: RoundedRectangle(cornerRadius: HORadius.card, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: HORadius.card, style: .continuous)
-                    .strokeBorder(theme.colors.line, lineWidth: HOLine.width))
             }
         }
     }
@@ -260,20 +314,22 @@ private struct TeachScreen: View {
                 photoItem = nil
             }
             do {
+                pickTitle = "Can't open that video"
                 guard let video = try await item.loadTransferable(type: TeachVideoTransfer.self) else {
-                    pickError = "That item is not a video."
+                    pickError = "That item is not a video. Pick a video instead."
                     return
                 }
                 picked(TeachPickedVideo(url: video.url))
             } catch {
-                pickError = error.localizedDescription
+                pickError = "\(error.localizedDescription) Try a different video."
             }
         }
     }
 
     private func picked(_ video: TeachPickedVideo) {
         guard !flow.isWorking else {
-            pickError = "A lesson is still uploading. Wait for it to finish, then pick the next video."
+            pickTitle = "One lesson at a time"
+            pickError = "A lesson is still uploading. When it finishes, pick the next video."
             return
         }
         flow.pick(video)
@@ -301,12 +357,28 @@ private struct OptionCardLabel: View {
     @Environment(\.theme) private var theme
 
     var body: some View {
+        HStack(alignment: .center, spacing: HOSpace.m) {
+            OptionCardHeader(symbol: symbol, title: title, line: line)
+            Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(theme.colors.ink3)
+                .accessibilityHidden(true)
+        }
+        .raisedCard()
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
+    }
+}
+
+/// Symbol tile, title and one line: the top of a Teach option card.
+private struct OptionCardHeader: View {
+    var symbol: String
+    var title: String
+    var line: String
+    @Environment(\.theme) private var theme
+
+    var body: some View {
         HStack(alignment: .top, spacing: HOSpace.m) {
-            Image(systemName: symbol)
-                .font(.title2)
-                .foregroundStyle(theme.colors.accentInk)
-                .frame(width: 44, height: 44)
-                .background(theme.colors.accentSoft, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            SymbolTile(symbol: symbol, side: 44)
             VStack(alignment: .leading, spacing: HOSpace.xxs) {
                 Text(title).font(theme.fonts.headline).foregroundStyle(theme.colors.ink)
                 Text(line).font(theme.fonts.callout).foregroundStyle(theme.colors.ink2)
@@ -314,10 +386,34 @@ private struct OptionCardLabel: View {
             }
             Spacer(minLength: 0)
         }
-        .raisedCard()
-        .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(.isButton)
+    }
+}
+
+/// A numbered line in What Happens Next.
+private struct HowItWorksRow: View {
+    var number: Int
+    var title: String
+    var line: String
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        HStack(alignment: .top, spacing: HOSpace.m) {
+            Text("\(number)")
+                .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                .foregroundStyle(theme.colors.accentInk)
+                .frame(width: 28, height: 28)
+                .background(theme.colors.accentSoft, in: Circle())
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: HOSpace.xxs) {
+                Text(title).font(theme.fonts.bodyMedium).foregroundStyle(theme.colors.ink)
+                Text(line).font(theme.fonts.callout).foregroundStyle(theme.colors.ink2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Step \(number): \(title). \(line)")
     }
 }
 

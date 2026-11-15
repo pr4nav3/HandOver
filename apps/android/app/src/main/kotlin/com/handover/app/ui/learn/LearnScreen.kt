@@ -33,7 +33,22 @@ import com.handover.app.core.CheckType
 import com.handover.app.core.HubState
 import com.handover.app.core.MistakeKind
 import com.handover.app.core.Nav
+import android.graphics.BitmapFactory
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Videocam
+import androidx.compose.material.icons.outlined.VideocamOff
+import com.handover.app.ui.camera.FrameSender
 import com.handover.app.ui.components.Badge
+import com.handover.app.ui.components.Banner
+import com.handover.app.ui.components.QuietButton
+import com.handover.app.ui.components.Tone
+import com.handover.app.ui.glasses.EyeglassesIcon
+import com.handover.app.ui.glasses.GlassesEvent
+import com.handover.app.ui.glasses.GlassesLink
+import com.handover.app.ui.glasses.GlassesPhase
+import com.handover.app.ui.glasses.glassesCopy
+import com.handover.app.ui.glasses.rememberGlassesLink
+import com.handover.app.ui.start.CameraChoice
 import com.handover.app.ui.components.ButtonKind
 import com.handover.app.ui.components.ButtonSize
 import com.handover.app.ui.components.ClipPlayer
@@ -138,8 +153,23 @@ class LearnPrefs(val swapped: Boolean = false, val corner: Corner = Corner.Botto
     }
 }
 
+/**
+ * Learn. [camera] is how HandOver sees the hands: This phone streams the back camera while the clip
+ * plays, Meta glasses stream through the Meta toolkit, Another device leaves the hub to that device.
+ * [onEnd] runs after the End confirmation (and from Done's Back to Home).
+ */
 @Composable
-fun LearnScreen(state: AppState, vm: AppViewModel, modifier: Modifier = Modifier) {
+fun LearnScreen(
+    appState: AppState,
+    vm: AppViewModel,
+    modifier: Modifier = Modifier,
+    camera: CameraChoice? = null,
+    onEnd: () -> Unit = {},
+    onPickLesson: () -> Unit = {},
+    onChangeCamera: () -> Unit = {},
+) {
+    // A run ended on this phone reads as no lesson until a new one starts.
+    val state = if (appState.lessonRunning) appState else appState.copy(session = null, lesson = null)
     val context = LocalContext.current
     val session: LearnSession = viewModel()
     LaunchedEffect(vm) { session.attach(vm) }
@@ -188,24 +218,51 @@ fun LearnScreen(state: AppState, vm: AppViewModel, modifier: Modifier = Modifier
     var prefs by remember { mutableStateOf(LearnPrefs.load(context, isPhoneSilent(context))) }
     fun update(p: LearnPrefs) { prefs = p; p.save(context) }
 
-    // This phone as the camera: its own preview plus frames on core's camera socket.
-    var usePhone by rememberSaveable { mutableStateOf(false) }
-    var camera by remember { mutableStateOf<CameraSocket?>(null) }
-    val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted -> if (granted) usePhone = true }
-    DisposableEffect(usePhone) {
-        if (usePhone) camera = vm.startCamera()
+    val hasLesson = state.session?.lessonId != null && state.lesson != null
+    // Glasses that fail fall back to this phone for the rest of this lesson (the saved choice stays).
+    var fellBack by remember(state.session?.lessonId) { mutableStateOf(false) }
+    val mode = if (camera == CameraChoice.Glasses && fellBack) CameraChoice.ThisPhone else camera
+
+    // This phone as the camera: its own preview at full rate plus frames on core's camera socket.
+    var phoneAllowed by remember { mutableStateOf(context.checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) }
+    var phoneAsked by rememberSaveable { mutableStateOf(false) }
+    val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted -> phoneAllowed = granted; phoneAsked = true }
+    LaunchedEffect(mode, hasLesson) {
+        if (mode == CameraChoice.ThisPhone && hasLesson && !phoneAllowed && !phoneAsked) permission.launch(Manifest.permission.CAMERA)
+    }
+    val usePhone = mode == CameraChoice.ThisPhone && hasLesson && phoneAllowed
+    val useGlasses = mode == CameraChoice.Glasses && hasLesson
+    var socket by remember { mutableStateOf<CameraSocket?>(null) }
+    DisposableEffect(usePhone, useGlasses) {
+        if (usePhone || useGlasses) socket = vm.startCamera()
         onDispose {
-            if (usePhone) {
+            if (usePhone || useGlasses) {
                 vm.stopCamera()
-                camera = null
+                socket = null
             }
         }
     }
-    fun wantPhone(on: Boolean) {
-        if (!on) { usePhone = false; return }
-        if (context.checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) usePhone = true
-        else permission.launch(Manifest.permission.CAMERA)
+    // Frames go out about 15 a second; a busy socket drops the frame before it is encoded.
+    val sender = remember { FrameSender(busy = { socket?.isBusy() ?: true }, send = { socket?.sendFrame(it) == true }) }
+    var glassesFrame by remember { mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null) }
+    val glasses = if (useGlasses) rememberGlassesLink(offer = { _, jpeg ->
+        var bytes: ByteArray? = null
+        sender.offer { jpeg().also { bytes = it } }.also { sent ->
+            bytes?.takeIf { sent }?.let { b -> glassesFrame = BitmapFactory.decodeByteArray(b, 0, b.size)?.asImageBitmap() }
+        }
+    }) else null
+    LaunchedEffect(glasses?.controller) {
+        glasses?.controller?.events?.collect { e ->
+            if (e is GlassesEvent.FallBack) { session.showToast(e.reason); fellBack = true }
+        }
     }
+    LaunchedEffect(socket, useGlasses, glasses?.state?.device?.name) {
+        socket?.identify(
+            name = if (useGlasses) "${glasses?.state?.device?.name ?: "Ray-Ban Meta"} glasses" else AppViewModel.defaultCameraName(),
+            source = if (useGlasses) "glasses" else "phone",
+        )
+    }
+    val glassesLive = glasses?.state?.phase == GlassesPhase.Streaming
 
     var hadCamera by remember(state.session?.lessonId) { mutableStateOf(false) }
     LaunchedEffect(state.session?.cameraConnected) { if (state.session?.cameraConnected == true) hadCamera = true }
@@ -237,7 +294,7 @@ fun LearnScreen(state: AppState, vm: AppViewModel, modifier: Modifier = Modifier
         var doneToast by remember { mutableStateOf<String?>(null) }
         val scope = androidx.compose.runtime.rememberCoroutineScope()
         Box(modifier.fillMaxSize()) {
-            DoneScreen(model, state.connected, session::practice, session::startOver, session::practice)
+            DoneScreen(model, state.connected, session::practice, session::startOver, session::practice, onFinish = onEnd)
             val t = toast ?: doneToast
             if (t != null) {
                 LaunchedEffect(t) { delay(4_000); session.clearToast(); doneToast = null }
@@ -263,6 +320,7 @@ fun LearnScreen(state: AppState, vm: AppViewModel, modifier: Modifier = Modifier
 
     val ui = LearnModel.ui(state, flash, moment, prefs, usePhone, deck?.caption).copy(
         audioRoute = bluetooth, speaking = speaker?.speaking == true, spokenGuidance = speak, verbosity = verbosity,
+        camera = camera, hasHub = appState.hub != null,
     )
     val step = state.currentStep
     val clipSource = step?.clip?.let { path -> vm.lessonFile(path)?.let { ClipSource(it, step.captions?.let(vm::lessonFile)) } }
@@ -270,8 +328,8 @@ fun LearnScreen(state: AppState, vm: AppViewModel, modifier: Modifier = Modifier
         val nextStep = lesson?.steps?.getOrNull((s.step) + 1)
         vm.lessonFile(path)?.let { ClipSource(it, nextStep?.captions?.let(vm::lessonFile)) }
     }
-    val liveState = LearnModel.liveState(state.connected, s, hadCamera, usePhone)
-    val liveSource = LiveSource.of(s?.camera, usePhone)
+    val liveState = LearnModel.liveState(state.connected, s, hadCamera, usePhone || glassesLive)
+    val liveSource = if (glassesLive) LiveSource(glasses?.state?.device?.name ?: "Glasses", EyeglassesIcon) else LiveSource.of(s?.camera, usePhone)
     val image = remember(frame) { frame?.asImageBitmap() }
 
     val actions = object : LearnActions {
@@ -284,12 +342,16 @@ fun LearnScreen(state: AppState, vm: AppViewModel, modifier: Modifier = Modifier
         override fun toggleCaptions() = update(prefs.copy(captions = !prefs.captions))
         override fun toggleMute() { prefs = prefs.copy(muted = !prefs.muted) }
         override fun restart() = session.startOver()
-        override fun useThisPhone(on: Boolean) = wantPhone(on)
+        override fun useThisPhone(on: Boolean) = if (on) onChangeCamera() else Unit
+        override fun end() = onEnd()
+        override fun pickLesson() = onPickLesson()
+        override fun changeCamera() = onChangeCamera()
         override fun momentGone() = session.clearMoment()
         override fun spokenGuidance(on: Boolean) { speechChoice = on; speechPrefs.spokenGuidance = on }
         override fun verbosity(v: Verbosity) { verbosity = v; speechPrefs.verbosity = v }
     }
 
+    Box(modifier.fillMaxSize()) {
     LearnContent(
         ui, actions,
         clip = { m, compact, inPane ->
@@ -301,11 +363,43 @@ fun LearnScreen(state: AppState, vm: AppViewModel, modifier: Modifier = Modifier
         },
         live = { m, compact ->
             LiveView(
-                image, liveState, liveSource, m, compact = compact,
-                preview = if (usePhone) { pm -> PhoneCameraPreview({ jpeg -> camera?.sendFrame(jpeg) }, pm) } else null,
-                waitingAction = { HOButton("Use This Phone", { wantPhone(true) }, kind = ButtonKind.Glass, size = ButtonSize.Small) },
+                if (glassesLive) glassesFrame else image, liveState, liveSource, m, compact = compact,
+                preview = if (usePhone) { pm -> PhoneCameraPreview({ encode -> sender.offer(encode) }, pm) } else null,
+                waitingAction = { HOButton("Change Camera", onChangeCamera, kind = ButtonKind.Glass, size = ButtonSize.Small) },
             )
         },
-        modifier = modifier,
+        notice = cameraNotice(mode, hasLesson, phoneAllowed, glasses, onAllow = { permission.launch(Manifest.permission.CAMERA) }, onChangeCamera),
     )
+    toast?.let { t ->
+        LaunchedEffect(t) { delay(4_000); session.clearToast() }
+        Toast(t, Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(16.dp))
+    }
+    }
+}
+
+/** One line above the videos when the chosen camera needs something: a choice, the permission, or glasses setup. */
+private fun cameraNotice(
+    mode: CameraChoice?,
+    hasLesson: Boolean,
+    phoneAllowed: Boolean,
+    glasses: GlassesLink?,
+    onAllow: () -> Unit,
+    onChangeCamera: () -> Unit,
+): (@Composable () -> Unit)? = when {
+    !hasLesson -> null
+    mode == null -> {
+        { Banner("Choose how HandOver sees your hands.", Icons.Outlined.Videocam, Tone.Accent) { QuietButton("Choose", onChangeCamera) } }
+    }
+    mode == CameraChoice.ThisPhone && !phoneAllowed -> {
+        { Banner("Camera is off, so steps are not checked.", Icons.Outlined.VideocamOff, Tone.Caution) { QuietButton("Allow", onAllow) } }
+    }
+    mode == CameraChoice.Glasses && glasses != null && glasses.state.phase != GlassesPhase.Streaming -> {
+        {
+            val copy = glassesCopy(glasses.state)
+            Banner(copy.line ?: copy.title, EyeglassesIcon, Tone.Caution) {
+                if (copy.primary != null && !copy.busy) QuietButton(copy.primary, glasses.next) else QuietButton("Change", onChangeCamera)
+            }
+        }
+    }
+    else -> null
 }

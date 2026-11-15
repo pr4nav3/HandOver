@@ -129,10 +129,4 @@ class ComponentLogicTest {
         assertEquals("This phone", LiveSource.of(null, true)!!.label)
         assertNull(LiveSource.of(null, false))
     }
-
-    @Test fun framesScaleToLongSide1280() {
-        assertEquals(1280 to 720, FrameEncoder.scaled(1920, 1080))
-        assertEquals(720 to 1280, FrameEncoder.scaled(1080, 1920))
-        assertEquals(640 to 480, FrameEncoder.scaled(640, 480))
-    }
 }

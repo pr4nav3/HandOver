@@ -5,10 +5,21 @@ import Foundation
 import Metal
 import Synchronization
 
-/// Frame sizes for the camera socket: 960 px on the long side, never upscaled, even dimensions.
+/// Frame sizes and pace for the camera socket. By default 640 px on the long side at JPEG quality 0.5, about 15
+/// frames a second, so the learner's feed on the big screen moves smoothly. The hub samples frames for its checks on
+/// its own, so a faster feed does not mean more checks. The user default `handover.camera.sharpFrames` sends the
+/// older 960 px frames at quality 0.6 instead. Never upscaled, even dimensions.
 enum FrameSizing {
-    static let longSide: CGFloat = 960
-    static let jpegQuality: CGFloat = 0.6
+    static let sharpKey = "handover.camera.sharpFrames"
+    static let smoothLongSide: CGFloat = 640
+    static let sharpLongSide: CGFloat = 960
+    /// About 15 frames a second. The socket and the hub may enforce a longer gap; frames that arrive too soon are
+    /// dropped, never queued.
+    static let sendGap: Duration = .milliseconds(66)
+
+    static var isSharp: Bool { UserDefaults.standard.bool(forKey: sharpKey) }
+    static var longSide: CGFloat { isSharp ? sharpLongSide : smoothLongSide }
+    static var jpegQuality: CGFloat { isSharp ? 0.6 : 0.5 }
 
     /// The size a `source` frame is sent at.
     static func target(for source: CGSize, longSide: CGFloat = FrameSizing.longSide) -> CGSize {
@@ -57,7 +68,14 @@ final class FrameEncoder: Sendable {
         return context.createCGImage(scaled.cropped(to: rect), from: rect, format: .RGBA8, colorSpace: colorSpace)
     }
 
-    /// JPEG at quality 0.6.
+    /// A frame that is larger than the send size (glasses frames, for example), scaled down; smaller ones as is.
+    func fitted(_ image: CGImage, longSide: CGFloat = FrameSizing.longSide) -> CGImage? {
+        guard CGFloat(max(image.width, image.height)) > longSide else { return image }
+        return downscale(CIImage(cgImage: image), longSide: longSide)
+    }
+
+    /// JPEG through the shared Metal-backed context, at quality 0.5 (0.6 for sharp frames). Call it off the main
+    /// thread; the send loop does.
     func jpeg(_ image: CGImage, quality: CGFloat = FrameSizing.jpegQuality) -> Data? {
         let options = [CIImageRepresentationOption(rawValue: kCGImageDestinationLossyCompressionQuality as String): quality]
         return context.jpegRepresentation(of: CIImage(cgImage: image), colorSpace: colorSpace, options: options)
@@ -151,4 +169,18 @@ struct SendRate: Sendable {
         let count = times.filter { now - $0 <= window }.count
         return Double(count) / max(1, min(window, now - start))
     }
+}
+
+/// Where encoded frames go. `trySend` returns false when the frame was dropped because the sink is busy (the
+/// previous frame is still going out), not connected, or the frame came too soon. Dropped frames are never retried.
+protocol FrameSink: Sendable {
+    /// True when a frame sent now would go out: connected, the previous frame finished, the gap passed. Checked
+    /// before encoding, so no frame is encoded only to be thrown away (during a reconnect, for example).
+    func isReady() async -> Bool
+    func trySend(_ jpeg: Data) async -> Bool
+}
+
+extension CameraSocket: FrameSink {
+    func isReady() async -> Bool { await canSendFrame }
+    func trySend(_ jpeg: Data) async -> Bool { await send(frame: jpeg) }
 }

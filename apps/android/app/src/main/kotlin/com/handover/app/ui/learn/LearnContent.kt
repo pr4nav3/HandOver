@@ -34,10 +34,15 @@ import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.School
 import androidx.compose.material.icons.outlined.Science
 import androidx.compose.material.icons.outlined.WarningAmber
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -74,6 +79,8 @@ import com.handover.app.ui.components.StepProgressBar
 import com.handover.app.ui.components.StepResultMoment
 import com.handover.app.ui.components.StepResultToast
 import com.handover.app.ui.components.Tone
+import com.handover.app.ui.start.CameraChoice
+import com.handover.app.ui.start.CameraRow
 import com.handover.app.ui.theme.HOMotion
 import com.handover.app.ui.theme.HORadius
 import com.handover.app.ui.theme.HOSize
@@ -117,6 +124,10 @@ data class LearnUi(
     val speaking: Boolean = false,
     val spokenGuidance: Boolean = false,
     val verbosity: Verbosity = Verbosity.Standard,
+    /** How HandOver sees the learner's hands (the start sheet's choice), or null before one is chosen. */
+    val camera: CameraChoice? = null,
+    /** False before this phone has a hub at all. */
+    val hasHub: Boolean = true,
 )
 
 interface LearnActions {
@@ -133,12 +144,17 @@ interface LearnActions {
     fun momentGone() {}
     fun spokenGuidance(on: Boolean) {}
     fun verbosity(v: Verbosity) {}
+    /** End the lesson (after the confirmation) and go back to Home. */
+    fun end() {}
+    fun pickLesson() {}
+    fun changeCamera() {}
 }
 
 /**
  * Learn's layout (SCREENS.md 7). Phone portrait: the expert clip large and the learner's camera as
  * a floating tile; landscape and tablets: side by side, live on the left. The badge, mistake card,
- * Back and Next sit in the bottom third. [clip] and [live] draw the two panes.
+ * Back and Next sit in the bottom third. [clip] and [live] draw the two panes. End always sits at the
+ * top left and asks first. [notice] is an optional line about the camera (glasses setup, camera off).
  */
 @Composable
 fun LearnContent(
@@ -147,25 +163,53 @@ fun LearnContent(
     clip: @Composable (Modifier, compact: Boolean, captionsInPane: Boolean) -> Unit,
     live: @Composable (Modifier, compact: Boolean) -> Unit,
     modifier: Modifier = Modifier,
+    notice: (@Composable () -> Unit)? = null,
 ) {
+    var askEnd by remember { mutableStateOf(false) }
+    val withEnd = object : LearnActions by actions {
+        override fun end() { askEnd = true }
+    }
     BoxWithConstraints(modifier.fillMaxSize().paper()) {
         val sideBySide = maxWidth > maxHeight || maxWidth >= 700.dp
         val tablet = maxWidth >= 700.dp && maxHeight >= 500.dp
         if (!ui.hasLesson) {
-            Column(Modifier.fillMaxSize().padding(HOSpace.l)) {
-                StepProgressBar(emptyList(), Modifier.padding(top = HOSpace.s))
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    EmptyState(
-                        if (ui.loading) "Loading lesson" else "No lesson selected",
-                        if (ui.loading) null else "Pick a lesson in the Library to start.",
-                        icon = Icons.Outlined.School, loading = ui.loading,
-                    )
-                }
-            }
+            NoLesson(ui, actions)
         } else if (sideBySide) {
-            SideBySide(ui, actions, clip, live, tablet)
+            SideBySide(ui, withEnd, clip, live, tablet, notice)
         } else {
-            Portrait(ui, actions, clip, live)
+            Portrait(ui, withEnd, clip, live, notice)
+        }
+    }
+    if (askEnd) {
+        AlertDialog(
+            onDismissRequest = { askEnd = false },
+            title = { Text("End this lesson?") },
+            text = { Text("You go back to Home. You can start it again any time.") },
+            confirmButton = { TextButton(onClick = { askEnd = false; actions.end() }) { Text("End Lesson") } },
+            dismissButton = { TextButton(onClick = { askEnd = false }) { Text("Keep Going") } },
+            containerColor = HandOver.colors.raised,
+        )
+    }
+}
+
+/** The Learn tab with nothing to follow: what to do next, in one line, and the way to start. */
+@Composable
+private fun NoLesson(ui: LearnUi, actions: LearnActions) {
+    Box(Modifier.fillMaxSize().padding(HOSpace.l), contentAlignment = Alignment.Center) {
+        when {
+            !ui.hasHub -> EmptyState(
+                "Not connected yet", "The hub is HandOver running on a computer nearby. Connect to it in Settings, then pick a lesson.",
+                icon = Icons.Outlined.School,
+            )
+            ui.loading -> EmptyState("Loading lesson", null, loading = true)
+            else -> EmptyState(
+                "No lesson running", "Pick a lesson to start. The hub tells you when each step is done.",
+                icon = Icons.Outlined.School,
+            ) {
+                HOButton("Pick a Lesson", actions::pickLesson, Modifier.widthIn(min = 220.dp), ButtonKind.Primary, ButtonSize.Large, enabled = !ui.reconnecting)
+                if (ui.reconnecting) Text("Waiting for the hub.", style = HandOver.type.footnote, color = HandOver.colors.ink2)
+                if (ui.camera != null) CameraRow(ui.camera, actions::changeCamera, Modifier.widthIn(max = 320.dp).padding(top = HOSpace.s))
+            }
         }
     }
 }
@@ -175,6 +219,11 @@ private fun TopBar(ui: LearnUi, actions: LearnActions) {
     val c = HandOver.colors
     var menu by remember { mutableStateOf(false) }
     Row(Modifier.fillMaxWidth().heightIn(min = HOSize.touch), verticalAlignment = Alignment.CenterVertically) {
+        HOButton(
+            "End", actions::end, kind = ButtonKind.Secondary, size = ButtonSize.Small, icon = Icons.Outlined.Close,
+            label = "End lesson",
+        )
+        Spacer(Modifier.width(HOSpace.m))
         Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
             Text(ui.lessonTitle, style = HandOver.type.headline, color = c.ink, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false).semantics { heading() })
             if (ui.mockChecks) {
@@ -200,7 +249,7 @@ private fun TopBar(ui: LearnUi, actions: LearnActions) {
                 DropdownMenuItem(text = { Text(if (ui.captionsOn) "Captions Off" else "Captions On") }, onClick = { menu = false; actions.toggleCaptions() })
                 DropdownMenuItem(text = { Text(if (ui.muted) "Unmute Clip" else "Mute Clip") }, onClick = { menu = false; actions.toggleMute() })
                 DropdownMenuItem(text = { Text("Swap Videos") }, onClick = { menu = false; actions.swap() })
-                DropdownMenuItem(text = { Text(if (ui.usingThisPhone) "Stop Using This Phone" else "Use This Phone as Camera") }, onClick = { menu = false; actions.useThisPhone(!ui.usingThisPhone) })
+                DropdownMenuItem(text = { Text("Change Camera") }, onClick = { menu = false; actions.changeCamera() })
                 DropdownMenuItem(text = { Text(if (ui.spokenGuidance) "Spoken Guidance Off" else "Spoken Guidance On") }, onClick = { menu = false; actions.spokenGuidance(!ui.spokenGuidance) })
                 if (ui.spokenGuidance) {
                     Verbosity.entries.forEach { v ->
@@ -278,11 +327,13 @@ private fun Portrait(
     actions: LearnActions,
     clip: @Composable (Modifier, Boolean, Boolean) -> Unit,
     live: @Composable (Modifier, Boolean) -> Unit,
+    notice: (@Composable () -> Unit)?,
 ) {
     Column(Modifier.fillMaxSize().padding(horizontal = HOSpace.l)) {
         StepProgressBar(ui.segments, Modifier.padding(top = HOSpace.s))
         TopBar(ui, actions)
         if (ui.reconnecting) Banner("Reconnecting to the hub.", Icons.Outlined.Refresh, Tone.Caution, Modifier.padding(bottom = HOSpace.s))
+        else if (notice != null) Box(Modifier.padding(bottom = HOSpace.s)) { notice() }
         Box(Modifier.weight(1f).fillMaxWidth()) {
             PipHost(
                 large = { m -> if (ui.swapped) live(m, false) else clip(m, false, true) },
@@ -318,6 +369,7 @@ private fun SideBySide(
     clip: @Composable (Modifier, Boolean, Boolean) -> Unit,
     live: @Composable (Modifier, Boolean) -> Unit,
     tablet: Boolean,
+    notice: (@Composable () -> Unit)?,
 ) {
     val gap = if (tablet) HOSpace.l else HOSpace.m
     val radius = if (tablet) HORadius.panel else HORadius.card
@@ -326,6 +378,7 @@ private fun SideBySide(
         StepProgressBar(ui.segments, Modifier.padding(top = HOSpace.s))
         TopBar(ui, actions)
         if (ui.reconnecting) Banner("Reconnecting to the hub.", Icons.Outlined.Refresh, Tone.Caution, Modifier.padding(bottom = HOSpace.s))
+        else if (notice != null) Box(Modifier.padding(bottom = HOSpace.s)) { notice() }
         Row(Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(gap)) {
             val livePane: @Composable (Modifier) -> Unit = { m -> live(m.clip(RoundedCornerShape(radius)), false) }
             val clipPane: @Composable (Modifier) -> Unit = { m ->

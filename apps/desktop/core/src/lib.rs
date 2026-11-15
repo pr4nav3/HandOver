@@ -3,8 +3,10 @@
 pub mod address;
 pub mod api;
 pub mod backoff;
+pub mod camera;
 pub mod engine;
 pub mod http;
+pub mod phone;
 pub mod protocol;
 pub mod socket;
 pub mod store;

@@ -4,6 +4,7 @@
 import type { Catalog, LinkStatus, Look, Settings, Theme } from "../api";
 import { html, modLabel, paint, type Raw } from "../util";
 import { icons } from "../icons";
+import { toast } from "../state";
 
 export interface SettingsModel {
   open: boolean;
@@ -14,6 +15,10 @@ export interface SettingsModel {
   search: string;
   /** "Camera checks", "Simulated checks" or "Off: <reason>". */
   checks: string;
+  /** `state.check_interval_s` from the hub, or null when the hub does not send it. */
+  checkInterval: number | null;
+  /** The chosen camera in words, or "Not chosen yet". */
+  camera: string;
   /** "<name>, <role>" when signed in. */
   account: string;
 }
@@ -21,10 +26,14 @@ export interface SettingsModel {
 export interface SettingsActions {
   close: () => void;
   set: (patch: Record<string, unknown>) => void;
+  /** set_check_interval: for the whole hub session, every screen. */
+  checkInterval: (seconds: number) => void;
   disconnect: () => void;
   search: (text: string) => void;
   otherHub: () => void;
   welcome: () => void;
+  pair: () => void;
+  camera: () => void;
 }
 
 /** Extra search words from the Theme picker section of THEMES.md. */
@@ -37,6 +46,14 @@ const KEYWORDS: Record<string, string> = {
 };
 
 const LOOKS_WORDS = { system: "follows system", light: "always light", dark: "always dark" };
+
+/** "Model sees every" choices, in seconds (CONTRACT.md 7, set_check_interval). */
+export const CHECK_INTERVALS = [0.5, 1, 2];
+
+/** The choice that matches the hub's value; a value set elsewhere picks the nearest. */
+export function nearestInterval(v: number): number {
+  return CHECK_INTERVALS.reduce((best, x) => (Math.abs(x - v) < Math.abs(best - v) ? x : best), CHECK_INTERVALS[0]);
+}
 
 const toggle = (key: string, label: string, on: boolean, detail: string) =>
   html`<label class="toggle-row">
@@ -65,6 +82,19 @@ function card(t: Theme, selected: boolean): Raw {
   </button>`;
 }
 
+/** "Model sees every 0.5 / 1 / 2 s", bound to the hub's check_interval_s. */
+function interval(v: number): Raw {
+  const on = nearestInterval(v);
+  return html`<div class="interval-row">
+    <span class="toggle-text"><span>Model sees every</span><span class="toggle-detail">A shorter gap catches steps sooner and makes more checks. Applies to everyone on this hub.</span></span>
+    <div class="segmented" role="radiogroup" aria-label="Model sees every">
+      ${CHECK_INTERVALS.map(
+        (x) => html`<button role="radio" aria-checked="${x === on}" class="${x === on ? "on" : ""}" data-interval="${x}">${x} s</button>`,
+      )}
+    </div>
+  </div>`;
+}
+
 export function renderSettings(el: HTMLElement, m: SettingsModel) {
   el.hidden = !m.open;
   if (!m.open) return;
@@ -89,6 +119,16 @@ export function renderSettings(el: HTMLElement, m: SettingsModel) {
           <button class="icon-button" data-close title="Close (Esc)" aria-label="Close">${icons.close}</button>
         </header>
         <div class="sheet-body">
+          <section>
+            <h3>Camera</h3>
+            <dl class="hub-details">
+              <div><dt>Sees your hands</dt><dd>${m.camera}<button class="quiet small" data-camera>Change</button></dd></div>
+            </dl>
+            ${connected
+              ? html`<div class="hub-actions"><button class="secondary" data-pair>${icons.qr}<span>Pair a Phone</span></button>
+                  <span class="hint">Show a code the HandOver phone app scans to join this hub.</span></div>`
+              : ""}
+          </section>
           <section>
             <h3>Appearance</h3>
             <div class="segmented" role="radiogroup" aria-label="Appearance">
@@ -133,6 +173,7 @@ export function renderSettings(el: HTMLElement, m: SettingsModel) {
                   <div><dt>Checks</dt><dd>${m.checks}</dd></div>
                   ${m.account ? html`<div><dt>Account</dt><dd>${m.account}</dd></div>` : ""}
                 </dl>
+                ${m.checkInterval !== null ? interval(m.checkInterval) : ""}
                 <div class="hub-actions"><button class="secondary" data-other-hub>Connect to Another Hub</button>
                   <button class="quiet danger-text" data-disconnect>Disconnect</button></div>`
               : html`<p class="muted">Not connected.</p><div class="hub-actions"><button class="primary" data-other-hub>Connect to a Hub</button></div>`}
@@ -171,8 +212,12 @@ export function bindSettings(el: HTMLElement, a: SettingsActions) {
     if (t.closest("[data-disconnect]")) return a.disconnect();
     if (t.closest("[data-other-hub]")) return a.otherHub();
     if (t.closest("[data-welcome]")) return a.welcome();
+    if (t.closest("[data-pair]")) return a.pair();
+    if (t.closest("[data-camera]")) return a.camera();
     const copy = t.closest<HTMLElement>("[data-copy]")?.dataset.copy;
-    if (copy) return void navigator.clipboard.writeText(copy).catch(() => {});
+    if (copy) return void navigator.clipboard.writeText(copy).then(() => toast("Copied address"), () => {});
+    const seconds = t.closest<HTMLElement>("[data-interval]")?.dataset.interval;
+    if (seconds) return a.checkInterval(Number(seconds));
     const appearance = t.closest<HTMLElement>("[data-appearance]")?.dataset.appearance;
     if (appearance) return a.set({ appearance });
     const theme = t.closest<HTMLElement>("[data-theme]")?.dataset.theme;

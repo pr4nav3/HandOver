@@ -119,6 +119,35 @@ struct OnboardingStateTests {
         p.finishWelcome()
         #expect(p.next == .done)
     }
+
+    @Test func finishingOffersTheHomeCardOnceWithSkippedSteps() {
+        var p = OnboardingProgress()
+        p.finishWelcome()
+        p.connected(kind: .accounts)
+        p.signedIn(madeAccount: true, orgsOffered: true)
+        #expect(p.homeCard == nil)
+        p.complete(.profile, skipped: true)
+        p.complete(.joinOrg, skipped: true)
+        p.choose(role: .teach)
+        p.complete(.role)
+        p.complete(.theme)
+        #expect(p.finished)
+        #expect(p.homeCard == true)
+        #expect(p.unfinished == [.joinOrg, .profile])
+        p.hideHomeCard()
+        #expect(p.homeCard == false)
+        // Replaying the welcome pages does not bring the card back.
+        p.replayWelcome()
+        p.finishWelcome()
+        #expect(p.homeCard == false)
+    }
+
+    @Test func progressSavedBeforeTheHomeCardStillLoadsWithoutIt() throws {
+        let old = #"{"welcomeSeen":true,"connected":true,"signedIn":false,"signInOptional":false,"accountSkipped":false,"madeAccount":false,"profileDone":false,"orgDone":false,"roleDone":true,"themeDone":true,"finished":true,"skipped":[]}"#
+        let p = try JSONDecoder().decode(OnboardingProgress.self, from: Data(old.utf8))
+        #expect(p.finished)
+        #expect(p.homeCard == nil)
+    }
 }
 
 struct InviteCodeTests {
@@ -237,14 +266,24 @@ struct OrgModelTests {
 }
 
 struct FramePipelineTests {
-    @Test func downscalesTo960LongSideKeepingAspect() {
-        #expect(FrameSizing.target(for: CGSize(width: 1920, height: 1080)) == CGSize(width: 960, height: 540))
-        #expect(FrameSizing.target(for: CGSize(width: 1080, height: 1920)) == CGSize(width: 540, height: 960))
-        #expect(FrameSizing.target(for: CGSize(width: 4032, height: 3024)) == CGSize(width: 960, height: 720))
+    @Test func downscalesTo640LongSideByDefault() {
+        #expect(!FrameSizing.isSharp)
+        #expect(FrameSizing.jpegQuality == 0.5)
+        #expect(FrameSizing.target(for: CGSize(width: 1920, height: 1080)) == CGSize(width: 640, height: 360))
+        #expect(FrameSizing.target(for: CGSize(width: 1080, height: 1920)) == CGSize(width: 360, height: 640))
+        #expect(FrameSizing.sendGap <= .milliseconds(70), "about 15 frames a second")
+    }
+
+    @Test func sharpFramesKeepThe960Path() {
+        let sharp = FrameSizing.sharpLongSide
+        #expect(FrameSizing.target(for: CGSize(width: 1920, height: 1080), longSide: sharp) == CGSize(width: 960, height: 540))
+        #expect(FrameSizing.target(for: CGSize(width: 1080, height: 1920), longSide: sharp) == CGSize(width: 540, height: 960))
+        #expect(FrameSizing.target(for: CGSize(width: 4032, height: 3024), longSide: sharp) == CGSize(width: 960, height: 720))
     }
 
     @Test func neverUpscalesAndKeepsEvenSizes() {
         #expect(FrameSizing.target(for: CGSize(width: 640, height: 480)) == CGSize(width: 640, height: 480))
+        #expect(FrameSizing.target(for: CGSize(width: 320, height: 240)) == CGSize(width: 320, height: 240))
         let odd = FrameSizing.target(for: CGSize(width: 1281, height: 721))
         #expect(Int(odd.width) % 2 == 0 && Int(odd.height) % 2 == 0)
         #expect(FrameSizing.target(for: .zero) == .zero)
@@ -254,7 +293,7 @@ struct FramePipelineTests {
         let image = try #require(SyntheticFrames.noise(width: 1920, height: 1080))
         let encoder = FrameEncoder.shared
         let small = try #require(encoder.downscale(CIImageMaker.make(image)))
-        #expect(small.width == 960 && small.height == 540)
+        #expect(small.width == 640 && small.height == 360)
         let jpeg = try #require(encoder.jpeg(small))
         #expect(HubMessage.isJPEG(jpeg))
         #expect(jpeg.count < CameraSocket.maxFrameBytes)

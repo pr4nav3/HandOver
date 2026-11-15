@@ -154,7 +154,7 @@ fun CameraModeContent(
                     }
                 }
                 if (onClose != null && !ui.locked) {
-                    Box(Modifier.size(HOSize.touch).clickable(onClickLabel = "Close Camera Mode", onClick = onClose), contentAlignment = Alignment.Center) {
+                    Box(Modifier.size(HOSize.touch).clickable(onClickLabel = "Close Be the Camera", onClick = onClose), contentAlignment = Alignment.Center) {
                         Box(Modifier.size(40.dp).glass(), contentAlignment = Alignment.Center) { Icon(Icons.Rounded.Close, "Close", tint = Color.White) }
                     }
                 }
@@ -284,11 +284,12 @@ private fun ControlPanel(ui: CameraUi, onNext: () -> Unit, onBack: () -> Unit, o
     ) {
         Row(verticalAlignment = Alignment.Top) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(HOSpace.xs)) {
+                Text("Be the Camera", style = HandOver.type.section, color = Color.White.copy(alpha = 0.7f))
                 if (ui.stepTitle != null) {
                     Text(ui.stepTitle, style = HandOver.type.headline, color = Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 } else {
-                    Text("No lesson started", style = HandOver.type.headline, color = Color.White)
-                    Text("Start a lesson on any screen connected to this hub.", style = HandOver.type.footnote, color = Color.White.copy(alpha = 0.7f))
+                    Text("Point this phone at the hands doing the task", style = HandOver.type.headline, color = Color.White)
+                    Text("No lesson running yet. Start one on another screen and steps show here.", style = HandOver.type.footnote, color = Color.White.copy(alpha = 0.7f))
                 }
             }
             Box(Modifier.size(HOSize.touch).clickable(onClickLabel = "Lock controls") { onLock(true) }, contentAlignment = Alignment.Center) {
@@ -349,7 +350,7 @@ private fun ReplacedPanel(onSendAgain: () -> Unit) {
 @Composable
 fun CameraNoHub(modifier: Modifier = Modifier) {
     Box(modifier.fillMaxSize().paper(), contentAlignment = Alignment.Center) {
-        EmptyState("No hub connected", "Connect to a hub in Settings, then this phone can be the camera.", icon = Icons.Outlined.WifiOff, tone = Tone.Caution)
+        EmptyState("Not connected yet", "The hub is HandOver running on a computer nearby. Connect to it in Settings, then this phone can be the camera.", icon = Icons.Outlined.WifiOff, tone = Tone.Caution)
     }
 }
 
@@ -357,7 +358,7 @@ fun CameraNoHub(modifier: Modifier = Modifier) {
 @Composable
 fun CameraDeclined(onTryAgain: () -> Unit, modifier: Modifier = Modifier) {
     Box(modifier.fillMaxSize().paper(), contentAlignment = Alignment.Center) {
-        EmptyState("Camera is off", "Camera Mode sends what this phone sees to your hub. Nothing is saved on the phone.", icon = Icons.Outlined.PhotoCamera) {
+        EmptyState("Camera is off", "Be the Camera sends what this phone sees to the hub, so it can check each step. Nothing is saved on the phone.", icon = Icons.Outlined.PhotoCamera) {
             PrimaryButton("Use the Camera", onTryAgain)
         }
     }

@@ -85,6 +85,9 @@ private struct LessonDetailScreen: View {
     @Environment(AccountStore.self) private var accounts
     @Environment(\.theme) private var theme
     @Environment(\.horizontalSizeClass) private var sizeClass
+    #if os(iOS)
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+    #endif
     @State var model: LessonDetailModel
     @State private var launcher = LessonLauncher()
     @State private var showFullDescription = false
@@ -124,9 +127,11 @@ private struct LessonDetailScreen: View {
         await model.load(account: noAccounts ? nil : accounts.courseClient(for: hub), hub: app.client)
     }
 
+    /// iPhone upright: one column. An iPhone on its side gets the two columns, so the cover does not fill the
+    /// whole screen before the steps.
     private var isCompact: Bool {
         #if os(iOS)
-        sizeClass == .compact
+        sizeClass == .compact && verticalSizeClass != .compact
         #else
         false
         #endif
@@ -144,7 +149,7 @@ private struct LessonDetailScreen: View {
         } else {
             ScrollView {
                 HStack(alignment: .top, spacing: HOSpace.xl) {
-                    summary(lesson).frame(width: 360)
+                    summary(lesson).frame(width: sizeClass == .compact ? 320 : 360)
                     steps(lesson).frame(maxWidth: .infinity)
                 }
                 .padding(HOSpace.xl)
@@ -225,7 +230,17 @@ private struct LessonDetailScreen: View {
         .raisedCard()
     }
 
-    @ViewBuilder private var startButtons: some View {
+    private var startButtons: some View {
+        VStack(alignment: .leading, spacing: HOSpace.s) {
+            startButtonRow
+            CameraChoiceRow()
+            Text("Follow each clip. HandOver watches your hands and moves on when a step is done.")
+                .font(theme.fonts.footnote)
+                .foregroundStyle(theme.colors.ink2)
+        }
+    }
+
+    @ViewBuilder private var startButtonRow: some View {
         if let resume = model.resumeStep {
             HStack(spacing: HOSpace.m) {
                 Button { launcher.start(model.lessonId, at: resume, model: app) } label: {

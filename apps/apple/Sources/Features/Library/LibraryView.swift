@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// The Library (SCREENS.md 5 and 21): Continue, every lesson this person may see as cards or rows, search,
+/// Home (SCREENS.md 5 and 21): how HandOver works, Learn and Teach, Continue, then every lesson this person may see as cards or rows, search,
 /// filters (Everyone, Mine, Shared with Me, My Orgs), pull to refresh, and empty states. Falls back to
 /// `GET /api/lessons` on hubs without the course routes.
 struct LibraryView: View {
@@ -18,6 +18,8 @@ private struct LibraryScreen: View {
     @Environment(AccountStore.self) private var accounts
     @Environment(\.theme) private var theme
     @Environment(\.horizontalSizeClass) private var sizeClass
+    @Environment(LearnFlow.self) private var flow: LearnFlow?
+    @AppStorage(HowItWorks.hiddenKey) private var howItWorksHidden = false
     @State private var store: LibraryStore
     @State private var launcher = LessonLauncher()
     @State private var pendingDelete: CourseCardItem?
@@ -30,7 +32,7 @@ private struct LibraryScreen: View {
 
     var body: some View {
         content
-            .navigationTitle("Library")
+            .navigationTitle("Home")
             .searchable(text: $store.query, prompt: "Search lessons")
             .onChange(of: store.query) { store.queryChanged() }
             .onChange(of: store.filter) { Task { await store.reload() } }
@@ -47,6 +49,13 @@ private struct LibraryScreen: View {
                 await store.reload()
             }
             .toolbar {
+                if howItWorksHidden {
+                    ToolbarItem(placement: .primaryAction) {
+                        Button("How It Works", systemImage: "questionmark.circle") {
+                            withAnimation(HOMotion.layout) { howItWorksHidden = false }
+                        }
+                    }
+                }
                 #if os(macOS)
                 ToolbarItem {
                     Button("Refresh", systemImage: "arrow.clockwise") { Task { await store.reload() } }
@@ -92,7 +101,7 @@ private struct LibraryScreen: View {
 
     @ViewBuilder private var content: some View {
         if model.hub == nil {
-            HOEmptyState(symbol: "desktopcomputer", title: "No hub", message: "Connect to a hub in Settings to see its lessons.")
+            noHub
         } else if case .failed(let message) = store.phase, store.items.isEmpty {
             HOEmptyState(symbol: "wifi.exclamationmark", title: "Can't load lessons", message: message) {
                 Button("Try Again") { Task { await store.reload() } }
@@ -105,6 +114,33 @@ private struct LibraryScreen: View {
         } else {
             list
         }
+    }
+
+    private var noHub: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: HOSpace.xl) {
+                if !howItWorksHidden { howItWorks }
+                VStack(spacing: HOSpace.m) {
+                    HOEmptyState(symbol: "desktopcomputer", title: "Connect to your hub",
+                                 message: "The hub is HandOver running on a computer near you. It has the lessons.") {
+                        Button("Open Settings") { flow?.section = .settings }
+                            .buttonStyle(HOButtonStyle(.primary, size: .large))
+                    }
+                }
+            }
+            .padding(.horizontal, margin)
+            .padding(.vertical, HOSpace.l)
+            .frame(maxWidth: 1200)
+            .frame(maxWidth: .infinity)
+        }
+        .background(theme.colors.paper)
+    }
+
+    private var howItWorks: some View {
+        HowItWorksCard {
+            withAnimation(HOMotion.layout) { howItWorksHidden = true }
+        }
+        .transition(.opacity.combined(with: .move(edge: .top)))
     }
 
     @ViewBuilder private var empty: some View {
@@ -124,8 +160,15 @@ private struct LibraryScreen: View {
     }
 
     private var list: some View {
+        ScrollViewReader { proxy in
         ScrollView {
             VStack(alignment: .leading, spacing: HOSpace.xl) {
+                if !store.isSearching {
+                    if let flow, flow.isRunning { runningRow(flow) }
+                    OnboardingHomeCard(onTeach: canTeach ? { flow?.section = .teach } : nil)
+                    if !howItWorksHidden { howItWorks }
+                    actions { withAnimation(HOMotion.layout) { proxy.scrollTo(Self.lessonsAnchor, anchor: .top) } }
+                }
                 if store.showsFilters && accounts.isSignedIn {
                     Picker("Show", selection: $store.filter) {
                         ForEach(CourseFilter.allCases) { Text($0.title).tag($0) }
@@ -137,7 +180,8 @@ private struct LibraryScreen: View {
                 if !store.continueItems.isEmpty && !store.isSearching {
                     section("Continue") { continueRow }
                 }
-                section(store.isSearching ? "Results" : "All Lessons") { allLessons }
+                section(store.isSearching ? "Results" : "Lessons") { allLessons }
+                    .id(Self.lessonsAnchor)
             }
             .padding(.horizontal, margin)
             .padding(.vertical, HOSpace.l)
@@ -145,6 +189,42 @@ private struct LibraryScreen: View {
             .frame(maxWidth: .infinity)
         }
         .background(theme.colors.paper)
+        }
+    }
+
+    private static let lessonsAnchor = "lessons"
+
+    /// Learn a Lesson and Teach a Lesson, side by side.
+    private func actions(showLessons: @escaping () -> Void) -> some View {
+        HStack(spacing: HOSpace.m) {
+            HomeActionButton(symbol: "graduationcap", title: "Learn a Lesson", line: "Pick one below", primary: true,
+                             action: showLessons)
+            if canTeach {
+                HomeActionButton(symbol: "video.badge.plus", title: "Teach a Lesson", line: "Record a task once") {
+                    showTeach = true
+                }
+            }
+        }
+    }
+
+    /// Back to the lesson in progress.
+    private func runningRow(_ flow: LearnFlow) -> some View {
+        Button { Haptics.tap(); flow.section = .learn } label: {
+            HStack(spacing: HOSpace.m) {
+                SymbolTile(symbol: "play.fill")
+                VStack(alignment: .leading, spacing: HOSpace.xxs) {
+                    Text("Lesson in progress").font(theme.fonts.headline).foregroundStyle(theme.colors.ink)
+                    Text(model.lesson?.title ?? "Tap to go back to it.")
+                        .font(theme.fonts.callout).foregroundStyle(theme.colors.ink2).lineLimit(1)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(theme.colors.ink3)
+            }
+            .raisedCard()
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint("Opens Learn")
     }
 
     private var margin: CGFloat { isCompact ? HOSpace.l : HOSpace.xl }
@@ -274,6 +354,91 @@ enum LibraryPreview {
                            covers: CourseMedia.coverCandidates(hub: hub, lessonId: "bike-wheel-v1", coverURL: nil),
                            steps: 6, status: .draft),
         ]
+    }
+}
+
+/// "How it works" in three steps, dismissible; the "?" button brings it back.
+struct HowItWorksCard: View {
+    var onHide: () -> Void
+    @Environment(\.theme) private var theme
+
+    static let steps: [(symbol: String, title: String, line: String)] = [
+        ("list.bullet.rectangle", "Pick a lesson", "An expert recorded it as short step clips."),
+        ("camera", "Choose a camera", "This phone propped up, Meta glasses, or another device."),
+        ("checkmark.circle", "Follow along", "The hub tells you when each step is done."),
+    ]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: HOSpace.m) {
+            HStack {
+                Text("How it works").font(theme.fonts.headline).foregroundStyle(theme.colors.ink)
+                    .accessibilityAddTraits(.isHeader)
+                Spacer()
+                Button { Haptics.tap(); onHide() } label: {
+                    Image(systemName: "xmark").font(.footnote.weight(.semibold)).foregroundStyle(theme.colors.ink2)
+                        .frame(width: HOSize.touch, height: HOSize.touch)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .padding(-HOSpace.s)
+                .accessibilityLabel("Hide How It Works")
+            }
+            ForEach(Array(Self.steps.enumerated()), id: \.offset) { index, step in
+                HStack(alignment: .top, spacing: HOSpace.m) {
+                    SymbolTile(symbol: step.symbol, side: 36)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("\(index + 1). \(step.title)").font(theme.fonts.bodyMedium).foregroundStyle(theme.colors.ink)
+                        Text(step.line).font(theme.fonts.callout).foregroundStyle(theme.colors.ink2)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .accessibilityElement(children: .combine)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .raisedCard()
+    }
+}
+
+enum HowItWorks {
+    static let hiddenKey = "handover.home.howItWorksHidden"
+}
+
+/// A large Home action: symbol, title and one line.
+struct HomeActionButton: View {
+    let symbol: String
+    let title: String
+    let line: String
+    var primary = false
+    let action: () -> Void
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        Button { Haptics.tap(); action() } label: {
+            VStack(alignment: .leading, spacing: HOSpace.s) {
+                Image(systemName: symbol)
+                    .font(.title2.weight(.medium))
+                    .foregroundStyle(primary ? theme.colors.onAccent : theme.colors.accentInk)
+                    .frame(height: 32, alignment: .leading)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(theme.fonts.headline)
+                        .foregroundStyle(primary ? theme.colors.onAccent : theme.colors.ink)
+                    Text(line).font(theme.fonts.footnote)
+                        .foregroundStyle(primary ? theme.colors.onAccent.opacity(0.85) : theme.colors.ink2)
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: 96, alignment: .topLeading)
+            .padding(HOSpace.l)
+            .background(primary ? theme.colors.accent : theme.colors.raised,
+                        in: RoundedRectangle(cornerRadius: HORadius.card, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: HORadius.card, style: .continuous)
+                .strokeBorder(primary ? Color.clear : theme.colors.line, lineWidth: HOLine.width))
+            .contentShape(RoundedRectangle(cornerRadius: HORadius.card, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
     }
 }
 

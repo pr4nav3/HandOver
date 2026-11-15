@@ -9,20 +9,29 @@ import UIKit
 /// mistake card and Back and Next. iPhone portrait (and iPad under 700 points wide) shows the clip large with
 /// the camera as a FaceTime style tile; landscape, iPad and Mac show them side by side.
 ///
-/// Camera mode belongs to the Camera feature. It passes `usesOwnCamera` and the preview it draws; with it on,
-/// the live pane shows that preview instead of the hub's forwarded frames.
+/// `LearnRunScreen` passes `usesOwnCamera` and the preview it draws when this device (or its glasses) is the
+/// camera; with it on, the live pane shows that preview instead of the hub's forwarded frames.
 struct LearnView: View {
     @Binding var usesOwnCamera: Bool
     var ownCameraPreview: AnyView?
-    /// Shows Close when Learn is presented as a full screen cover.
+    /// Shows the X. It asks "End this lesson?" first while a lesson is under way.
     var onClose: (() -> Void)?
     var onLibrary: (() -> Void)?
+    /// Adds "Change Camera" to the More menu.
+    var onChangeCamera: (() -> Void)?
+    /// A banner about the camera (glasses fell back, another device took over, waiting for the other camera).
+    var notice: LearnNotice?
+    /// The live pane's chip when this device sends its own frames (for example "Glasses").
+    var ownChip: SourceChip?
 
     @Environment(AppModel.self) private var model
     @Environment(\.theme) private var theme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.learnLayoutOverride) private var layoutOverride
+    #if os(iOS)
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+    #endif
     @State private var layout: LearnLayout = .pip
 
     @State private var clips: ClipController
@@ -52,12 +61,16 @@ struct LearnView: View {
     @AppStorage(LearnSettings.clipFirstKey) private var clipFirst = false
 
     init(usesOwnCamera: Binding<Bool> = .constant(false), ownCameraPreview: AnyView? = nil,
-         onClose: (() -> Void)? = nil, onLibrary: (() -> Void)? = nil, clips: ClipController? = nil,
+         onClose: (() -> Void)? = nil, onLibrary: (() -> Void)? = nil, onChangeCamera: (() -> Void)? = nil,
+         notice: LearnNotice? = nil, ownChip: SourceChip? = nil, clips: ClipController? = nil,
          recorder: RunRecorder? = nil) {
         _usesOwnCamera = usesOwnCamera
         self.ownCameraPreview = ownCameraPreview
         self.onClose = onClose
         self.onLibrary = onLibrary
+        self.onChangeCamera = onChangeCamera
+        self.notice = notice
+        self.ownChip = ownChip
         _clips = State(initialValue: clips ?? ClipController())
         _recorder = State(initialValue: recorder ?? RunRecorder())
     }
@@ -90,19 +103,32 @@ struct LearnView: View {
         return state.cameraConnected ? .lost(nil) : .waiting
     }
 
-    private var sourceChip: SourceChip? { SourceChip.from(camera: state.camera, ownCamera: usesOwnCamera) }
+    private var sourceChip: SourceChip? {
+        if usesOwnCamera, let ownChip { return ownChip }
+        return SourceChip.from(camera: state.camera, ownCamera: usesOwnCamera)
+    }
 
     private func url(_ path: String?) -> URL? { path.flatMap { model.mediaURL($0) } }
+
+    /// iPhone landscape (and any short window on a touch device).
+    private var isCompactHeight: Bool {
+        #if os(iOS)
+        verticalSizeClass == .compact
+        #else
+        false
+        #endif
+    }
 
     // MARK: - Body
 
     var body: some View {
         GeometryReader { geo in
-            let layout = layoutOverride ?? LearnLayout.pick(size: geo.size)
+            let layout = layoutOverride ?? LearnLayout.pick(size: geo.size, compactHeight: isCompactHeight)
             ZStack {
                 switch layout {
                 case .pip: pipLayout(screen: geo.size)
-                case .sideBySide(let phone): sideBySideLayout(size: geo.size, phone: phone)
+                case .sideBySide(phone: true): phoneLandscapeLayout(size: geo.size)
+                case .sideBySide(phone: false): sideBySideLayout(size: geo.size)
                 }
                 if let doneSummary {
                     DoneView(summary: doneSummary, lessonId: state.lessonId, runId: nil,
@@ -125,11 +151,11 @@ struct LearnView: View {
         #endif
         .navigationTitle(lesson?.title ?? "Learn")
         .sheet(isPresented: $showSteps) { stepsSheet }
-        .confirmationDialog("Leave this lesson?", isPresented: $confirmClose, titleVisibility: .visible) {
-            Button("Leave") { onClose?() }
+        .confirmationDialog("End this lesson?", isPresented: $confirmClose, titleVisibility: .visible) {
+            Button("End Lesson", role: .destructive) { onClose?() }
             Button("Keep Going", role: .cancel) {}
         } message: {
-            Text("Your place is saved on this device.")
+            Text("You go back to Home. You can start it again any time.")
         }
         .onChange(of: state, initial: true) { old, new in stateChanged(from: old, to: new) }
         .onChange(of: model.session.cameraAdvances) { _, _ in cameraAdvanced() }
@@ -250,13 +276,106 @@ struct LearnView: View {
         withAnimation(HOMotion.resolve(HOMotion.layout, reduceMotion: reduceMotion)) { liveLarge.toggle() }
     }
 
-    // MARK: - Side by side
+    // MARK: - iPhone landscape
+
+    /// The clip large on the leading side; a column on the trailing side with End, Steps and More, the live
+    /// camera tile, the step and its status (scrolls when the text is long), and Back and Next. Everything sits
+    /// inside the safe area, so the Dynamic Island and the home indicator never cover a control. Swap puts the
+    /// camera in the large pane and the clip in the tile, as on iPhone portrait.
+    @ViewBuilder
+    private func phoneLandscapeLayout(size: CGSize) -> some View {
+        let column = LearnLayout.phoneColumnWidth(for: size.width)
+        let clipIsTile = liveLarge
+        HStack(alignment: .top, spacing: HOSpace.m) {
+            VStack(spacing: HOSpace.s) {
+                progressBar(tappable: false)
+                banner
+                ZStack(alignment: .bottom) {
+                    if clipIsTile {
+                        live(radius: HORadius.card)
+                    } else {
+                        clip(radius: HORadius.card, tile: false, hideCaption: model.mistake != nil && !state.isDone)
+                    }
+                    clipOverlays(showRecording: !clipIsTile)
+                    mistakeSlot(compact: true, overVideo: true).padding(HOSpace.s)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .layoutPriority(1)
+            }
+            VStack(alignment: .leading, spacing: HOSpace.s) {
+                landscapeTopRow
+                landscapeTile(width: column, maxHeight: size.height * 0.42, clipIsTile: clipIsTile)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: HOSpace.s) {
+                        // The status and its reason come before the general hint, so they show without scrolling.
+                        stepInfo(oneLine: false, showsHint: false)
+                        badgeBlock.frame(maxWidth: .infinity, alignment: .leading)
+                        hintLine.frame(maxWidth: .infinity, alignment: .leading)
+                        if clipIsTile, captionsOn, let caption = clips.caption {
+                            Text(caption)
+                                .font(theme.fonts.footnote)
+                                .foregroundStyle(theme.colors.ink2)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .accessibilityHidden(true)
+                        }
+                    }
+                }
+                .scrollBounceBehavior(.basedOnSize)
+                .frame(maxHeight: .infinity, alignment: .top)
+                navButtons(compactBack: true, minNext: nil)
+            }
+            .frame(width: column)
+            .frame(maxHeight: .infinity, alignment: .top)
+        }
+        .padding(.horizontal, HOSpace.l)
+        .padding(.vertical, HOSpace.s)
+        .hoAnimation(HOMotion.layout, value: model.mistake != nil)
+        .hoAnimation(HOMotion.layout, value: liveLarge)
+    }
+
+    /// End, the guide indicator, Steps and More. End is always first, so it never moves off screen.
+    private var landscapeTopRow: some View {
+        HStack(spacing: HOSpace.xs) {
+            if let onClose { closeButton(onClose, onVideo: false) }
+            Spacer(minLength: 0)
+            SpokenGuideIndicator(guide: guide)
+            Button { Haptics.tap(); showSteps = true } label: { Image(systemName: "list.bullet") }
+                .buttonStyle(HOIconButtonStyle())
+                .accessibilityLabel("Steps")
+                .disabled(lesson == nil)
+            moreMenu
+        }
+        .frame(minHeight: HOSize.touch)
+    }
+
+    /// The small pane in the column: the live camera (or the clip after Swap). Tap to swap.
+    private func landscapeTile(width: CGFloat, maxHeight: CGFloat, clipIsTile: Bool) -> some View {
+        let aspect = clipIsTile ? 16 / 9 : LearnLayout.liveAspect(frame: model.frame?.size, ownCamera: usesOwnCamera,
+                                                                  landscape: true)
+        return Group {
+            if clipIsTile { clip(radius: HORadius.pip, tile: true) } else { live(radius: HORadius.pip) }
+        }
+        .frame(width: width, height: min(maxHeight, width / aspect))
+        .overlay(RoundedRectangle(cornerRadius: HORadius.pip, style: .continuous)
+            .strokeBorder(theme.colors.line, lineWidth: HOLine.width))
+        .contentShape(RoundedRectangle(cornerRadius: HORadius.pip, style: .continuous))
+        .onTapGesture {
+            Haptics.tap()
+            swap()
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityLabel("\(clipIsTile ? "Expert clip" : "Your camera"), small. Double tap to swap.")
+        .accessibilityAction { swap() }
+    }
+
+    // MARK: - Side by side (iPad and Mac)
 
     @ViewBuilder
-    private func sideBySideLayout(size: CGSize, phone: Bool) -> some View {
-        let margin = phone ? HOSpace.l : HOSpace.xl
-        let gap = phone ? HOSpace.m : HOSpace.l
-        let sidebar = !phone && (sidebarOpen ?? (size.width >= LearnLayout.sidebarWidthThreshold)) && lesson != nil
+    private func sideBySideLayout(size: CGSize) -> some View {
+        let margin = HOSpace.xl
+        let gap = HOSpace.l
+        let sidebar = (sidebarOpen ?? (size.width >= LearnLayout.sidebarWidthThreshold)) && lesson != nil
         HStack(alignment: .top, spacing: HOSpace.l) {
             if sidebar {
                 courseList(compact: true)
@@ -265,68 +384,44 @@ struct LearnView: View {
                     .padding(.vertical, margin)
                     .transition(.move(edge: .leading).combined(with: .opacity))
             }
-            VStack(spacing: phone ? HOSpace.s : HOSpace.m) {
-                progressBar(tappable: !phone)
-                if !phone { topBar(onVideo: false) }
+            VStack(spacing: HOSpace.m) {
+                progressBar(tappable: true)
+                topBar(onVideo: false)
                 banner
                 HStack(spacing: gap) {
                     if clipFirst {
-                        clipColumn(phone: phone)
-                        live(radius: phone ? HORadius.card : HORadius.panel).aspectRatio(Self.paneAspect, contentMode: .fit)
+                        clipColumn
+                        live(radius: HORadius.panel).aspectRatio(Self.paneAspect, contentMode: .fit)
                     } else {
-                        live(radius: phone ? HORadius.card : HORadius.panel).aspectRatio(Self.paneAspect, contentMode: .fit)
-                        clipColumn(phone: phone)
+                        live(radius: HORadius.panel).aspectRatio(Self.paneAspect, contentMode: .fit)
+                        clipColumn
                     }
                 }
                 .frame(maxWidth: .infinity)
                 .layoutPriority(1)
-                if phone {
-                    phoneControlsRow
-                } else {
-                    stepInfo(oneLine: false).frame(maxWidth: .infinity, alignment: .leading)
-                    Spacer(minLength: 0)
-                    mistakeSlot(compact: false, overVideo: false)
-                    controlsTray(compactBack: false)
-                }
+                stepInfo(oneLine: false).frame(maxWidth: .infinity, alignment: .leading)
+                Spacer(minLength: 0)
+                mistakeSlot(compact: false, overVideo: false)
+                controlsTray(compactBack: false)
             }
             .padding(.horizontal, sidebar ? 0 : margin)
             .padding(.trailing, sidebar ? margin : 0)
-            .padding(.vertical, phone ? HOSpace.s : margin)
+            .padding(.vertical, margin)
         }
         .hoAnimation(HOMotion.layout, value: sidebar)
         .hoAnimation(HOMotion.layout, value: model.mistake != nil)
     }
 
-    private func clipColumn(phone: Bool) -> some View {
+    private var clipColumn: some View {
         ZStack(alignment: .bottom) {
-            clip(radius: phone ? HORadius.card : HORadius.panel, tile: false,
-                 hideCaption: phone && model.mistake != nil && !state.isDone)
+            clip(radius: HORadius.panel, tile: false)
             clipOverlays(showRecording: false)
-            if phone {
-                mistakeSlot(compact: true, overVideo: true).padding(HOSpace.s)
-            }
         }
         .aspectRatio(Self.paneAspect, contentMode: .fit)
     }
 
     /// Side by side panes are 4:3 at most, so the two videos take the room; video inside is aspect fit.
     static let paneAspect: CGFloat = 4 / 3
-
-    private var phoneControlsRow: some View {
-        HStack(spacing: HOSpace.m) {
-            if let onClose { closeButton(onClose, onVideo: false) }
-            stepInfo(oneLine: true)
-            Spacer(minLength: HOSpace.s)
-            SpokenGuideIndicator(guide: guide)
-            Button { showSteps = true } label: { Image(systemName: "list.bullet") }
-                .buttonStyle(HOIconButtonStyle())
-                .accessibilityLabel("Steps")
-                .disabled(lesson == nil)
-            moreMenu
-            badgeBlock
-            navButtons(compactBack: true, minNext: 120)
-        }
-    }
 
     // MARK: - Regions
 
@@ -367,10 +462,11 @@ struct LearnView: View {
     private func closeButton(_ close: @escaping () -> Void, onVideo: Bool) -> some View {
         Button {
             Haptics.tap()
-            if hasLesson && state.position > 0 && !state.isDone { confirmClose = true } else { close() }
+            if hasLesson && !state.isDone { confirmClose = true } else { close() }
         } label: { Image(systemName: "xmark") }
             .buttonStyle(HOIconButtonStyle(onVideo: onVideo))
-            .accessibilityLabel("Close lesson")
+            .keyboardShortcut(.cancelAction)
+            .accessibilityLabel("End lesson")
     }
 
     private var moreMenu: some View {
@@ -379,6 +475,9 @@ struct LearnView: View {
             Toggle("Mute Clip", isOn: Binding(get: { clips.isMuted }, set: { clips.isMuted = $0 }))
             Toggle("Spoken Guidance", isOn: Binding(get: { guide.isEnabled }, set: { guide.isEnabled = $0 }))
             Button("Swap Videos", systemImage: "arrow.left.arrow.right") { swapVideos() }
+            if let onChangeCamera {
+                Button("Change Camera", systemImage: "camera") { onChangeCamera() }
+            }
             Divider()
             Button("Restart Lesson", systemImage: "arrow.counterclockwise") { model.goto(step: 0) }
                 .disabled(!hasLesson || !model.connection.isConnected)
@@ -408,6 +507,10 @@ struct LearnView: View {
     private var banner: some View {
         if model.hub != nil, !model.connection.isConnected, !model.isPreview {
             HOBanner(symbol: "arrow.clockwise", text: "Reconnecting to the hub.")
+                .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
+        } else if let notice, !state.isDone {
+            HOBanner(symbol: notice.symbol, tone: notice.tone, text: notice.text, actionTitle: notice.actionTitle,
+                     action: notice.action)
                 .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
         }
     }
@@ -482,7 +585,7 @@ struct LearnView: View {
         hasLesson && !state.isDone ? Self.pills(for: state, showRecording: showRecording) : []
     }
 
-    private func stepInfo(oneLine: Bool) -> some View {
+    private func stepInfo(oneLine: Bool, showsHint: Bool = true) -> some View {
         let title = step.map { $0.title.isEmpty ? "Step \($0.n)" : $0.title }
         return Group {
             if oneLine {
@@ -496,12 +599,13 @@ struct LearnView: View {
                     Text(stepCountText)
                         .font(theme.fonts.footnote)
                         .foregroundStyle(theme.colors.ink2)
-                    Text(title ?? (hasLesson ? " " : "Pick a lesson in the Library."))
+                    Text(title ?? (hasLesson ? " " : "Pick a lesson on Home."))
                         .hoFont(.stepTitle, theme)
                         .foregroundStyle(theme.colors.ink)
                         .lineLimit(3)
                         .fixedSize(horizontal: false, vertical: true)
                         .contentTransition(.opacity)
+                    if showsHint { hintLine }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -515,6 +619,27 @@ struct LearnView: View {
         .accessibilityElement(children: .combine)
         .accessibilityHint(model.canGoBack ? "Swipe right for the previous step" : "")
         .hoAnimation(HOMotion.clip, value: state.step)
+    }
+
+    @ViewBuilder
+    private var hintLine: some View {
+        if let hint = Self.nextHint(shownStatus), hasLesson, step != nil {
+            Text(hint)
+                .font(theme.fonts.footnote)
+                .foregroundStyle(theme.colors.ink2)
+                .lineLimit(2)
+                .contentTransition(.opacity)
+        }
+    }
+
+    /// One line under the step title saying what to do now.
+    static func nextHint(_ status: LearnStatus) -> String? {
+        switch status {
+        case .watching, .checking: "Do this step. HandOver moves on when it sees it done."
+        case .verified: "Step done. The next one is coming up."
+        case .manual, .checksOff, .noCamera: "Do this step, then tap Next."
+        case .simulated, .done: nil
+        }
     }
 
     private var stepCountText: String {
@@ -802,16 +927,40 @@ enum LearnLayout: Equatable {
         #endif
     }()
 
-    static func pick(size: CGSize) -> LearnLayout {
+    /// The layout for this platform. `compactHeight` is the vertical size class being compact (iPhone landscape).
+    static func pick(size: CGSize, compactHeight: Bool = false) -> LearnLayout {
         #if os(macOS)
         return .sideBySide(phone: false)
         #else
-        if size.width >= sideBySideMinWidth { return .sideBySide(phone: size.height < 500) }
-        if size.width > size.height { return .sideBySide(phone: true) }
-        return .pip
+        return pickTouch(size: size, compactHeight: compactHeight)
         #endif
     }
 
+    /// iPhone and iPad: a short, wide space (iPhone landscape) gets the phone side by side layout; a wide, tall
+    /// one (iPad) the full side by side; anything taller than wide the PiP layout.
+    static func pickTouch(size: CGSize, compactHeight: Bool) -> LearnLayout {
+        let wide = size.width > size.height
+        if wide && (compactHeight || size.height < phoneHeightLimit) { return .sideBySide(phone: true) }
+        if size.width >= sideBySideMinWidth { return .sideBySide(phone: false) }
+        return wide ? .sideBySide(phone: true) : .pip
+    }
+
+    /// Below this height a wide space is a phone on its side.
+    static let phoneHeightLimit: CGFloat = 500
+
+    /// The trailing column on iPhone landscape: a third of the width, kept between 240 and 320 points so the
+    /// controls fit and the clip keeps most of the screen.
+    static func phoneColumnWidth(for width: CGFloat) -> CGFloat {
+        min(320, max(240, (width * 0.36).rounded()))
+    }
+
+    /// The live tile's shape: the picture's own shape when frames arrive, else this device's camera held the
+    /// same way as the screen (16:9 on its side, 9:16 upright), else 4:3.
+    static func liveAspect(frame: CGSize?, ownCamera: Bool, landscape: Bool) -> CGFloat {
+        if !ownCamera, let frame, frame.width > 0, frame.height > 0 { return frame.width / frame.height }
+        if ownCamera { return landscape ? 16 / 9 : 9 / 16 }
+        return 4 / 3
+    }
 }
 
 extension EnvironmentValues {
@@ -850,4 +999,13 @@ struct UnderstandingIndicator: View {
 
 #Preview("Learn, checks off") {
     LearnView(clips: .still(caption: nil)).environment(AppModel.preview(startAt: 10)).handOverTheme(.ivory)
+}
+
+/// A banner on Learn about the camera.
+struct LearnNotice {
+    var symbol: String
+    var tone: HOTone = .caution
+    var text: String
+    var actionTitle: String?
+    var action: () -> Void = {}
 }
