@@ -20,16 +20,49 @@ Take: front wheel off, rim checked, wheel back on, spin, front brake. Template w
 4. Highlights and zoom: `python -m server.produce lessons/front-wheel-v1 --theme ivory --accent #1F49D6` writes `clips_produced/NN.mp4` with a slow push-in toward the hands, a highlight ring at the key moment, a step label and a progress bar. Review them, then point each step's `clip` at the produced file so Learn plays the rendered version. The hub never touches these; a recut rebuilds the plain clips and the render is rerun.
 5. Planted mistake for the demo: close the quick release pointing forward. The step's `common_mistake` is the spoken line.
 
-## B. Origami lesson (Soham)
+## B. Origami lesson (Soham), run it yourself
 
-You do not need the repo running. Deliver two small files and we run the pipeline.
+Your timed step list and voice lines are in the repo (`lessons/templates/fortune-teller-v2.steps.json`, `fortune-teller-v2.voice.json`) and the first cut of `lessons/fortune-teller-v2` is on main: nine steps at your times, your nine lines spoken by Kokoro `af_heart`, lint clean. From here you own it: adjust times or lines, recut, re-voice, push.
 
-1. Watch the new paper take once at normal speed, once slowly. The fortune teller has eight to nine steps; the list in `lessons/templates/fortune-teller.steps.json` is the prior. Keep steps whose END STATE is clearly visible (a completed fold), split or merge where the take differs.
-2. File 1, `fortune-teller-v2.steps.json`, same shape as the template: per step `start`, `end` as `MM:SS.s`, `title` (shape words, never color), `check_question` (one yes or no question about shape or count, or `"manual"` for a step the camera cannot judge), `common_mistake` (one short spoken sentence used when the learner is behind). `start` of a step is the moment the hands begin it; `end` is the first moment its end state is visible.
-3. File 2, `voice.json`: `{"steps": {"1": "one or two calm sentences, at most 22 words", ...}}`. Rules in `docs/VOICE_SHEET.md`. Never read the check question aloud. Second person, present tense, concrete ("Bring the bottom corner up to the top corner.").
-4. Send both files to Pranav. We cut, voice (Kokoro, voice `af_heart`), self-test and lint in one command. If you want to hear the voice first, the sample clip is in `lessons/fortune-teller-v1/clips/02.mp4`.
+### Getting the take at full quality
 
-Use GPT for drafting the lines and for sanity-checking the step list against the video, not for audio: one voice across both lessons matters more than any single line.
+Google Drive does not downgrade the file; only its web preview plays at 720p. Use the Download button (or the Drive desktop app), never "save video" from the preview. The iPhone original is HEVC, HLG HDR, about 14 Mbps, 1644x918 at 30 fps. HDR looks flat and grey in most Windows players and browsers; that is the player, not the file. The pipeline tone-maps HDR to SDR itself (mobius curve), so what the app plays looks right. Same for the Ray-Ban Meta glasses take, which is HDR too, 1328x1776.
+
+### One-time setup on your machine (10 minutes)
+
+Mac:
+```sh
+git clone https://github.com/pr4nav3/MetaGlasses-ExpertKnowlegeTransfer.git handover && cd handover
+uv venv --python 3.12 .venv && uv pip install --python .venv/bin/python -r server/requirements.lock
+brew install ffmpeg                       # ffmpeg 6 or newer with zscale (the Homebrew build has it)
+cp .env.example .env                      # ANTHROPIC_API_KEY only if you want the self-test; cutting and voicing need no key
+```
+Windows: the "Run (Windows)" block in `README.md`, then the same commands with `.venv\Scripts\python`.
+
+The first voice run downloads the Kokoro model (354 MB) into `~/.cache/handover/kokoro`.
+
+### Cut, voice, review (3 minutes of machine time)
+
+```sh
+P=.venv/bin/python        # Windows: .venv\Scripts\python
+$P -m server.teach "<path to origami new.mov>" --id fortune-teller-v2 --title "Fold a fortune teller"    --steps-json lessons/templates/fortune-teller-v2.steps.json --dry-run     # prints the planned cuts, writes nothing
+$P -m server.teach "<path to origami new.mov>" --id fortune-teller-v2 --title "Fold a fortune teller"    --steps-json lessons/templates/fortune-teller-v2.steps.json               # normalize (HDR tone-mapped), cut, frames, captions
+$P -m server.voice lessons/fortune-teller-v2 --script lessons/templates/fortune-teller-v2.voice.json --mode replace
+$P scripts/contact_sheet.py --lesson lessons/fortune-teller-v2              # lessons/fortune-teller-v2/review/sheet.jpg
+$P scripts/lesson_lint.py lessons/fortune-teller-v2                         # must end 0 FAIL
+```
+`teach` refuses an existing id: `rm -rf lessons/fortune-teller-v2` first when rebuilding from the take. If ffmpeg complains about an audio stream it cannot decode, that is fixed on main (the first audio track of iPhone .mov files has no codec); pull.
+
+### Iterating
+
+- Times: edit `start` and `end` in `lessons/fortune-teller-v2/lesson.json` (or in the steps file and rebuild), then `$P -m server.teach --recut lessons/fortune-teller-v2 --repick`. A recut drops the voiceover: run the voice command again.
+- Lines: edit the voice file and rerun the voice command. Rules in `docs/VOICE_SHEET.md`; the tool warns when a line is longer than its clip allows and keeps it anyway, so shorten it.
+- Questions and titles: edit `lesson.json` directly (`check_question`, `title`, `common_mistake`). `check_question: ""` with `check_type: "manual"` makes a step manual.
+- Self-test (needs a Claude key, about a cent): `$P -m server.teach --recut lessons/fortune-teller-v2 --strict-self-test` marks steps the model cannot tell apart as manual. Run it once at the end.
+- Watch it: `HANDOVER_CHECK=mock scripts/run_server.sh` then `http://localhost:8000/#/learn/fortune-teller-v2` (Windows: `scriptsun_server.ps1`); captions and the voice play in the Expert pane.
+- Push: commit the whole `lessons/fortune-teller-v2` folder (clips, captions, frames, lesson.json; `.orig.*` files are ignored) on a branch `soham/origami-v2` and tell Pranav; he fast-forwards main. Do not commit `norm.mp4` edits or the take itself.
+
+The planted mistake for the demo is step 6, the flip: `common_mistake` is what the app speaks when the learner skips it.
 
 ## C. Databricks (Prayush)
 
