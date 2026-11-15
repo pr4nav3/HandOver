@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
 import { encode } from 'uqr'
-import { CameraIcon } from './icons'
 
 // Hosts a phone cannot reach: a QR code would point it at itself.
 const LOCAL_HOST = /^(localhost|127\.\d+\.\d+\.\d+|\[::1\]|::1|0\.0\.0\.0)$/i
@@ -32,31 +31,26 @@ function useHubCapture() {
   return url
 }
 
-/** The live pane before any camera is connected: how to connect one. */
+/** The live pane before any camera is connected: how to connect one, centered in the You frame. */
 export function ConnectCamera() {
   const hubCapture = useHubCapture()
   const capture = useMemo(() => captureAddress() ?? hubCapture, [hubCapture])
   const port = location.port || (location.protocol === 'https:' ? '443' : '80')
   return (
     <div className="connect">
-      <div className="connect-text">
-        <CameraIcon size={32} className="connect-icon" />
-        <p className="connect-title">Connect a camera</p>
-        <p className="connect-copy">
-          {capture ? 'Scan with a phone to use it as the camera.' : `A phone cannot reach localhost. Open this page at the computer's network address, like 192.168.1.20:${port}.`}
-        </p>
-        <a className="quiet connect-local" href="/capture" target="_blank" rel="noopener">
-          Use this computer's camera
-        </a>
-      </div>
+      <p className="connect-title">Connect a camera</p>
+      <p className="connect-copy">
+        {capture ? 'Scan with a phone to use it as the camera.' : `A phone cannot reach localhost. Open this page at the computer's network address, like 192.168.1.20:${port}.`}
+      </p>
       {capture && (
         <figure className="connect-qr">
           <QrCode text={capture} label="QR code for the camera page" />
-          <figcaption>
-            <code>{capture.replace(/^https?:\/\//, '')}</code>
-          </figcaption>
+          <figcaption>{capture.replace(/^https?:\/\//, '')}</figcaption>
         </figure>
       )}
+      <a className="connect-local" href="/capture" target="_blank" rel="noopener">
+        Use this computer's camera
+      </a>
     </div>
   )
 }

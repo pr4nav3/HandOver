@@ -1,34 +1,48 @@
-/* Learn screen only. Shared tokens, buttons, badges and progress live in styles.css.
-   Layout follows the Mac learn screen: a Steps card on the left, the live camera
-   and the expert clip as two equal panes, the step under them, controls at the
-   bottom. Video surfaces are always black. */
+/* Learn and Done. Tokens and shared classes (.btn, .tab, .frame, .badge,
+   .progress, .rule-head, .eyebrow, .display, .card) live in styles.css.
+   Field manual: a 300px steps rail with the status stamp pinned at its foot;
+   the stage holds the live and expert frames side by side, left aligned, the
+   step under them and the controls at right. */
+
+/* Capitals drawn by CSS while the DOM keeps sentence case (see Caps in StepList.tsx). */
+.caps::before {
+  content: attr(data-caps);
+  content: attr(data-caps) / '';
+  text-transform: uppercase;
+}
+
+.caps-src,
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  text-transform: none;
+}
 
 /* Top bar */
 
 .note {
   font-size: 13px;
-  color: var(--muted);
-  padding: 4px 10px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
+  color: var(--ink2);
   white-space: nowrap;
 }
 
 .note.error {
-  color: var(--red);
-  border-color: color-mix(in srgb, var(--red) 30%, transparent);
-  max-width: 40vw;
+  color: var(--bad);
+  max-width: 30vw;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .end-button,
 .steps-toggle {
-  height: 32px;
   white-space: nowrap;
 }
 
-/* Only narrow windows use the Steps button; wide ones show the Steps card. */
+/* Only narrow windows use the Steps button; wide ones show the rail. */
 .steps-toggle {
   display: none;
 }
@@ -38,62 +52,46 @@
   display: inline-flex;
 }
 
-/* Small floating card under the "..." button. */
+.more-button {
+  width: 36px;
+  padding: 0;
+}
+
+/* Check-rate popover under the ⋯ button. */
 .popover {
   position: absolute;
   top: calc(100% + 8px);
   right: 0;
   z-index: 30;
   width: max-content;
-  padding: 12px 14px;
-  border-color: var(--border-strong);
+  padding: 14px 16px 16px;
 }
 
 .popover-label {
-  margin: 0 0 8px;
-  font-size: 13px;
-  color: var(--muted);
+  margin: 0 0 10px;
+  font: 600 13px var(--cond);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink2);
 }
 
-/* A small segmented control: 0.5 s / 1 s / 2 s. */
 .check-rate {
-  display: inline-flex;
-  padding: 3px;
-  gap: 2px;
-  border-radius: 10px;
-  background: var(--panel-2);
-  border: 1px solid var(--border);
+  display: flex;
+  gap: 6px;
 }
 
-.check-rate button {
-  border: 0;
-  background: transparent;
-  padding: 5px 14px;
-  border-radius: 7px;
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
+.check-rate .btn {
+  min-width: 58px;
 }
 
-.check-rate button:hover {
-  color: var(--text);
-}
-
-.check-rate button.on {
-  background: var(--panel);
-  color: var(--text);
-  box-shadow: var(--segment-shadow);
-}
-
-/* Full-page layers: a dimmed backdrop for the End card, a clear one that closes popovers. */
+/* Full-page layers: a paper wash behind the End card, a clear one that closes popovers. */
 .scrim {
   position: fixed;
   inset: 0;
   z-index: 20;
   display: grid;
   place-items: center;
-  background: color-mix(in srgb, var(--bg) 70%, transparent);
+  background: rgba(241, 236, 225, 0.82);
 }
 
 .scrim.clear {
@@ -101,37 +99,25 @@
 }
 
 .confirm-card {
-  width: min(400px, calc(100vw - 48px));
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 28px;
-  border-radius: var(--radius-panel);
-  border-color: var(--border-strong);
-  text-align: center;
+  width: min(440px, calc(100vw - 48px));
+  padding: 28px 28px 24px;
 }
 
 .confirm-card h2 {
   margin: 0;
-  font-size: 22px;
-  font-weight: 600;
-  letter-spacing: -0.015em;
+  font: 600 32px/1 var(--cond);
+  text-transform: uppercase;
+  letter-spacing: 0.005em;
 }
 
 .confirm-text {
-  margin: 0 0 14px;
-  color: var(--muted);
+  margin: 10px 0 24px;
+  color: var(--ink2);
 }
 
 .confirm-actions {
   display: flex;
   gap: 10px;
-}
-
-.confirm-actions .primary,
-.confirm-actions .secondary {
-  flex: 1;
-  min-height: 48px;
 }
 
 /* No lesson, or waiting for one. */
@@ -142,7 +128,7 @@
   place-items: center;
 }
 
-/* Learn body: Steps card, then the stage. */
+/* Learn body: the rail, then the stage. */
 
 .page.learn {
   position: relative;
@@ -152,9 +138,7 @@
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: 260px minmax(0, 1fr);
-  gap: 24px;
-  padding-top: 8px;
+  grid-template-columns: 300px minmax(0, 1fr);
 }
 
 .learn-body.off {
@@ -165,9 +149,7 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
-  border-radius: var(--radius-panel);
-  padding: 14px 8px 8px;
-  overflow: hidden;
+  border-right: 1px solid var(--rule);
 }
 
 .sl {
@@ -178,26 +160,13 @@
 }
 
 .sl-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 0 10px 10px;
-}
-
-.sl-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--muted);
+  padding: 24px 24px 12px;
 }
 
 .sl-count {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  font-size: 13px;
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  color: var(--ink3);
+  letter-spacing: 0.04em;
 }
 
 .sl-rows {
@@ -208,77 +177,33 @@
   min-height: 0;
 }
 
-.sl-rows li + li {
-  border-top: 1px solid var(--border);
+.sl-rows li {
+  border-bottom: 1px solid var(--rule);
 }
 
 .sl-row {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr);
+  align-items: start;
   width: 100%;
-  padding: 10px 10px;
+  padding: 10px 24px 10px 0;
   border: 0;
-  border-radius: var(--radius-sm);
   background: transparent;
   text-align: left;
+  color: var(--ink2);
   font-size: 14px;
-  line-height: 1.35;
-  transition: background 0.15s;
+  line-height: 1.3;
 }
 
 .sl-row:hover {
   background: var(--tint-1);
 }
 
-.sl-row.current {
-  background: color-mix(in srgb, var(--accent) 13%, transparent);
-  color: var(--accent-ink);
-  font-weight: 500;
-}
-
-.sl-rows li:has(.current) + li,
-.sl-rows li:has(+ li .current) {
-  border-color: transparent;
-}
-
-.st {
-  display: grid;
-  place-items: center;
-  flex: none;
-  width: 20px;
-  height: 19px;
-}
-
-.st.current {
-  color: var(--accent);
-}
-
-.st.camera {
-  color: var(--green);
-}
-
-.st.button {
-  color: var(--muted);
-}
-
-.st.skipped {
-  color: var(--amber);
-}
-
-.st.idle {
-  color: var(--faint);
-}
-
 .sl-num {
-  flex: none;
-  min-width: 1.1em;
-  color: var(--faint);
+  padding: 1px 0 0 24px;
+  font: 600 20px/1 var(--cond);
+  color: var(--ink3);
   font-variant-numeric: tabular-nums;
-}
-
-.sl-row.current .sl-num {
-  color: inherit;
 }
 
 .sl-name {
@@ -289,39 +214,106 @@
   overflow: hidden;
 }
 
-/* Narrow windows: the Steps card becomes a sheet opened from the top bar. */
+.sl-row.done .sl-num {
+  color: var(--ok);
+}
+
+.sl-row.done .sl-name {
+  color: var(--ink3);
+  text-decoration: line-through;
+  text-decoration-color: var(--rule2);
+}
+
+.sl-row.skipped .sl-num {
+  color: var(--warn);
+}
+
+.sl-row.current,
+.sl-row.current:hover {
+  background: var(--cobalt-soft);
+  color: var(--ink);
+  box-shadow: inset 3px 0 0 var(--cobalt);
+}
+
+.sl-row.current .sl-num {
+  color: var(--cobalt);
+}
+
+/* Status stamp and the last check, pinned to the foot of the rail. */
+.rail-status {
+  flex: none;
+  margin-top: auto;
+  padding: 20px 24px 24px;
+  border-top: 1px solid var(--rule);
+}
+
+.check-meta {
+  margin: 10px 0 0;
+  min-height: calc(2 * 13px * 1.5);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink2);
+  font-variant-numeric: tabular-nums;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.check-meta span:not(:empty) + span:not(:empty)::before {
+  content: '. ';
+}
+
+.check-meta .sim {
+  color: var(--warn);
+  font-weight: 500;
+}
+
+/* Narrow windows: the rail becomes a sheet opened from the top bar. */
 .steps-sheet {
   position: fixed;
   top: 64px;
-  left: var(--pad);
+  left: 16px;
   z-index: 25;
-  width: min(320px, calc(100vw - 2 * var(--pad)));
+  width: min(320px, calc(100vw - 32px));
   max-height: calc(100vh - 96px);
   display: flex;
   flex-direction: column;
-  padding: 14px 8px 8px;
-  border-radius: var(--radius-panel);
-  border-color: var(--border-strong);
+}
+
+.steps-sheet .sl-head {
+  padding: 18px 48px 12px 24px;
 }
 
 .sheet-close {
   position: absolute;
-  top: 8px;
-  right: 8px;
-  width: 28px;
-  height: 28px;
-}
-
-.steps-sheet .sl-head {
-  padding-right: 40px;
+  top: 12px;
+  right: 10px;
+  width: 30px;
+  height: 30px;
 }
 
 @media (max-width: 1099px) {
   .learn-body {
     grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
   }
   .steps-card {
+    order: 2;
+    border-right: 0;
+  }
+  .steps-card .sl {
     display: none;
+  }
+  .rail-status {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 12px 24px;
+  }
+  .check-meta {
+    margin: 0;
+    min-height: 0;
   }
   .steps-toggle {
     display: inline-flex;
@@ -334,43 +326,44 @@
   }
 }
 
-/* The stage: panes, step info, then the controls pinned to the bottom. */
+/* The stage: the two frames, then the step and the controls. */
 .learn-stage {
   position: relative;
   min-width: 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 22px; /* UNDER_GAP in Learn.tsx */
+  padding: 26px 32px 28px;
 }
 
 .panes {
   flex: none;
   display: flex;
-  gap: 20px;
+  justify-content: flex-start;
+  gap: 18px; /* PANE_GAP in Learn.tsx */
 }
 
 /* Both panes get the same size from Learn.tsx (usePaneBox); before that, half each. */
 .pane {
-  position: relative;
   flex: none;
-  width: calc(50% - 10px);
+  width: calc(50% - 9px);
   aspect-ratio: 16 / 9;
-  overflow: hidden;
-  border-radius: var(--radius-panel);
   display: grid;
   place-items: center;
 }
 
-.pane.live {
-  background: var(--panel);
+/* Before the camera shows, the You frame is a sheet of card stock. */
+.pane.live:not(.on) {
+  background: var(--card);
 }
 
-/* Video surfaces: black behind the picture, in light and dark. */
-.pane.live.on,
-.pane.clip {
-  background: var(--stage);
-  border-color: transparent;
+.pane-tab {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 2;
+  pointer-events: none;
 }
 
 .live canvas {
@@ -390,57 +383,35 @@
 
 .live-note {
   position: absolute;
-  left: 50%;
-  bottom: 20px;
-  transform: translateX(-50%);
+  left: 16px;
+  right: 16px;
+  bottom: 16px;
   margin: 0;
-  padding: 8px 16px;
-  border-radius: 999px;
-  background: var(--caption-fill);
-  color: var(--caption-ink);
-  font-size: 15px;
-  white-space: nowrap;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  color: #fff;
 }
 
-/* A replayed video must never pass for a live camera. Top right, so the
-   pane label keeps the top left. */
+.note-label,
+.placeholder-title,
+.connect-title {
+  font: 600 18px/1.1 var(--cond);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.note-line {
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.78);
+}
+
+/* A replayed video must never pass for a live camera. Top right, so the YOU tab keeps the top left. */
 .rec {
   position: absolute;
-  top: 14px;
-  right: 14px;
+  top: 0;
+  right: 0;
   z-index: 2;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 12px 4px 10px;
-  border-radius: 999px;
-  background: var(--caption-fill);
-  color: var(--caption-ink);
-  border: 1px solid color-mix(in srgb, var(--record) 55%, transparent);
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.rec-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--record);
-}
-
-/* Which pane is which. Sits over video. */
-.pane-label {
-  position: absolute;
-  top: 14px;
-  left: 14px;
-  z-index: 2;
-  padding: 4px 12px;
-  border-radius: 999px;
-  background: var(--caption-fill);
-  color: var(--caption-ink);
-  font-size: 13px;
-  font-weight: 600;
-  pointer-events: none;
 }
 
 .placeholder {
@@ -448,25 +419,19 @@
   flex-direction: column;
   align-items: center;
   gap: 6px;
-  color: var(--faint);
-  text-align: center;
   padding: 20px;
-}
-
-.placeholder svg {
-  margin-bottom: 6px;
+  text-align: center;
 }
 
 .placeholder-title {
   margin: 0;
-  font-size: 17px;
-  font-weight: 600;
-  color: var(--muted);
+  color: var(--ink);
 }
 
 .placeholder-hint {
   margin: 0;
   font-size: 14px;
+  color: var(--ink2);
 }
 
 .clip-media {
@@ -490,252 +455,154 @@
 /* Autoplay with sound was refused: the clip plays muted until this is clicked. */
 .unmute {
   position: absolute;
-  top: 12px;
-  right: 12px;
+  top: 0;
+  right: 0;
   z-index: 2;
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  padding: 6px 14px 6px 12px;
-  border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.25);
-  background: var(--caption-fill);
-  color: var(--caption-ink);
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.unmute:hover {
-  background: rgba(0, 0, 0, 0.85);
+  padding: 6px 10px 5px;
+  border: 0;
+  border-radius: 0;
+  background: var(--cobalt);
+  color: #fff;
+  font: 600 13px var(--cond);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
 }
 
 /* Lift captions off the bottom edge of the picture. */
 video::-webkit-media-text-track-container {
-  transform: translateY(-10px);
+  transform: translateY(-12px);
 }
 
-/* ::cue ignores padding, so a same-color outline adds side room. 72% black is
-   DESIGN.md captionFill: white text keeps 9:1 even over a white frame. */
+/* ::cue ignores padding, so a same-color outline adds side room. */
 video::cue {
   background-color: var(--caption-fill);
-  outline: 0.3em solid var(--caption-fill);
+  outline: 0.5em solid var(--caption-fill);
   color: var(--caption-ink);
-  font-family: var(--font);
-  font-size: clamp(17px, 1.3vw, 28px);
+  font-family: var(--sans);
+  font-size: 17px;
   line-height: 1.45;
 }
 
-.step-info {
+/* Under the frames: the step at left, the controls at right. */
+.under {
   flex: none;
-  padding: 0 2px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 40px;
+}
+
+.step-info {
+  min-width: 0;
 }
 
 .step-count {
-  margin: 0 0 2px;
-  font-size: 13px;
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
+  margin: 0;
 }
 
 .step-title {
-  margin: 0;
-  font-size: clamp(22px, 1.7vw, 30px);
-  font-weight: 600;
-  letter-spacing: -0.015em;
-  line-height: 1.2;
-  white-space: nowrap;
+  margin-top: 6px;
+  font-size: clamp(34px, 5.3vh, 48px);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .step-do {
-  margin: 4px 0 0;
-  font-size: 15px;
-  color: var(--muted);
+  margin: 10px 0 0;
+  color: var(--ink2);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-/* Controls stay at the bottom of the stage. */
-.stage-foot {
-  position: relative;
-  flex: none;
-  margin-top: auto;
-}
-
+/* The mistake card sits above Back and Next; the column keeps one width so
+   the step title never rewraps when it shows. */
 .controls {
-  display: grid;
-  grid-template-columns: minmax(150px, 1fr) minmax(0, auto) auto;
-  grid-template-areas: 'badge mistake next';
-  align-items: end;
-  gap: 20px;
-}
-
-.badge-wrap {
-  grid-area: badge;
+  width: 420px;
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  gap: 6px;
-  min-width: 0;
-}
-
-/* Two short lines under the badge. */
-.check-meta {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  max-width: 100%;
-  min-height: calc(2 * 13px * 1.35);
-  font-size: 13px;
-  line-height: 1.35;
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-}
-
-.check-meta span {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.check-meta .sim {
-  color: var(--amber);
-  font-weight: 500;
-}
-
-.check-reason {
-  color: var(--faint);
+  align-items: flex-end;
+  gap: 14px;
 }
 
 .next-wrap {
-  grid-area: next;
   display: flex;
-  align-items: flex-start;
-  gap: 12px;
+  gap: 10px;
+  padding-bottom: 2px;
 }
 
-.next-col {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
+.next-wrap .next {
+  min-width: 176px;
+  justify-content: space-between;
+  padding: 0 24px;
 }
 
-.next-hint {
-  font-size: 13px;
-  color: var(--faint);
-}
-
-/* The one filled accent button on Learn. */
-.controls .next {
-  min-width: 132px;
-  font-size: 17px;
-}
-
-.controls .back {
-  gap: 4px;
-  padding: 0 20px 0 14px;
-}
-
-.next:disabled,
-.back:disabled {
-  cursor: default;
-}
-
-/* The catch (DESIGN 3.2): an amber wash over the panel with an amber hairline,
-   in the controls row between the badge and Back, so it never covers the
-   video or the step and nothing else moves. */
+/* The catch: amber is a status here, so a soft wash and a bar, nothing louder. */
 .mistake-banner {
-  grid-area: mistake;
-  align-self: center;
-  max-width: 640px;
-  display: flex;
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 12px;
-  padding: 12px 12px 12px 16px;
-  border-radius: var(--radius);
-  background: color-mix(in srgb, var(--amber) 13%, var(--panel));
-  border: 1px solid color-mix(in srgb, var(--amber) 45%, transparent);
-}
-
-.mistake-icon {
-  flex: none;
-  color: var(--amber);
-}
-
-.mistake-text {
-  flex: 1 1 auto;
-  margin: 0;
-  font-size: 16px;
-  font-weight: 600;
-  line-height: 1.3;
-  min-width: 0;
+  column-gap: 14px;
+  padding: 12px 14px 12px 18px;
+  border-color: var(--rule2);
+  background: var(--warn-soft);
+  box-shadow: inset 3px 0 0 var(--warn);
 }
 
 .mistake-label {
   display: block;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--amber);
+  font: 600 13px var(--cond);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--warn);
+}
+
+.mistake-text {
+  grid-column: 1;
+  margin: 2px 0 0;
+  font-size: 16px;
+  line-height: 1.35;
+  color: var(--ink);
 }
 
 .mistake-actions {
+  grid-column: 2;
+  grid-row: 1 / span 2;
   display: flex;
-  gap: 8px;
-  flex: none;
+  gap: 4px;
 }
 
-.mistake-banner .ghost {
-  min-height: 34px;
-  padding: 0 14px;
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--text);
-  border-color: color-mix(in srgb, var(--amber) 40%, transparent);
+.mistake-actions .btn.small {
+  height: 32px;
 }
 
-/* No camera yet: how to connect one, sized to fit inside the live pane. */
+/* No camera yet: how to connect one, centered in the You frame. */
 .connect {
   display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  align-items: center;
-  gap: clamp(16px, 2vw, 28px);
-  padding: 20px;
-  max-width: 100%;
-}
-
-.connect-text {
-  display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  gap: 6px;
-  max-width: 230px;
-}
-
-.connect-icon {
-  color: var(--faint);
-  margin-bottom: 4px;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  padding: 16px;
+  text-align: center;
 }
 
 .connect-title {
   margin: 0;
-  font-size: 18px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
+  color: var(--ink);
 }
 
 .connect-copy {
-  margin: 0;
+  margin: 0 0 6px;
+  max-width: 300px;
   font-size: 14px;
-  color: var(--muted);
-}
-
-.connect-local {
-  margin: 4px 0 0 -8px;
-  text-decoration: none;
+  color: var(--ink2);
 }
 
 .connect-qr {
@@ -744,35 +611,52 @@ video::cue {
   flex-direction: column;
   align-items: center;
   gap: 8px;
-  width: clamp(104px, 9vw, 150px);
-  flex: none;
-}
-
-.connect-qr figcaption code {
-  display: block;
-  font-family: var(--mono);
-  font-size: 11px;
-  color: var(--muted);
-  white-space: nowrap;
 }
 
 .qr {
   display: block;
-  width: 100%;
+  width: 160px;
+  max-width: 100%;
   height: auto;
-  border-radius: 10px;
+  padding: 8px;
+  background: #fff;
+  border: 1px solid var(--ink);
 }
 
-/* Done (SCREENS 8): left column with the title, stats and buttons; the step
-   breakdown on the right, scrolling if long. */
+.connect-qr figcaption {
+  font-size: 13px;
+  color: var(--ink2);
+  word-break: break-all;
+}
+
+.connect-local {
+  margin-top: 4px;
+  font: 600 14px var(--cond);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--cobalt);
+  text-underline-offset: 3px;
+}
+
+/* Short windows: a smaller QR so the block fits the frame. */
+@media (max-height: 820px) {
+  .qr {
+    width: 132px;
+  }
+  .connect {
+    gap: 6px;
+  }
+}
+
+/* Done (SCREENS 8): a printed result sheet. Totals at left, the step table at right. */
 
 .done-screen {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(300px, 380px) minmax(0, 1fr);
-  gap: clamp(24px, 3vw, 48px);
-  padding-top: 20px;
+  grid-template-columns: 380px minmax(0, 1fr);
+  gap: 64px;
+  padding: 40px 48px 32px;
 }
 
 .done-left {
@@ -780,122 +664,140 @@ video::cue {
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  text-align: center;
 }
 
 .done-title {
-  margin: 12px 0 0;
-  font-size: clamp(26px, 2.2vw, 34px);
-  font-weight: 650;
-  letter-spacing: -0.02em;
+  font-size: 48px;
 }
 
 .done-sub {
-  margin: -8px 0 6px;
-  color: var(--muted);
+  margin: 10px 0 0;
+  color: var(--ink2);
 }
 
 .done-stats {
-  margin: 0;
+  margin: 28px 0 0;
+  padding: 20px 20px 18px;
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  row-gap: 16px;
-  padding: 18px 10px;
-  border-radius: var(--radius-panel);
-  background: var(--panel);
-  border: 1px solid var(--border);
+  gap: 20px 12px;
 }
 
 .done-stats div {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 2px;
+  gap: 4px;
   min-width: 0;
 }
 
 .done-stats dd {
   margin: 0;
-  font-size: 20px;
-  font-weight: 600;
+  font: 600 28px/1 var(--cond);
   font-variant-numeric: tabular-nums;
 }
 
+.done-stats dd .of {
+  font-size: 18px;
+  color: var(--ink3);
+}
+
+.done-stats dd .faint {
+  color: var(--ink3);
+}
+
+/* Small caps, not text-transform: the label text stays as written for innerText and the e2e. Labels carry no digits. */
 .done-stats dt {
-  font-size: 12px;
-  color: var(--muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 100%;
+  font-size: 14px;
+  font-variant-caps: all-small-caps;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  color: var(--ink2);
+  line-height: 1.3;
 }
 
 .caution {
-  color: var(--amber);
+  color: var(--warn);
 }
 
 .done-note {
-  margin: 0;
+  margin: 12px 0 0;
   font-size: 13px;
-  color: var(--amber);
+  color: var(--warn);
 }
 
 .done-actions {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  margin-top: 6px;
+  margin-top: 28px;
 }
 
 .done-right {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  padding: 16px 0 6px;
-  border-radius: var(--radius-panel);
-  align-self: start;
-  max-height: 100%;
 }
 
-.done-right h2 {
-  margin: 0 20px 4px;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--muted);
+.done-right .rule-head {
+  margin: 0;
+  padding-top: 10px;
+}
+
+.bd-legend {
+  display: flex;
+  gap: 16px;
+  font: 500 13px var(--cond);
+  letter-spacing: 0.08em;
+  color: var(--ink3);
+}
+
+.bd-legend span::before {
+  content: '';
+  display: inline-block;
+  width: 14px;
+  height: 4px;
+  margin-right: 6px;
+  vertical-align: 3px;
+}
+
+.key-you::before {
+  background: var(--cobalt);
+}
+
+.key-exp::before {
+  background: var(--ink3);
 }
 
 .breakdown {
   list-style: none;
   margin: 0;
-  padding: 0 20px;
+  padding: 0;
   overflow-y: auto;
   min-height: 0;
 }
 
 .bd-row {
   display: grid;
-  grid-template-columns: 22px minmax(0, 1fr) auto;
-  gap: 4px 10px;
-  align-items: start;
-  padding: 12px 0;
-}
-
-.bd-row + .bd-row {
-  border-top: 1px solid var(--border);
+  grid-template-columns: 40px minmax(0, 1fr) minmax(140px, 30%) 48px;
+  gap: 0 20px;
+  align-items: center;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--rule);
 }
 
 .bd-num {
-  color: var(--faint);
+  align-self: start;
+  font: 600 20px/1 var(--cond);
+  color: var(--ink3);
+  padding-top: 1px;
   font-variant-numeric: tabular-nums;
-  line-height: 1.35;
 }
 
 .bd-main {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 2px;
 }
 
 .bd-title {
@@ -903,8 +805,8 @@ video::cue {
   display: flex;
   justify-content: space-between;
   gap: 12px;
-  font-weight: 500;
-  line-height: 1.35;
+  font-size: 14px;
+  line-height: 1.3;
 }
 
 .bd-name {
@@ -916,69 +818,67 @@ video::cue {
 
 .bd-mistakes {
   flex: none;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 500;
 }
 
 .bd-bars {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 4px;
 }
 
 .tb {
   display: block;
-  height: 5px;
-  min-width: 4px;
-  border-radius: 3px;
+  height: 4px;
 }
 
 .tb.exp {
-  background: var(--faint);
-  opacity: 0.6;
+  background: var(--ink3);
+  min-width: 2px;
 }
 
 .tb.you {
-  background: var(--accent);
+  background: var(--cobalt);
 }
 
 .tb.you.good {
-  background: var(--green);
+  background: var(--ok);
 }
 
 .bd-meta {
   margin: 0;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  color: var(--muted);
+  font-size: 12px;
+  color: var(--ink2);
 }
 
 .bd-meta.camera:not(.mock) {
-  color: var(--green);
+  color: var(--ok);
 }
 
 .bd-meta.skipped {
-  color: var(--amber);
+  color: var(--warn);
 }
 
 .bd-meta.none {
-  color: var(--faint);
+  color: var(--ink3);
 }
 
 .bd-times {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  padding-top: 22px;
-  font-size: 12px;
-  line-height: 1.5;
+  gap: 1px;
+  font: 500 14px/1.05 var(--cond);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
-@media (max-width: 900px) {
+.bd-times .exp {
+  color: var(--ink3);
+}
+
+@media (max-width: 1000px) {
   .done-screen {
     grid-template-columns: minmax(0, 1fr);
     overflow-y: auto;
@@ -988,16 +888,12 @@ video::cue {
   }
 }
 
-/* Projectors and big screens: scale up a little. */
+/* Projectors and big screens. */
 @media (min-width: 1800px) {
   .learn-body {
-    grid-template-columns: 300px minmax(0, 1fr);
+    grid-template-columns: 340px minmax(0, 1fr);
   }
   .sl-row {
     font-size: 16px;
-  }
-  .controls .next {
-    min-width: 160px;
-    font-size: 19px;
   }
 }

@@ -1,8 +1,11 @@
 // Line icons on a 24 unit grid, ported from the desktop app (apps/desktop/ui/src/icons.ts).
 // Markup only: color comes from currentColor, so a parent's `color` tints them.
+// Strokes are capped at 1.5 so the line weight matches the hairlines on cream paper.
 // The bodies are fixed strings in this file, never user input.
 
 type IconProps = { size?: number; className?: string; title?: string }
+
+const MAX_STROKE = 1.5
 
 function line(defaultSize: number, body: string, stroke = 1.8) {
   return function Icon({ size = defaultSize, className, title }: IconProps) {
@@ -14,7 +17,7 @@ function line(defaultSize: number, body: string, stroke = 1.8) {
         viewBox="0 0 24 24"
         fill="none"
         stroke="currentColor"
-        strokeWidth={stroke}
+        strokeWidth={Math.min(stroke, MAX_STROKE)}
         strokeLinecap="round"
         strokeLinejoin="round"
         aria-hidden={title ? undefined : true}

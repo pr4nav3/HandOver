@@ -8,8 +8,8 @@ import { playChime, unlockAudio } from './chime'
 import { ConnectCamera } from './ConnectCamera'
 import { Done } from './Done'
 import type { DoneSummary } from './Done'
-import { CameraIcon, CheckFillIcon, ChevronLeftIcon, CloseIcon, GradIcon, SoundIcon, WarningIcon } from './icons'
-import { emptyRun, StepList } from './StepList'
+import { CloseIcon, SoundIcon } from './icons'
+import { Caps, emptyRun, pad2, StepList } from './StepList'
 import type { StepRun } from './StepList'
 import { TopBar } from './TopBar'
 import { useClipPair } from './useClipPair'
@@ -82,9 +82,8 @@ export function Learn() {
   staleRef.current = stale
   const [aspect, setAspect] = useState(16 / 9)
   const stageRef = useRef<HTMLElement>(null)
-  const infoRef = useRef<HTMLDivElement>(null)
-  const footRef = useRef<HTMLDivElement>(null)
-  const pane = usePaneBox(stageRef, infoRef, footRef, aspect)
+  const underRef = useRef<HTMLDivElement>(null)
+  const pane = usePaneBox(stageRef, underRef, aspect)
   const flashTimer = useRef<number | undefined>(undefined)
   const [serverError, setServerError] = useState('')
   const errorTimer = useRef<number | undefined>(undefined)
@@ -565,11 +564,13 @@ export function Learn() {
   const paneStyle = pane ? { width: pane.w, height: pane.h } : undefined
   const runList = runs.current
 
+  const showStep = activeMistake && typeof activeMistake.looks_like === 'number' && activeMistake.looks_like !== state?.step ? activeMistake.looks_like : null
+
   return (
     <div className={`page learn ${isDone ? 'is-done' : ''}`}>
       <div className="progress" role="progressbar" aria-valuemin={0} aria-valuemax={total} aria-valuenow={isDone ? total : idx}>
         {Array.from({ length: showing ? Math.max(total, 1) : 1 }, (_, i) => {
-          let cls = !showing || !total ? 'upcoming' : isDone || i < idx ? 'done' : i === idx ? 'current' : 'upcoming'
+          let cls = !showing || !total ? 'upcoming' : isDone || i < idx ? 'done' : i === idx ? 'cur' : 'upcoming'
           if (i === idx && activeMistake && activeMistake.kind !== 'ahead') cls = 'mistake'
           return <span key={i} className={`seg ${cls}`} />
         })}
@@ -583,7 +584,7 @@ export function Learn() {
         )}
         {down && <span className="note">Reconnecting</span>}
         {showing && !isDone && (
-          <button type="button" className="ghost steps-toggle" aria-expanded={popup === 'steps'} onClick={() => setPopup(popup === 'steps' ? 'none' : 'steps')}>
+          <button type="button" className="btn small quiet steps-toggle" aria-expanded={popup === 'steps'} onClick={() => setPopup(popup === 'steps' ? 'none' : 'steps')}>
             Steps
           </button>
         )}
@@ -591,7 +592,7 @@ export function Learn() {
           <span className="more-wrap">
             <button
               type="button"
-              className="icon-button more-button"
+              className="btn small quiet more-button"
               aria-label="Check settings"
               aria-expanded={popup === 'more'}
               title="Check settings"
@@ -601,13 +602,19 @@ export function Learn() {
             </button>
             {popup === 'more' && (
               <div className="popover card" role="dialog" aria-label="Check settings">
-                <p className="popover-label">Model sees: every</p>
+                <p className="popover-label">Model sees one frame every</p>
                 <div className="check-rate" role="group" aria-label="How often the model checks a frame">
                   {CHECK_INTERVALS.map((s) => {
                     const on = Math.abs(checkInterval - s) < 0.01
                     return (
-                      <button key={s} type="button" className={on ? 'on' : ''} aria-pressed={on} onClick={() => send({ type: 'set_check_interval', seconds: s })}>
-                        {s} s
+                      <button
+                        key={s}
+                        type="button"
+                        className={`btn small ${on ? 'ink on' : ''}`}
+                        aria-pressed={on}
+                        onClick={() => send({ type: 'set_check_interval', seconds: s })}
+                      >
+                        <Caps>{`${s} s`}</Caps>
                       </button>
                     )
                   })}
@@ -617,7 +624,7 @@ export function Learn() {
           </span>
         )}
         {showing && (
-          <button type="button" className="ghost end-button" onClick={askEnd}>
+          <button type="button" className="btn small end-button" onClick={askEnd}>
             End lesson
           </button>
         )}
@@ -626,12 +633,9 @@ export function Learn() {
       {view === 'empty' && (
         <main className="learn-empty">
           <div className="empty-state">
-            <span className="empty-symbol">
-              <GradIcon size={40} />
-            </span>
             <p className="empty-title">No lesson running</p>
-            <p className="empty-message">Pick a lesson to start learning.</p>
-            <button type="button" className="primary" onClick={() => go('community')}>
+            <p className="empty-message">Pick a lesson from the list to start learning.</p>
+            <button type="button" className="btn primary" onClick={() => go('community')}>
               Pick a lesson
             </button>
           </div>
@@ -648,39 +652,59 @@ export function Learn() {
 
       {/* Always mounted, so the video and canvas elements (and the clip pair holding them) survive every state. */}
       <main className={`learn-body ${showing && !isDone ? '' : 'off'}`}>
-        <aside className="steps-card panel" aria-label="Steps">
+        <aside className="steps-card" aria-label="Steps">
           <StepList steps={steps} runs={runList} current={isDone ? -1 : idx} onPick={gotoStep} />
+          <div className="rail-status">
+            <span
+              className={`badge ${badge} ${state?.camera_connected ? 'live' : ''}`}
+              aria-live="polite"
+              title={badge === 'offline' && offlineReason ? offlineReason : undefined}
+            >
+              <i className="badge-dot" />
+              <Caps>{BADGE_LABEL[badge]}</Caps>
+            </span>
+            <p className="check-meta">
+              <span className={metaTop === 'Simulated checks' ? 'sim' : ''}>{metaTop}</span>
+              <span className="check-reason">{metaBottom}</span>
+            </p>
+          </div>
         </aside>
 
         <section className="learn-stage" ref={stageRef}>
           <div className="panes">
-            <div className={`panel pane live ${showLive ? 'on' : ''}`} style={paneStyle} aria-label="You, live camera">
+            <div className={`frame pane live ${showLive ? 'on' : ''}`} style={paneStyle} aria-label="You, live camera">
               <canvas ref={liveRef} role="img" aria-label="Live camera" className={showLive ? (cameraLost ? 'lost' : '') : 'hidden'} />
-              {showLive && <span className="pane-label">You</span>}
+              {showLive && (
+                <span className="tab cobalt pane-tab">
+                  {!recording && !cameraLost && <i />}
+                  You
+                </span>
+              )}
               {cameraLost && (
                 <p className="live-note" role="status">
-                  Camera lost. Keep going with Next.
+                  <span className="note-label">
+                    <Caps>Camera lost</Caps>
+                  </span>
+                  <span className="note-line">Keep going with Next.</span>
                 </p>
               )}
               {recording && (
                 <span
-                  className="rec"
+                  className="tab rec"
                   title={source === 'file' ? 'Frames come from a recorded video, not a live camera' : `Camera source "${source}" is not a known live camera`}
                 >
-                  <span className="rec-dot" />
+                  <i />
                   Recording
                 </span>
               )}
               {!showLive &&
                 (down ? (
                   <div className="placeholder">
-                    <CameraIcon size={32} />
                     <p className="placeholder-title">Reconnecting to HandOver</p>
                     <p className="placeholder-hint">Your camera shows here again once it is back.</p>
                   </div>
                 ) : state?.camera_connected ? (
                   <div className="placeholder">
-                    <CameraIcon size={32} />
                     <p className="placeholder-title">Camera connected</p>
                     <p className="placeholder-hint">Waiting for its first picture.</p>
                   </div>
@@ -689,57 +713,42 @@ export function Learn() {
                 ))}
             </div>
 
-            <div className="panel pane clip" style={paneStyle}>
-              {step && <span className="pane-label">Expert</span>}
+            <div className="frame pane clip" style={paneStyle}>
+              {step && <span className="tab pane-tab">Expert · {clock(step.start)} to {clock(step.end)}</span>}
               <div className={`clip-media ${step ? '' : 'hidden'}`}>
                 <video ref={clips.refA} data-slot="a" loop playsInline preload="auto" onLoadedMetadata={onClipMetadata} />
                 <video ref={clips.refB} data-slot="b" loop playsInline preload="auto" muted className="standby" onLoadedMetadata={onClipMetadata} />
               </div>
               {soundBlocked && step && (
                 <button type="button" className="unmute" onClick={turnOnSound}>
-                  <SoundIcon />
+                  <SoundIcon size={14} />
                   Turn on sound
                 </button>
               )}
             </div>
           </div>
 
-          <div className="step-info" ref={infoRef}>
-            <p className="step-count">{step ? `Step ${idx + 1} of ${total}` : ' '}</p>
-            <h1 className="step-title">{step ? step.title : ' '}</h1>
-            <p className="step-do">{doNow}</p>
-          </div>
+          <div className="under" ref={underRef}>
+            <div className="step-info">
+              <p className="eyebrow step-count">{step ? <Caps show={`Step ${pad2(idx + 1)} of ${pad2(total)}`}>{`Step ${idx + 1} of ${total}`}</Caps> : ' '}</p>
+              <h1 className="display step-title">{step ? step.title : ' '}</h1>
+              <p className="step-do">{doNow}</p>
+            </div>
 
-          <div className="stage-foot" ref={footRef}>
             <div className="controls">
-              <div className="badge-wrap">
-                <span
-                  className={`badge ${badge} ${state?.camera_connected ? 'live' : ''}`}
-                  aria-live="polite"
-                  title={badge === 'offline' && offlineReason ? offlineReason : undefined}
-                >
-                  {badge === 'verified' ? <CheckFillIcon size={16} className="badge-check" /> : <span className="badge-dot" />}
-                  {BADGE_LABEL[badge]}
-                </span>
-                <span className="check-meta">
-                  <span className={metaTop === 'Simulated checks' ? 'sim' : ''}>{metaTop}</span>
-                  <span className="check-reason">{metaBottom}</span>
-                </span>
-              </div>
               {activeMistake && (
-                <div className="mistake-banner" role="alert">
-                  <WarningIcon className="mistake-icon" />
-                  <p className="mistake-text">
-                    {activeMistake.label && <span className="mistake-label">{activeMistake.label}</span>}
-                    {activeMistake.message}
-                  </p>
+                <div className="card mistake-banner" role="alert">
+                  <span className="mistake-label">
+                    <Caps>{activeMistake.label ? `Mistake · ${activeMistake.label}` : 'Mistake'}</Caps>
+                  </span>
+                  <p className="mistake-text">{activeMistake.message}</p>
                   <div className="mistake-actions">
-                    {typeof activeMistake.looks_like === 'number' && activeMistake.looks_like !== state?.step && (
-                      <button type="button" className="ghost" onClick={() => gotoStep(activeMistake.looks_like as number)}>
-                        Show step {activeMistake.looks_like + 1}
+                    {showStep !== null && (
+                      <button type="button" className="btn small" onClick={() => gotoStep(showStep)}>
+                        <Caps>{`Show step ${showStep + 1}`}</Caps>
                       </button>
                     )}
-                    <button type="button" className="ghost" onClick={dismissMistake}>
+                    <button type="button" className="btn small quiet" onClick={dismissMistake}>
                       OK
                     </button>
                   </div>
@@ -748,20 +757,21 @@ export function Learn() {
               <div className="next-wrap">
                 <button
                   type="button"
-                  className={`secondary large back ${idx > 0 ? '' : 'hidden'}`}
+                  className={`btn back ${idx > 0 ? '' : 'hidden'}`}
                   onClick={back}
                   disabled={!step || idx === 0}
                   title="Back (Left Arrow)"
                 >
-                  <ChevronLeftIcon />
                   Back
                 </button>
-                <div className="next-col">
-                  <button type="button" className="primary large next" onClick={next} disabled={!step} title="Next (Right Arrow or Space)">
-                    Next
-                  </button>
-                  <span className="next-hint">or press {'→'}</span>
-                </div>
+                <button type="button" className="btn primary next" onClick={next} disabled={!step} title="Next (Right Arrow or Space)">
+                  Next
+                  <span className="key" aria-hidden="true">
+                    Space
+                  </span>
+                </button>
+                {/* The key chip shows the shortcut; this names it for screen readers (and the e2e). */}
+                <span className="next-hint sr-only">or press {'→'}</span>
               </div>
             </div>
           </div>
@@ -786,11 +796,11 @@ export function Learn() {
             <h2 id="end-title">End this lesson?</h2>
             <p className="confirm-text">You go back to the lesson list.</p>
             <div className="confirm-actions">
-              <button type="button" className="secondary" onClick={() => setConfirmEnd(false)} autoFocus>
-                Keep going
-              </button>
-              <button type="button" className="primary danger" onClick={endLesson}>
+              <button type="button" className="btn ink" onClick={endLesson}>
                 End lesson
+              </button>
+              <button type="button" className="btn quiet" onClick={() => setConfirmEnd(false)} autoFocus>
+                Keep going
               </button>
             </div>
           </div>
@@ -799,31 +809,32 @@ export function Learn() {
     </div>
   )
 }
+// Gap between the panes and the step block under them, and between the two panes; match learn.css.
+const UNDER_GAP = 22
+const PANE_GAP = 18
 
-// Gap between the stage's rows (panes, step info, controls) and between the two panes; match learn.css.
-const STAGE_GAP = 16
-const PANE_GAP = 20
+/** "0:31.5" or "31.5" to "00:31": the expert clip's span on the Expert tab. */
+function clock(ts: string) {
+  const t = Math.floor(toSeconds(ts))
+  return `${pad2(Math.floor(t / 60))}:${pad2(t % 60)}`
+}
 
 /**
  * Size of each of the two equal panes (live and clip), at the clip's aspect:
- * as wide as half the stage (the column right of the steps card), but never so
- * tall that the step info and controls stop fitting under them.
+ * as wide as half the stage, but never so tall that the step block and the
+ * controls under them stop fitting. Portrait clips end up height-bound.
  */
-function usePaneBox(
-  stageRef: RefObject<HTMLElement | null>,
-  infoRef: RefObject<HTMLElement | null>,
-  footRef: RefObject<HTMLElement | null>,
-  aspect: number,
-) {
+function usePaneBox(stageRef: RefObject<HTMLElement | null>, underRef: RefObject<HTMLElement | null>, aspect: number) {
   const [box, setBox] = useState<{ w: number; h: number } | null>(null)
   useEffect(() => {
     const stage = stageRef.current
     if (!stage) return
     const measure = () => {
-      const { width, height } = stage.getBoundingClientRect()
-      if (!width || !height) return // hidden
-      const reserved = (infoRef.current?.offsetHeight ?? 0) + (footRef.current?.offsetHeight ?? 0) + 2 * STAGE_GAP
-      const room = height - reserved
+      const cs = getComputedStyle(stage)
+      const width = stage.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight)
+      const height = stage.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom)
+      if (width <= 0 || height <= 0) return // hidden
+      const room = height - (underRef.current?.offsetHeight ?? 0) - UNDER_GAP
       if (room <= 0) return
       const w = Math.min((width - PANE_GAP) / 2, room * aspect)
       setBox((prev) => {
@@ -834,10 +845,9 @@ function usePaneBox(
     measure()
     const ro = new ResizeObserver(measure)
     ro.observe(stage)
-    if (infoRef.current) ro.observe(infoRef.current)
-    if (footRef.current) ro.observe(footRef.current)
+    if (underRef.current) ro.observe(underRef.current)
     return () => ro.disconnect()
-  }, [stageRef, infoRef, footRef, aspect])
+  }, [stageRef, underRef, aspect])
   return box
 }
 

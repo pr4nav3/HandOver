@@ -146,10 +146,12 @@ async function learnRun() {
           if (r.selectorText !== 'video::cue') return false
           const bg = r.style.backgroundColor
           const v = /^var\((--[\w-]+)\)$/.exec(bg)
-          return (v ? getComputedStyle(document.documentElement).getPropertyValue(v[1]).trim() : bg) === 'rgba(0, 0, 0, 0.72)'
+          const val = (v ? getComputedStyle(document.documentElement).getPropertyValue(v[1]).trim() : bg).replace(/\s/g, '')
+          // The caption fill token: a dark stage color at 72% to 78%.
+          return ['rgba(0,0,0,.72)', 'rgba(0,0,0,0.72)', 'rgba(11,13,18,.78)', 'rgba(11,13,18,0.78)'].includes(val)
         }),
     ),
-    'caption background is 72% black',
+    'caption background is the dark caption fill',
   )
 
   // A lesson.json without clip, captions and ref_frame gets the contract defaults.

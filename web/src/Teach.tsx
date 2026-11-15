@@ -4,9 +4,8 @@ import type { DragEvent, FormEvent } from 'react'
 import { go } from './App'
 import { HttpError, getJob, getLesson, lessonUrl, listLessons, toSeconds } from './api'
 import type { JobStatus, Lesson, LessonSummary } from './api'
-import { ChevronLeftIcon, FilmIcon, VideoIcon } from './icons'
 import { TopBar } from './TopBar'
-import { ProcessCard, sizeLabel } from './TeachProcessing'
+import { ProcessCard, nn, sizeLabel } from './TeachProcessing'
 import type { UploadPhase } from './TeachProcessing'
 import { useFitBox } from './useFitBox'
 
@@ -174,9 +173,9 @@ export function Teach() {
       ) : (
         <div className="page-body">
           <div className="page-inner teach-inner">
-            <header className="page-head">
+            <header className="page-head teach-head">
               <div>
-                <h1>Teach</h1>
+                <h1 className="display">Teach</h1>
                 <p className="page-sub">Record a task once. HandOver turns it into steps.</p>
               </div>
             </header>
@@ -200,25 +199,23 @@ export function Teach() {
                     <>
                       <p className="hint">Try again sends the same video. If it fails again, record a new take and talk through each step.</p>
                       <div className="process-actions" key="error-actions">
-                        <button className="primary" onClick={start}>
+                        <button className="btn primary" onClick={start}>
                           Try again
                         </button>
-                        <button className="secondary" onClick={() => setFlow(null)}>
+                        <button className="btn quiet" onClick={() => setFlow(null)}>
                           Change video
                         </button>
                       </div>
                     </>
                   ) : (
-                    <>
+                    <div className="process-foot">
                       <p className="hint">You can leave this screen. The hub keeps working, and the lesson shows up in Your lessons.</p>
                       {flow.phase === 'uploading' && (
-                        <div className="process-actions" key="upload-actions">
-                          <button className="secondary" onClick={cancel}>
-                            Cancel
-                          </button>
-                        </div>
+                        <button className="btn small quiet" key="upload-actions" onClick={cancel}>
+                          Cancel
+                        </button>
                       )}
-                    </>
+                    </div>
                   )}
                 </ProcessCard>
               ) : (
@@ -270,10 +267,10 @@ function NewLesson({
   }
 
   return (
-    <form className="panel teach-card upload" onSubmit={submit}>
-      <h2>New lesson</h2>
+    <form className="card teach-card upload" onSubmit={submit}>
+      <h2 className="rule-head">New lesson</h2>
       <div
-        className={`option-card drop ${dragging ? 'over' : ''} ${file ? 'has-file' : ''}`}
+        className={`drop ${dragging ? 'over' : ''} ${file ? 'has-file' : ''}`}
         onDragOver={(e) => {
           e.preventDefault()
           setDragging(true)
@@ -283,6 +280,7 @@ function NewLesson({
         onClick={() => inputRef.current?.click()}
         role="button"
         tabIndex={0}
+        aria-label={file ? `Video: ${file.name}. Choose another` : 'Choose a video'}
         onKeyDown={(e) => {
           if (e.key === 'Enter' || e.key === ' ') {
             e.preventDefault()
@@ -291,20 +289,23 @@ function NewLesson({
         }}
       >
         <input ref={inputRef} type="file" accept="video/*" hidden onChange={(e) => pick(e.target.files?.[0])} />
-        <span className="tile">{file ? <FilmIcon size={24} /> : <VideoIcon />}</span>
-        <span className="option-text">
-          {file ? (
-            <>
-              <span className="option-title file-name">{file.name}</span>
-              <span className="option-line">{sizeLabel(file.size)}. Click to choose another.</span>
-            </>
-          ) : (
-            <>
-              <span className="option-title">Choose a video</span>
-              <span className="option-line">or drop it here</span>
-            </>
-          )}
-        </span>
+        {file ? (
+          <>
+            <span className="drop-text">
+              <span className="file-name">{file.name}</span>
+              <span className="drop-line tabular">{sizeLabel(file.size)}</span>
+            </span>
+            {/* The drop zone's own click opens the picker; this is its visible handle. */}
+            <span className="btn small quiet drop-change" aria-hidden="true">
+              Change
+            </span>
+          </>
+        ) : (
+          <span className="drop-text">
+            <span className="drop-title">Choose a video</span>
+            <span className="drop-line">or drop it here</span>
+          </span>
+        )}
       </div>
       <label className="field">
         <span>Title</span>
@@ -312,7 +313,7 @@ function NewLesson({
       </label>
       <p className="hint">One video of the whole task works best. Talk through each step as you do it.</p>
       <div className="upload-row">
-        <button className="primary" type="submit" disabled={!file || !title.trim()}>
+        <button className="btn primary" type="submit" disabled={!file || !title.trim()}>
           Make lesson
         </button>
       </div>
@@ -322,51 +323,47 @@ function NewLesson({
 
 function LessonThumb({ id }: { id: string }) {
   const [failed, setFailed] = useState(false)
-  return (
-    <span className="row-cover">
-      {failed ? <FilmIcon size={22} /> : <img src={lessonUrl(id, 'frames/01.jpg')} alt="" loading="lazy" onError={() => setFailed(true)} />}
-    </span>
-  )
+  return <span className="frame row-cover">{!failed && <img src={lessonUrl(id, 'frames/01.jpg')} alt="" loading="lazy" onError={() => setFailed(true)} />}</span>
 }
 
 function YourLessons({ lessons, error, onOpen }: { lessons: LessonSummary[] | null; error: string; onOpen: (id: string) => void }) {
   return (
-    <section className="panel teach-card existing">
-      <h2>Your lessons</h2>
+    <section className="card teach-card existing">
+      <h2 className="rule-head">
+        Your lessons
+        {!!lessons?.length && <span className="rule-count">{lessons.length}</span>}
+      </h2>
       {error && <p className="open-error">{error}</p>}
       {lessons === null && (
-        <p className="muted loading-line">
+        <p className="loading-line">
           <span className="spinner" /> Loading
         </p>
       )}
       {lessons?.length === 0 && (
         <div className="lessons-empty">
-          <FilmIcon />
-          <span>No lessons yet.</span>
+          <span className="lessons-empty-title">No lessons yet</span>
+          <span>The lessons you make show up here.</span>
         </div>
       )}
       {!!lessons?.length && (
-        <>
-          <ul className="lesson-list">
-            {lessons.map((l) => (
-              <li key={l.id}>
-                <button className="lesson-row" onClick={() => onOpen(l.id)}>
-                  <LessonThumb id={l.id} />
-                  <span className="row-text">
-                    <span className="row-title">{l.title || l.id}</span>
-                    <span className="row-meta">
-                      {l.steps} {l.steps === 1 ? 'step' : 'steps'}
-                    </span>
+        <ul className="lesson-list">
+          {lessons.map((l) => (
+            <li key={l.id}>
+              <button className="lesson-row" onClick={() => onOpen(l.id)}>
+                <LessonThumb id={l.id} />
+                <span className="row-text">
+                  <span className="row-title">{l.title || l.id}</span>
+                  <span className="row-meta">
+                    {l.steps} {l.steps === 1 ? 'step' : 'steps'}
                   </span>
-                </button>
-                <button className="quiet try" onClick={() => go('learn', l.id)}>
-                  Try it
-                </button>
-              </li>
-            ))}
-          </ul>
-          <p className="hint">Open a lesson to review its steps.</p>
-        </>
+                </span>
+              </button>
+              <button className="btn small quiet try" onClick={() => go('learn', l.id)}>
+                Try it
+              </button>
+            </li>
+          ))}
+        </ul>
       )}
     </section>
   )
@@ -382,22 +379,22 @@ function Ready({ lesson, id, onReview, onAnother }: { lesson: Lesson | null; id:
       {lesson && lesson.steps.length > 0 && (
         <ol className="ready-strip" aria-label="Steps">
           {lesson.steps.slice(0, 6).map((s, i) => (
-            <li key={i} className="ready-frame">
+            <li key={i} className="frame ready-frame">
               <img src={lessonUrl(lesson.id, s.ref_frame)} alt="" loading="lazy" />
-              <span className="ready-num">{i + 1}</span>
+              <span className="ready-num">{nn(i + 1)}</span>
             </li>
           ))}
           {lesson.steps.length > 6 && <li className="ready-more">+{lesson.steps.length - 6}</li>}
         </ol>
       )}
       <div className="process-actions">
-        <button className="primary" onClick={() => go('learn', id)}>
+        <button className="btn primary" onClick={() => go('learn', id)}>
           Try it as a learner
         </button>
-        <button className="secondary" onClick={onReview} disabled={!lesson}>
+        <button className="btn" onClick={onReview} disabled={!lesson}>
           Review steps
         </button>
-        <button className="quiet another" onClick={onAnother}>
+        <button className="btn quiet another" onClick={onAnother}>
           Teach another
         </button>
       </div>
@@ -470,24 +467,23 @@ function LessonView({ lesson, onBack }: { lesson: Lesson; onBack: () => void }) 
   return (
     <main className="teach-lesson">
       <div className="review-head">
-        <button className="ghost back" onClick={onBack}>
-          <ChevronLeftIcon />
+        <button className="btn small back" onClick={onBack}>
           Back to Teach
         </button>
         <div className="review-title">
           <h1>{lesson.title}</h1>
-          <span className="muted tabular">
+          <span className="review-meta tabular">
             {steps.length} {steps.length === 1 ? 'step' : 'steps'}, {fmt(total)}
           </span>
         </div>
-        <button className="primary" onClick={() => go('learn', lesson.id)}>
+        <button className="btn primary" onClick={() => go('learn', lesson.id)}>
           Try it as a learner
         </button>
       </div>
 
       <div className="review-body">
         <section className="player-col" ref={colRef}>
-          <div className="player" style={box ? { width: box.w, height: box.h } : undefined}>
+          <div className="frame player" style={box ? { width: box.w, height: box.h } : undefined}>
             <video
               ref={videoRef}
               controls
@@ -515,7 +511,7 @@ function LessonView({ lesson, onBack }: { lesson: Lesson; onBack: () => void }) 
                     aria-label={`Step ${i + 1}: ${steps[i].title}`}
                     onClick={() => seek(i)}
                   >
-                    <span>{i + 1}</span>
+                    <span>{nn(i + 1)}</span>
                   </button>
                 ))}
                 {clip === null && <span className="playhead" style={{ left: `${Math.min(time / total, 1) * 100}%` }} />}
@@ -527,18 +523,17 @@ function LessonView({ lesson, onBack }: { lesson: Lesson; onBack: () => void }) 
             </div>
             <div className="player-meta">
               {clip === null ? (
-                <span className="muted">Full video. Pick a step to play its clip with captions.</span>
+                <span className="meta-hint">Full video. Pick a step to play its clip with captions.</span>
               ) : (
                 <>
+                  <span className="meta-num">{nn(clip + 1)}</span>
                   <span className="meta-text">
-                    <span className="meta-title">
-                      {clip + 1}. {steps[clip].title}
-                    </span>
-                    <span className="muted tabular">
+                    <span className="meta-title">{steps[clip].title}</span>
+                    <span className="meta-sub tabular">
                       {steps[clip].start} to {steps[clip].end}, {steps[clip].check_type === 'manual' ? 'manual check' : 'camera check'}
                     </span>
                   </span>
-                  <button className="ghost" onClick={() => setClip(null)}>
+                  <button className="btn small quiet" onClick={() => setClip(null)}>
                     Show full video
                   </button>
                 </>
@@ -547,22 +542,25 @@ function LessonView({ lesson, onBack }: { lesson: Lesson; onBack: () => void }) 
           </div>
         </section>
 
-        <section className="panel step-list" aria-label="Steps">
-          <h2 className="step-list-head">Steps</h2>
+        <section className="card step-list" aria-label="Steps">
+          <h2 className="step-list-head">
+            <span>Steps</span>
+            <span className="step-list-count">{steps.length}</span>
+          </h2>
           <div className="thumbs">
             {steps.map((s, i) => (
               <button key={i} className={`thumb step-row ${clip === i ? 'active' : ''}`} onClick={() => setClip(i)}>
-                <span className="step-num">{i + 1}</span>
-                <span className="thumb-img">
+                <span className="step-num">{nn(i + 1)}</span>
+                <span className="frame thumb-img">
                   <img src={lessonUrl(lesson.id, s.ref_frame)} alt="" loading="lazy" />
                 </span>
                 <span className="thumb-text">
                   <span className="thumb-title">{s.title}</span>
                   <span className="thumb-meta">
-                    {s.check_type === 'manual' && <span className="thumb-tag">Manual</span>}
-                    <span className="tabular">
+                    <span className="thumb-time">
                       {short(s.start)}–{short(s.end)}
                     </span>
+                    {s.check_type === 'manual' && <span className="stamp muted thumb-tag">Manual</span>}
                   </span>
                 </span>
               </button>
