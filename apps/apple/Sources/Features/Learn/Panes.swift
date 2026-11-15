@@ -4,54 +4,64 @@ import SwiftUI
 // The two video panes of Learn (DESIGN.md 3.4, 3.5): the expert clip with its caption bar, and the learner's
 // camera. Both are aspect fit on `stage` black, never cropped.
 
+/// One clip player's AVPlayerLayer, aspect fit. Each player slot keeps its own (`ClipController.Slot.surface`), so
+/// moving the clip between the large pane and the tile, or between layouts on rotation, reuses the layer and the
+/// picture never goes black while a new layer gets its first frame.
 #if os(iOS)
-private final class PlayerUIView: UIView {
+final class PlayerSurface: UIView {
     override static var layerClass: AnyClass { AVPlayerLayer.self }
     var playerLayer: AVPlayerLayer { layer as! AVPlayerLayer }
-}
 
-/// An AVPlayerLayer, aspect fit.
-struct PlayerLayerView: UIViewRepresentable {
-    var player: AVPlayer
-
-    func makeUIView(context: Context) -> UIView {
-        let view = PlayerUIView()
-        view.playerLayer.videoGravity = .resizeAspect
-        view.playerLayer.player = player
-        view.backgroundColor = .clear
-        return view
-    }
-
-    func updateUIView(_ view: UIView, context: Context) {
-        (view as? PlayerUIView)?.playerLayer.player = player
-    }
-}
-#else
-private final class PlayerNSView: NSView {
-    let playerLayer = AVPlayerLayer()
-    override init(frame: NSRect) {
-        super.init(frame: frame)
-        wantsLayer = true
-        layer = playerLayer
+    init(player: AVPlayer) {
+        super.init(frame: .zero)
         playerLayer.videoGravity = .resizeAspect
+        playerLayer.player = player
+        backgroundColor = .clear
+        isUserInteractionEnabled = false
     }
 
     required init?(coder: NSCoder) { nil }
 }
+#else
+final class PlayerSurface: NSView {
+    let playerLayer = AVPlayerLayer()
 
-/// An AVPlayerLayer, aspect fit.
-struct PlayerLayerView: NSViewRepresentable {
-    var player: AVPlayer
-
-    func makeNSView(context: Context) -> NSView {
-        let view = PlayerNSView()
-        view.playerLayer.player = player
-        return view
+    init(player: AVPlayer) {
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer = playerLayer
+        playerLayer.videoGravity = .resizeAspect
+        playerLayer.player = player
     }
 
-    func updateNSView(_ view: NSView, context: Context) {
-        (view as? PlayerNSView)?.playerLayer.player = player
+    required init?(coder: NSCoder) { nil }
+}
+#endif
+
+/// Shows a slot's player surface.
+struct PlayerLayerView {
+    var surface: PlayerSurface
+}
+
+#if os(iOS)
+extension PlayerLayerView: UIViewRepresentable {
+    func makeUIView(context: Context) -> SurfaceHost {
+        let host = SurfaceHost()
+        host.adopt(surface)
+        return host
     }
+
+    func updateUIView(_ host: SurfaceHost, context: Context) { host.adopt(surface) }
+}
+#else
+extension PlayerLayerView: NSViewRepresentable {
+    func makeNSView(context: Context) -> SurfaceHost {
+        let host = SurfaceHost()
+        host.adopt(surface)
+        return host
+    }
+
+    func updateNSView(_ host: SurfaceHost, context: Context) { host.adopt(surface) }
 }
 #endif
 
@@ -119,7 +129,7 @@ struct ClipPane: View {
                 }
                 ForEach(0..<2, id: \.self) { i in
                     if let slot = clips.slots[i] {
-                        PlayerLayerView(player: slot.player)
+                        PlayerLayerView(surface: slot.surface)
                             .opacity(i == clips.active && clips.phase == .playing ? 1 : 0)
                             .allowsHitTesting(false)
                     }
@@ -231,14 +241,14 @@ private struct TouchIconStyle: ButtonStyle {
 
 /// Where the learner's camera picture comes from right now.
 enum LiveSource {
-    /// Frames from the hub (another device is the camera).
-    case hub(CGImage)
+    /// Frames from the hub (another device is the camera). Only `LiveFrameView` reads the frames themselves.
+    case hub(LiveFeed)
     /// This device's own camera preview (camera mode), drawn by the Camera feature.
     case own(AnyView)
     /// No camera yet.
     case waiting
-    /// The camera dropped: the last frame dimmed.
-    case lost(CGImage?)
+    /// The camera dropped: the feed's last frame dimmed, or nothing.
+    case lost(LiveFeed?)
     /// The hub socket is down: a placeholder, never a frozen frame.
     case reconnecting
 }
@@ -284,17 +294,15 @@ struct LivePane: View {
         ZStack {
             theme.colors.stage
             switch source {
-            case .hub(let image):
-                Image(decorative: image, scale: 1).resizable().aspectRatio(contentMode: .fit)
+            case .hub(let feed):
+                LiveFrameView(feed: feed)
             case .own(let view):
                 view
             case .waiting:
                 placeholder(symbol: "video", title: "Waiting for camera",
                             hint: "On a second phone, open HandOver and tap Be the Camera.")
-            case .lost(let last):
-                if let last {
-                    Image(decorative: last, scale: 1).resizable().aspectRatio(contentMode: .fit).opacity(0.4)
-                }
+            case .lost(let feed):
+                if let feed { LiveFrameView(feed: feed, dimmed: true) }
                 if !isTile {
                     VStack {
                         Spacer()
@@ -348,5 +356,22 @@ struct LivePane: View {
             }
         }
         .padding(HOSpace.m)
+    }
+}
+
+/// The hub's live picture. The only view that reads the frame itself, so each new frame (up to 15 a second) redraws
+/// this image and nothing around it.
+struct LiveFrameView: View {
+    var feed: LiveFeed
+    /// The last frame at 40%, after the camera dropped.
+    var dimmed = false
+
+    var body: some View {
+        if let image = dimmed ? feed.last : feed.frame?.image {
+            Image(decorative: image, scale: 1)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .opacity(dimmed ? 0.4 : 1)
+        }
     }
 }

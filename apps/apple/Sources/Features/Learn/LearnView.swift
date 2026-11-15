@@ -32,7 +32,6 @@ struct LearnView: View {
     #if os(iOS)
     @Environment(\.verticalSizeClass) private var verticalSizeClass
     #endif
-    @State private var layout: LearnLayout = .pip
 
     @State private var clips: ClipController
     @State private var recorder = RunRecorder()
@@ -42,7 +41,6 @@ struct LearnView: View {
     @State private var flashID = 0
     @State private var holdChecking = false
     @State private var checkingSince: Date?
-    @State private var lastFrame: CGImage?
     @State private var showSteps = false
     @State private var sidebarOpen: Bool?
     @State private var toast: ToastItem?
@@ -98,8 +96,9 @@ struct LearnView: View {
     private var liveSource: LiveSource {
         if !model.connection.isConnected && !model.isPreview { return .reconnecting }
         if usesOwnCamera, let ownCameraPreview { return .own(ownCameraPreview) }
-        if let frame = model.frame { return .hub(frame.image) }
-        if lastFrame != nil, !state.cameraConnected { return .lost(lastFrame) }
+        // Only flags are read here, never the frame itself, so a new frame does not redraw this screen.
+        if model.live.hasFrame { return .hub(model.live) }
+        if model.live.hasLast, !state.cameraConnected { return .lost(model.live) }
         return state.cameraConnected ? .lost(nil) : .waiting
     }
 
@@ -125,10 +124,12 @@ struct LearnView: View {
         GeometryReader { geo in
             let layout = layoutOverride ?? LearnLayout.pick(size: geo.size, compactHeight: isCompactHeight)
             ZStack {
+                // Rotating swaps these instantly (no cross fade of two full layouts while the screen turns). The
+                // camera preview and the clip's player layer are reused by the new layout (see SurfaceHost).
                 switch layout {
-                case .pip: pipLayout(screen: geo.size)
-                case .sideBySide(phone: true): phoneLandscapeLayout(size: geo.size)
-                case .sideBySide(phone: false): sideBySideLayout(size: geo.size)
+                case .pip: pipLayout(screen: geo.size).transition(.identity)
+                case .sideBySide(phone: true): phoneLandscapeLayout(size: geo.size).transition(.identity)
+                case .sideBySide(phone: false): sideBySideLayout(size: geo.size).transition(.identity)
                 }
                 if let doneSummary {
                     DoneView(summary: doneSummary, lessonId: state.lessonId, runId: nil,
@@ -139,7 +140,6 @@ struct LearnView: View {
                 }
             }
             .animation(HOMotion.resolve(HOMotion.panel, reduceMotion: reduceMotion), value: doneSummary != nil)
-            .onChange(of: layout, initial: true) { _, new in self.layout = new }
         }
         .hoPaperBackground()
         .hoToast($toast)
@@ -162,8 +162,7 @@ struct LearnView: View {
         .onChange(of: model.mistake) { _, new in mistakeChanged(new) }
         .onChange(of: guide.isSpeaking) { _, speaking in clips.isDucked = speaking }
         .onChange(of: model.connection) { _, new in recorder.connection(new.isConnected, at: Date()) }
-        .onChange(of: model.frame?.receivedAt) { _, _ in if let f = model.frame { lastFrame = f.image } }
-        .onChange(of: state.lessonId) { _, _ in lastFrame = nil }
+        .onChange(of: state.lessonId) { _, _ in model.live.reset() }
         .onChange(of: model.session.lastError) { _, new in
             if let new {
                 toast = ToastItem(text: new, symbol: "exclamationmark.triangle", tone: .caution)
@@ -207,7 +206,7 @@ struct LearnView: View {
         let clipIsTile = liveLarge
         VStack(spacing: 0) {
             progressBar(tappable: false).padding(.horizontal, HOSpace.l).padding(.top, HOSpace.xs)
-            topBar(onVideo: false).padding(.horizontal, HOSpace.l)
+            topBar(onVideo: false, stepsInSidebar: false).padding(.horizontal, HOSpace.l)
             banner.padding(.horizontal, HOSpace.l)
             GeometryReader { pane in
                 let size = pane.size
@@ -255,8 +254,8 @@ struct LearnView: View {
         let aspect: CGFloat
         if clipIsTile {
             aspect = 16 / 9
-        } else if let f = model.frame?.size, f.height > 0 {
-            aspect = f.width / f.height
+        } else if let shape = model.live.aspect, shape > 0 {
+            aspect = shape
         } else {
             aspect = 3 / 4
         }
@@ -350,7 +349,7 @@ struct LearnView: View {
 
     /// The small pane in the column: the live camera (or the clip after Swap). Tap to swap.
     private func landscapeTile(width: CGFloat, maxHeight: CGFloat, clipIsTile: Bool) -> some View {
-        let aspect = clipIsTile ? 16 / 9 : LearnLayout.liveAspect(frame: model.frame?.size, ownCamera: usesOwnCamera,
+        let aspect = clipIsTile ? 16 / 9 : LearnLayout.liveAspect(frameAspect: model.live.aspect, ownCamera: usesOwnCamera,
                                                                   landscape: true)
         return Group {
             if clipIsTile { clip(radius: HORadius.pip, tile: true) } else { live(radius: HORadius.pip) }
@@ -386,7 +385,7 @@ struct LearnView: View {
             }
             VStack(spacing: HOSpace.m) {
                 progressBar(tappable: true)
-                topBar(onVideo: false)
+                topBar(onVideo: false, stepsInSidebar: true)
                 banner
                 HStack(spacing: gap) {
                     if clipFirst {
@@ -431,7 +430,8 @@ struct LearnView: View {
                         onGoto: tappable && hasLesson && model.connection.isConnected ? { model.goto(step: $0) } : nil)
     }
 
-    private func topBar(onVideo: Bool) -> some View {
+    /// `stepsInSidebar` is the iPad and Mac layout, where Steps opens and closes the course sidebar.
+    private func topBar(onVideo: Bool, stepsInSidebar: Bool) -> some View {
         HStack(spacing: HOSpace.s) {
             if let onClose { closeButton(onClose, onVideo: onVideo) }
             Text(lesson?.title ?? "Learn")
@@ -443,7 +443,7 @@ struct LearnView: View {
             SpokenGuideIndicator(guide: guide)
             Button {
                 Haptics.tap()
-                if layout == .sideBySide(phone: false) {
+                if stepsInSidebar {
                     withAnimation(HOMotion.resolve(HOMotion.layout, reduceMotion: reduceMotion)) {
                         sidebarOpen = !(sidebarOpen ?? true)
                     }
@@ -705,7 +705,7 @@ struct LearnView: View {
                     .keyboardShortcut(.rightArrow, modifiers: [])
                     .disabled(!model.canGoNext || !hasLesson)
                     .accessibilityHint(model.connection.isConnected ? "" : "Waiting for the hub")
-                if showsKeyboardHint {
+                if minNext != nil, showsKeyboardHint {
                     Text("or press Right Arrow")
                         .font(theme.fonts.caption)
                         .foregroundStyle(theme.colors.ink2)
@@ -715,8 +715,8 @@ struct LearnView: View {
         }
     }
 
+    /// Under Next on the iPad and Mac layout (the only one with a fixed width Next) when a keyboard is attached.
     private var showsKeyboardHint: Bool {
-        guard layout == .sideBySide(phone: false) else { return false }
         #if os(macOS)
         return true
         #else
@@ -957,7 +957,13 @@ enum LearnLayout: Equatable {
     /// The live tile's shape: the picture's own shape when frames arrive, else this device's camera held the
     /// same way as the screen (16:9 on its side, 9:16 upright), else 4:3.
     static func liveAspect(frame: CGSize?, ownCamera: Bool, landscape: Bool) -> CGFloat {
-        if !ownCamera, let frame, frame.width > 0, frame.height > 0 { return frame.width / frame.height }
+        let shape = frame.flatMap { $0.width > 0 && $0.height > 0 ? $0.width / $0.height : nil }
+        return liveAspect(frameAspect: shape, ownCamera: ownCamera, landscape: landscape)
+    }
+
+    /// The same, from the frame's width over height (`LiveFeed.aspect`).
+    static func liveAspect(frameAspect: CGFloat?, ownCamera: Bool, landscape: Bool) -> CGFloat {
+        if !ownCamera, let frameAspect, frameAspect.isFinite, frameAspect > 0 { return frameAspect }
         if ownCamera { return landscape ? 16 / 9 : 9 / 16 }
         return 4 / 3
     }
