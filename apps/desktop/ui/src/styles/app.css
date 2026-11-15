@@ -1072,7 +1072,7 @@ button.row:hover {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  margin-top: auto;
+  margin-top: 0;
 }
 
 .detail-start .before {

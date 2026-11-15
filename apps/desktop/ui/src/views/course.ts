@@ -75,7 +75,7 @@ export function renderCourse(el: HTMLElement, id: string) {
     return;
   }
   if (detail.error) {
-    paint(el, html`<div class="page">${empty(icons.filmBig, "Could not open this lesson", detail.error, html`<button class="secondary" data-go='{"name":"browse"}'>Back to Lessons</button>`)}</div>`);
+    paint(el, html`<div class="page">${empty(icons.filmBig, "This lesson cannot be opened", detail.error, html`<button class="secondary" data-go='{"name":"browse"}'>Back to Lessons</button>`)}</div>`);
     return;
   }
   if (!detail.d) {
