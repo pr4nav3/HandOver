@@ -81,8 +81,8 @@ if (RTT_MS) {
 await page.addInitScript(probe)
 await hook('/mock/camera?on=1')
 await page.goto(`${APP}/#/learn`)
-await page.waitForSelector(`.start-card select option[value="${LESSON}"]`, { state: 'attached' })
-await page.selectOption('.start-card select', LESSON)
+await page.waitForSelector(`.lesson-option[data-id="${LESSON}"]`)
+await page.click(`.lesson-option[data-id="${LESSON}"]`)
 await page.click('text=Start lesson')
 await wait(1500)
 

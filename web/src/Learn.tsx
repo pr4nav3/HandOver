@@ -5,6 +5,8 @@ import type { AdvanceMsg, CheckOfflineReason, Lesson, LessonSummary, Mistake, Mi
 import { playChime, unlockAudio } from './chime'
 import { TopBar } from './TopBar'
 import { useClipPair } from './useClipPair'
+import { ConnectCamera } from './ConnectCamera'
+import { useLiveCanvas } from './useLiveCanvas'
 import { useFitBox } from './useFitBox'
 import { useUiSocket } from './useUiSocket'
 import { useVoice, voiceSupported } from './useVoice'
@@ -68,13 +70,17 @@ export function Learn() {
   const [flashVerified, setFlashVerified] = useState(false)
   // Voice is off until the learner turns it on (quiet rooms only, see docs/SCOPE.md).
   const [voiceOn, setVoiceOn] = useState(false)
+  // True while the "End this lesson?" card is open.
+  const [confirmEnd, setConfirmEnd] = useState(false)
   // True between re-sending select_lesson after a reconnect and the server's answer.
   const [resuming, setResuming] = useState(false)
   const resumingRef = useRef(false)
   resumingRef.current = resuming
 
-  const liveRef = useRef<HTMLImageElement>(null)
-  const frameUrl = useRef<string | null>(null)
+  const liveRef = useRef<HTMLCanvasElement>(null)
+  const hasFrameRef = useRef(false)
+  const staleRef = useRef(false)
+  staleRef.current = stale
   // The live panel hugs the camera's real shape (glasses and replays are landscape,
   // a phone held upright is portrait). Null until the first frame decodes.
   const liveCellRef = useRef<HTMLElement>(null)
@@ -91,25 +97,26 @@ export function Learn() {
   const [serverError, setServerError] = useState('')
   const errorTimer = useRef<number | undefined>(undefined)
 
-  // Live frames go straight to the <img> so React does not re-render per frame.
-  const onFrame = useCallback((jpeg: Blob) => {
-    const url = URL.createObjectURL(jpeg)
-    const img = liveRef.current
-    if (img) img.src = url
-    if (frameUrl.current) URL.revokeObjectURL(frameUrl.current)
-    frameUrl.current = url
-    setHasFrame(true)
-    setStale(false)
-  }, [])
-
-  // Runs per frame but sets state only when the shape changes, so frames of the
-  // same size never re-render or move the layout.
-  const onLiveLoad = useCallback(() => {
-    const img = liveRef.current
-    if (!img?.naturalWidth || !img.naturalHeight) return
-    const next = img.naturalWidth / img.naturalHeight
+  // Sets state only when the shape changes, so frames of the same size never
+  // re-render or move the layout.
+  const onLiveSize = useCallback((w: number, h: number) => {
+    const next = w / h
     setLiveAspect((prev) => (prev !== null && Math.abs(prev - next) < 0.01 ? prev : next))
   }, [])
+  const drawFrame = useLiveCanvas(liveRef, onLiveSize)
+
+  // Live frames go straight to the canvas so React does not re-render per frame.
+  const onFrame = useCallback(
+    (jpeg: Blob) => {
+      drawFrame(jpeg)
+      if (!hasFrameRef.current) {
+        hasFrameRef.current = true
+        setHasFrame(true)
+      }
+      if (staleRef.current) setStale(false)
+    },
+    [drawFrame],
+  )
 
   // For the done screen: when this run began, and how each step was finished.
   const runStart = useRef(0)
@@ -259,7 +266,6 @@ export function Learn() {
     () => () => {
       window.clearTimeout(flashTimer.current)
       window.clearTimeout(errorTimer.current)
-      if (frameUrl.current) URL.revokeObjectURL(frameUrl.current)
     },
     [],
   )
@@ -298,7 +304,10 @@ export function Learn() {
   }, [lessonId, rev])
 
   useEffect(() => {
-    if (state && !state.camera_connected) setStale(true)
+    if (state && !state.camera_connected) {
+      staleRef.current = true
+      setStale(true)
+    }
   }, [state?.camera_connected])
 
   const steps = lesson?.steps ?? []
@@ -369,7 +378,7 @@ export function Learn() {
 
   // Keyboard: Right or Space for next, Left for back.
   useEffect(() => {
-    if (!started) return
+    if (!started || confirmEnd) return
     const onKey = (e: KeyboardEvent) => {
       const t = e.target instanceof Element ? e.target : null
       if (t?.closest('input, select, textarea, [contenteditable="true"]')) return
@@ -385,7 +394,7 @@ export function Learn() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [started, next, back])
+  }, [started, confirmEnd, next, back])
 
   const start = () => {
     unlockAudio()
@@ -406,6 +415,24 @@ export function Learn() {
     resetRun()
     send({ type: 'select_lesson', id })
   }
+
+  // End: back to the lesson list. Asks first unless the lesson is finished.
+  const endLesson = () => {
+    setConfirmEnd(false)
+    resumeId.current = null
+    clips.active()?.pause()
+    if ('speechSynthesis' in window) window.speechSynthesis.cancel()
+    setVoiceOn(false)
+    setMistake(null)
+    setStarted(false)
+  }
+  const askEnd = () => (isDone ? endLesson() : setConfirmEnd(true))
+  useEffect(() => {
+    if (!confirmEnd) return
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setConfirmEnd(false)
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [confirmEnd])
 
   // A mistake belongs to one step; it never outlives that step or the lesson.
   const activeMistake = mistake && !isDone && mistake.step === state?.step ? mistake : null
@@ -469,6 +496,15 @@ export function Learn() {
     if (lc.reason && lc.done === 'no' && lc.confidence >= REASON_MIN_CONF) metaBottom = lc.reason
   }
 
+  // What to do now, one line under the step title. Always a line, so the layout never moves.
+  let doNow = '\u00a0'
+  if (step && !isDone) {
+    const autoChecks = cameraStep && badge !== 'manual' && !!state?.camera_connected && !offline
+    if (!autoChecks) doNow = 'Do this step, then press Next.'
+    else if (mockChecks) doNow = 'Do this step. Mock checks move on after a short wait.'
+    else doNow = 'Do this step. HandOver moves on when it sees it done.'
+  }
+
   // A frozen frame while the socket is down would mislead, so show the placeholder.
   // A camera that drops after sending frames leaves its last frame, dimmed.
   const showLive = !down && hasFrame && (!!state?.camera_connected || stale)
@@ -498,6 +534,11 @@ export function Learn() {
           </span>
         )}
         {down && <span className="note">Reconnecting</span>}
+        {started && !showPicker && (
+          <button type="button" className="ghost end-button" onClick={askEnd}>
+            End lesson
+          </button>
+        )}
         {voiceAvailable && (
           <button
             type="button"
@@ -513,9 +554,10 @@ export function Learn() {
       </TopBar>
 
       <main className="learn-grid" ref={gridRef} style={sideWidth ? { gridTemplateColumns: `minmax(0, 1fr) ${sideWidth}px` } : undefined}>
-        <section className="live-cell" ref={liveCellRef} aria-label="Live camera">
-          <div className="panel live" style={liveAspect && liveBox ? { width: liveBox.w, height: liveBox.h } : undefined}>
-            <img ref={liveRef} alt="Live camera" onLoad={onLiveLoad} className={showLive ? (cameraLost ? 'lost' : '') : 'hidden'} />
+        <section className="live-cell" ref={liveCellRef} aria-label="You, live camera">
+          <div className="panel live" style={showLive && liveAspect && liveBox ? { width: liveBox.w, height: liveBox.h } : undefined}>
+            <canvas ref={liveRef} role="img" aria-label="Live camera" className={showLive ? (cameraLost ? 'lost' : '') : 'hidden'} />
+            {showLive && <span className="pane-label">You</span>}
             {cameraLost && (
               <p className="live-note" role="status">
                 Camera lost. Keep going with Next.
@@ -530,15 +572,22 @@ export function Learn() {
                 Recording
               </span>
             )}
-            {!showLive && (
-              <div className="placeholder">
-                <CameraIcon />
-                <p className="placeholder-title">Waiting for camera</p>
-                <p className="placeholder-hint">
-                  Open <code>/capture</code> on the phone
-                </p>
-              </div>
-            )}
+            {!showLive &&
+              (down ? (
+                <div className="placeholder">
+                  <CameraIcon />
+                  <p className="placeholder-title">Reconnecting to HandOver</p>
+                  <p className="placeholder-hint">Your camera shows here again once it is back.</p>
+                </div>
+              ) : state?.camera_connected ? (
+                <div className="placeholder">
+                  <CameraIcon />
+                  <p className="placeholder-title">Camera connected</p>
+                  <p className="placeholder-hint">Waiting for its first picture.</p>
+                </div>
+              ) : (
+                <ConnectCamera />
+              ))}
           </div>
         </section>
 
@@ -573,6 +622,7 @@ export function Learn() {
                   </div>
                 </div>
               )}
+              {step && !isDone && <span className="pane-label">Expert</span>}
               <div className={`clip-media ${step && !isDone ? '' : 'hidden'}`}>
                 <video ref={clips.refA} data-slot="a" loop playsInline preload="auto" onLoadedMetadata={onClipMetadata} />
                 <video ref={clips.refB} data-slot="b" loop playsInline preload="auto" muted className="standby" onLoadedMetadata={onClipMetadata} />
@@ -661,6 +711,7 @@ export function Learn() {
               <p className="step-count">{step ? (isDone ? `All ${total} steps done` : `Step ${idx + 1} of ${total}`) : ' '}</p>
               {/* The lesson title is already in the top bar, so the done screen does not repeat it. */}
               <h1 className="step-title">{step ? (isDone ? 'Lesson complete' : step.title) : ' '}</h1>
+              {!isDone && <p className="step-do">{doNow}</p>}
             </div>
           </div>
 
@@ -706,31 +757,64 @@ export function Learn() {
         <div className="overlay">
           <div className="start-card">
             <p className="start-eyebrow">HandOver</p>
-            <h2>{started ? 'Pick a lesson' : 'Ready when you are'}</h2>
-            <label className="field">
-              <span>Lesson</span>
-              <select value={picked} onChange={(e) => setPicked(e.target.value)} disabled={!lessons?.length}>
-                {lessons === null && <option value="">Loading</option>}
-                {lessons?.length === 0 && <option value="">No lessons yet</option>}
-                {lessons?.map((l) => (
-                  <option key={l.id} value={l.id}>
-                    {l.title} ({l.steps} steps)
-                  </option>
+            <h2>Pick a lesson</h2>
+            <p className="start-how">The expert shows each step. You do it in front of a camera, and HandOver moves on when it sees it done.</p>
+            {lessons && lessons.length > 0 ? (
+              <ul className="lesson-picker" role="radiogroup" aria-label="Lessons">
+                {lessons.map((l) => (
+                  <li key={l.id}>
+                    <button
+                      type="button"
+                      role="radio"
+                      aria-checked={picked === l.id}
+                      data-id={l.id}
+                      className={`lesson-option ${picked === l.id ? 'on' : ''}`}
+                      onClick={() => setPicked(l.id)}
+                      onDoubleClick={() => {
+                        setPicked(l.id)
+                        if (picked === l.id) start()
+                      }}
+                    >
+                      <span className="lesson-option-title">{l.title}</span>
+                      <span className="lesson-option-meta">
+                        {l.steps} {l.steps === 1 ? 'step' : 'steps'}
+                      </span>
+                    </button>
+                  </li>
                 ))}
-              </select>
-            </label>
+              </ul>
+            ) : (
+              <p className="lesson-picker-empty">
+                {lessons === null ? (
+                  'Loading lessons'
+                ) : (
+                  <>
+                    No lessons yet. Make one in <a href="#/teach">Teach</a>.
+                  </>
+                )}
+              </p>
+            )}
             <button className="primary" onClick={start} disabled={!picked}>
               Start lesson
             </button>
-            <p className="start-hint">
-              {lessons?.length === 0 ? (
-                <>
-                  Create one in <a href="#/teach">Teach</a>.
-                </>
-              ) : (
-                'Turns on sound. Voice commands are off until you click the mic.'
-              )}
-            </p>
+            {!!lessons?.length && <p className="start-hint">Turns on sound. Voice commands stay off until you click the mic.</p>}
+          </div>
+        </div>
+      )}
+
+      {confirmEnd && !showPicker && (
+        <div className="overlay" onClick={(e) => e.target === e.currentTarget && setConfirmEnd(false)}>
+          <div className="start-card confirm-card" role="alertdialog" aria-modal="true" aria-labelledby="end-title">
+            <h2 id="end-title">End this lesson?</h2>
+            <p className="start-how">You go back to the lesson list.</p>
+            <div className="confirm-actions">
+              <button type="button" className="secondary" onClick={() => setConfirmEnd(false)} autoFocus>
+                Keep going
+              </button>
+              <button type="button" className="primary danger" onClick={endLesson}>
+                End lesson
+              </button>
+            </div>
           </div>
         </div>
       )}

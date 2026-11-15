@@ -8,6 +8,7 @@
 //   PORT        default 8000
 //   MOCK_AUTO   1 (default) auto-advances steps; 0 waits for next/back or /mock calls
 //   MOCK_CAMERA 1 (default) sends fake frames; 0 starts with no camera
+//   MOCK_FRAME_MS gap between fake frames (default 400; 67 is about 15 fps)
 //   MOCK_SOURCE camera source in state.camera: phone (default), glasses, browser, file (shows "Recording")
 //   MOCK_OFFLINE no_key | rate_limited | errors | budget: start with checks off
 //   MOCK_CHECK_MODE mock | claude | gemini: sent as state.check_mode (unset = omitted, like an older hub)
@@ -268,7 +269,7 @@ setInterval(() => {
   if (!existsSync(file)) return
   const jpeg = readFileSync(file)
   for (const ws of clients) ws.send(jpeg, { binary: true })
-}, 400)
+}, Number(process.env.MOCK_FRAME_MS) || 400)
 
 const server = createServer((req, res) => {
   const url = new URL(req.url, 'http://x')

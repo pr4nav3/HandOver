@@ -9,6 +9,7 @@
 
 import { chromium } from 'playwright'
 import { mkdirSync } from 'node:fs'
+import { networkInterfaces } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -53,8 +54,8 @@ async function learnRun(width, height, suffix) {
   })
   await hook('/mock/camera?on=1')
   await page.goto(`${APP}/#/learn`)
-  await page.waitForSelector(`.start-card select option[value="${LESSON}"]`, { state: 'attached' })
-  await page.selectOption('.start-card select', LESSON)
+  await page.waitForSelector(`.lesson-option[data-id="${LESSON}"]`)
+  await page.click(`.lesson-option[data-id="${LESSON}"]`)
   await wait(500)
   if (!suffix) await shoot(page, '01-start-overlay')
 
@@ -262,8 +263,53 @@ async function learnRun(width, height, suffix) {
     await wait(400)
     check((await stepCount(page)) === 'Step 3 of 5' && !(await page.locator('.overlay').count()), `lesson resumes at the same step after a server restart, no picker (${await stepCount(page)})`)
     await shoot(page, '14-resumed-after-restart')
+
+    // End asks first; Escape keeps going, End lesson goes back to the lesson list.
+    await page.click('.end-button')
+    await page.waitForSelector('.confirm-card', { timeout: 2000 }).catch(() => {})
+    await shoot(page, '17-end-confirm')
+    await page.keyboard.press('Escape')
+    await wait(200)
+    check(!(await page.locator('.confirm-card').count()) && (await stepCount(page)) === 'Step 3 of 5', 'Escape closes the End card and keeps the lesson')
+    await page.click('.end-button')
+    await page.click('.confirm-card button:has-text("End lesson")')
+    await wait(300)
+    check(await page.locator('.start-card .lesson-option').first().isVisible(), 'End lesson goes back to the lesson list')
+    check(!(await page.locator('.end-button').count()), 'no End button on the lesson list')
   }
   await page.close()
+}
+
+// The page a phone would see: the first LAN address of this machine (Vite listens on all of them).
+function lanApp() {
+  if (process.env.LAN_APP) return process.env.LAN_APP
+  const ip = Object.values(networkInterfaces())
+    .flat()
+    .find((a) => a && a.family === 'IPv4' && !a.internal && !a.address.startsWith('169.254.'))?.address
+  return ip ? APP.replace(/\/\/(localhost|127\.0\.0\.1)/, `//${ip}`) : null
+}
+
+// No camera yet: the live pane says how to connect one. On localhost it gives the
+// typed address hint; on a LAN address it shows the two QR codes.
+async function noCameraRun() {
+  await hook('/mock/camera?on=0')
+  for (const [app, name] of [[APP, '16-learn-connect-camera-localhost'], [lanApp(), '16b-learn-connect-camera-lan']]) {
+    if (!app) continue
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
+    page.on('pageerror', (e) => problems.push(`pageerror: ${e.message}`))
+    await page.goto(`${app}/#/learn`)
+    await page.click(`.lesson-option[data-id="${LESSON}"]`)
+    await page.click('text=Start lesson')
+    await page.waitForSelector('.connect', { timeout: 5000 }).catch(() => problems.push(`${name}: no connect panel`))
+    await wait(1200)
+    const local = name.includes('localhost')
+    check((await page.locator('.connect .qr').count()) === (local ? 0 : 2), `${name}: ${local ? 'no QR codes on localhost' : 'two QR codes on a LAN address'}`)
+    check((await page.locator('.connect a[href="/capture"]').count()) === 1, `${name}: button to /capture`)
+    check((await page.locator('.step-do').innerText()) === 'Do this step, then press Next.', `${name}: no camera means press Next`)
+    await shoot(page, name)
+    await page.close()
+  }
+  await hook('/mock/camera?on=1')
 }
 
 async function teachRun() {
@@ -322,6 +368,7 @@ async function uploadRun() {
 try {
   await learnRun(1440, 900, '')
   await learnRun(1920, 1080, '-1920')
+  await noCameraRun()
   await teachRun()
   await uploadRun()
 } finally {

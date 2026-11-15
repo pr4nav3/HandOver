@@ -23,13 +23,13 @@ const check = (ok, msg) => (ok ? console.log('ok  ', msg) : problems.push(msg))
 
 try {
   await page.goto(`${APP}/#/learn`)
-  await page.waitForSelector('.start-card select option[value="demo-v1"]', { state: 'attached' })
-  await page.selectOption('.start-card select', 'demo-v1')
+  await page.waitForSelector('.lesson-option[data-id="demo-v1"]')
+  await page.click('.lesson-option[data-id="demo-v1"]')
   await page.click('text=Start lesson')
 
   await page.waitForFunction(() => {
-    const img = document.querySelector('.live img')
-    return img && !img.classList.contains('hidden') && img.src.startsWith('blob:')
+    const canvas = document.querySelector('.live canvas')
+    return canvas && !canvas.classList.contains('hidden') && canvas.width > 0
   }, null, { timeout: 15000 }).then(() => check(true, 'live frames shown'), () => check(false, 'no live frames'))
 
   const verified = await page
