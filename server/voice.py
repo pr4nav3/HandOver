@@ -4,9 +4,10 @@ Three parts, each usable on its own:
 
 1. write_script(steps, transcript, frames_by_step): one Claude call per lesson (structured output) writes 1 to 3
    short spoken sentences per step that fit the clip (about 2.5 words per second). Guarded by server/spend.py.
-2. speak(text, out_wav): Kokoro, an open-source neural voice (Apache 2.0), run on this Mac's CPU through
-   kokoro-onnx. The model files download once into ~/.cache/handover/kokoro. Falls back to macOS `say`, and on
-   total failure returns 0 instead of raising, so a lesson build never crashes on speech.
+2. speak(text, out_wav): Kokoro, an open-source neural voice (Apache 2.0), run on the CPU through kokoro-onnx
+   (macOS and Windows; espeak-ng comes from the espeakng-loader wheel). The model files download once into
+   ~/.cache/handover/kokoro. Falls back to macOS `say` (Mac only), and on total failure returns 0 instead of
+   raising, so a lesson build never crashes on speech.
 3. apply_voiceover(lesson_dir, scripts, mode): mixes the voice into clips/NN.mp4 (the original audio ducked to
    about -18 dB in "duck", dropped in "replace"), writes captions/NN.vtt timed from each synthesized sentence,
    keeps clips/NN.orig.mp4 and captions/NN.orig.vtt so undo() can put everything back, and records a top-level
@@ -15,7 +16,9 @@ Three parts, each usable on its own:
 needs_voiceover(transcript, steps) says whether the narration is too thin; should_voiceover adds the
 HANDOVER_VOICEOVER setting (auto, always, off).
 
-    python -m server.voice lessons/<id> [--mode duck|replace] [--voice af_heart] [--dry-run] [--undo]
+    python -m server.voice lessons/<id> [--mode duck|replace|auto] [--voice af_heart] [--dry-run] [--undo]
+
+--mode auto replaces the take's audio when its narration is unusable (needs_voiceover), else ducks it.
 
 Settings: HANDOVER_VOICE_SCRIPT_MODEL (default claude-haiku-5-5), HANDOVER_VOICE (default af_heart),
 HANDOVER_VOICE_SPEED (default 1.0), HANDOVER_VOICEOVER (default auto). ANTHROPIC_API_KEY comes from the
@@ -165,6 +168,14 @@ def word_budget(seconds: float) -> int:
     return max(4, int((seconds - LEAD_S - TAIL_S) * WORDS_PER_SECOND))
 
 
+MAX_STEP_WORDS = 22  # a long clip is not a reason to talk more: the learner is watching hands, not listening
+
+
+def word_limit(seconds: float) -> int:
+    """word_budget, capped at MAX_STEP_WORDS: what the script writer is asked for and held to."""
+    return min(word_budget(seconds), MAX_STEP_WORDS)
+
+
 def step_seconds(step: Any) -> float:
     return max(0.0, parse_time(_get(step, "end")) - parse_time(_get(step, "start")))
 
@@ -223,14 +234,19 @@ class StepScript:
 SYSTEM = """You write the voiceover for short how-to video clips. A calm, friendly person will read each line
 aloud while the learner watches the clip and copies the expert's hands.
 
-For each step write 1 to 3 short spoken sentences:
-- Second person, warm and plain, like a patient friend standing next to the learner.
-- Name the action the learner can see in the frames, then the one thing to watch for (use the common mistake
-  when one is given, phrased as what to do).
-- Stay within the step's word limit; fewer words is better than rushing.
-- No filler and no openers like "In this step", "Now", "Here we", "Okay". No step numbers.
+For each step write 1 or 2 short spoken sentences, usually 8 to 18 words in all:
+- Calm, plain and concrete, second person, like a patient friend standing next to the learner.
+- First sentence: the physical action you can see in the frames, concretely (which edge or corner goes where,
+  what to press or flip), not a vague restatement of the title.
+- Optional second sentence: the one thing to watch for (use the common mistake when one is given, phrased as
+  what to do), or what the paper should look like when the step is done, stated plainly.
+- "Done when" lines are for you, not to be read out. Never ask the learner a question, never say "check that"
+  or "make sure you now have", never recite the finished state as a test.
+- Stay within the step's word limit; fewer words is better. Never pad a long clip with extra sentences.
+- No filler and no openers like "In this step", "Now", "Here we", "Okay", "Next". No step numbers.
 - No dashes of any kind, no lists, no emoji, no quotes. Plain sentences that sound natural spoken aloud.
 - If the expert's own words are given, keep their meaning and any specific detail, but make them clear.
+- When the title and the frames disagree, describe what the frames show.
 - Do not invent tools, amounts or facts you cannot see or read."""
 
 SCHEMA = {
@@ -315,7 +331,7 @@ def fallback_scripts(steps: Sequence[Any], clip_seconds: Optional[Sequence[float
         mistake = str(_get(st, "common_mistake", "") or "").strip()
         if mistake:
             sentences += split_sentences(mistake)
-        out.append(StepScript(n, title, seconds, _fit_words(sentences, word_budget(seconds))))
+        out.append(StepScript(n, title, seconds, _fit_words(sentences, word_limit(seconds))))
     return out
 
 
@@ -342,7 +358,7 @@ def _build_content(steps: Sequence[Any], transcript: Sequence[Any], frames_by_st
         n = int(_get(st, "n", i + 1) or i + 1)
         parts = [f"Step {n}: {_get(st, 'title', '')}",
                  f"Time in the video: {parse_time(_get(st, 'start')):.1f}s to {parse_time(_get(st, 'end')):.1f}s",
-                 f"Clip length: {seconds[i]:.1f} seconds, so at most {word_budget(seconds[i])} words"]
+                 f"Clip length: {seconds[i]:.1f} seconds, so at most {word_limit(seconds[i])} words"]
         question = str(_get(st, "check_question", "") or "").strip()
         if question and question != "manual" and _get(st, "check_type") != "manual":
             parts.append(f"Done when: {question}")
@@ -420,7 +436,7 @@ def write_script(steps: Sequence[Any], transcript: Sequence[Any] = (), frames_by
     for i, st in enumerate(steps):
         n = int(_get(st, "n", i + 1) or i + 1)
         sentences = [c for s in got.get(n, []) for c in split_sentences(str(s))]
-        sentences = _fit_words(sentences, word_budget(seconds[i])) if sentences else fallback[i].sentences
+        sentences = _fit_words(sentences, word_limit(seconds[i])) if sentences else fallback[i].sentences
         if n not in got:
             log.warning("voiceover: Claude skipped step %d; using its title", n)
         out.append(StepScript(n, str(_get(st, "title", "") or f"Step {n}"), seconds[i], sentences))
@@ -485,7 +501,9 @@ def _load_kokoro():
                 _kokoro = Kokoro(str(model), str(voices))
             except Exception as e:  # missing package, no network, bad file: fall back to `say`
                 _kokoro_failed = f"{type(e).__name__}: {e}"[:200]
-                log.warning("voiceover: Kokoro unavailable (%s); using macOS say", _kokoro_failed)
+                log.warning("voiceover: Kokoro unavailable (%s); %s", _kokoro_failed,
+                            "using macOS say" if sys.platform == "darwin" else
+                            "no other speech engine on this system, so no voice")
         return _kokoro
 
 
@@ -564,8 +582,8 @@ def ffmpeg_bin(name: str = "ffmpeg") -> str:
 
 
 def _speak_say(text: str, out_wav: Path, speed: float) -> tuple[float, str]:
-    if not shutil.which("say"):
-        raise RuntimeError("macOS say is not available")
+    if sys.platform != "darwin" or not shutil.which("say"):
+        raise RuntimeError("macOS say is not available on this system")
     voice = best_say_voice()
     with tempfile.TemporaryDirectory(prefix="handover-say-") as tmp:
         src, aiff = Path(tmp) / "text.txt", Path(tmp) / "out.aiff"
@@ -699,7 +717,7 @@ def write_vtt(path: Path, cues: Sequence[tuple[float, float, str]], clip_seconds
         nxt = cues[i + 1][0] if i + 1 < len(cues) else clip_seconds
         end = min(b + 0.3, nxt, clip_seconds)
         lines += [f"{fmt_vtt(a)} --> {fmt_vtt(end)}", text.replace("-->", "to"), ""]
-    Path(path).write_text("\n".join(lines) + "\n", encoding="utf-8")
+    Path(path).write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
 
 
 def mix(source: Path, voice_wav: Path, out: Path, mode: str, clip_seconds: float, has_audio: bool) -> None:
@@ -720,6 +738,24 @@ def mix(source: Path, voice_wav: Path, out: Path, mode: str, clip_seconds: float
         raise RuntimeError(f"ffmpeg mix failed: {p.stderr.strip()[-300:]}")
 
 
+REPLACE_TRIES = 6     # Windows: a clip the hub is streaming refuses a rename (WinError 32) for a moment
+REPLACE_WAIT_S = 0.5
+
+
+def _replace(src: Path, dst: Path) -> None:
+    """os.replace, retried while Windows reports the file in use."""
+    import time
+
+    for k in range(REPLACE_TRIES):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            if k == REPLACE_TRIES - 1:
+                raise
+            time.sleep(REPLACE_WAIT_S)
+
+
 def _load_lesson(lesson_dir: Path) -> dict:
     return json.loads((lesson_dir / "lesson.json").read_text(encoding="utf-8"))
 
@@ -727,8 +763,8 @@ def _load_lesson(lesson_dir: Path) -> dict:
 def _save_lesson(lesson_dir: Path, lesson: dict) -> None:
     path = lesson_dir / "lesson.json"
     tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(lesson, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    tmp.replace(path)
+    tmp.write_text(json.dumps(lesson, indent=2, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
+    _replace(tmp, path)
 
 
 def _paths(lesson_dir: Path, step: dict, n: int) -> tuple[Path, Path, Path, Path]:
@@ -776,8 +812,8 @@ def apply_voiceover(lesson_dir: Path, scripts: Sequence[StepScript], mode: str =
                 out = clip.with_name(clip.stem + ".voice.tmp.mp4")
                 mix(source, nar.wav, out, mode, seconds, has_audio)
                 if not orig.is_file():
-                    os.replace(clip, orig)
-                os.replace(out, clip)
+                    shutil.copy2(clip, orig)  # a copy, not a move: if the swap below fails, the clip still plays
+                _replace(out, clip)
                 if vtt.is_file() and not vtt_orig.is_file():
                     shutil.copy2(vtt, vtt_orig)
                 vtt.parent.mkdir(parents=True, exist_ok=True)
@@ -809,10 +845,10 @@ def undo(lesson_dir: Path) -> int:
     for i, step in enumerate(lesson.get("steps", [])):
         clip, orig, vtt, vtt_orig = _paths(lesson_dir, step, int(step.get("n", i + 1)))
         if orig.is_file():
-            os.replace(orig, clip)
+            _replace(orig, clip)
             restored += 1
         if vtt_orig.is_file():
-            os.replace(vtt_orig, vtt)
+            _replace(vtt_orig, vtt)
     if "voiceover" in lesson:
         del lesson["voiceover"]
         _save_lesson(lesson_dir, lesson)
@@ -862,12 +898,18 @@ def _lesson_frames(lesson_dir: Path, steps: list[dict], out: Path) -> tuple[list
 def main(argv: Optional[list[str]] = None) -> int:
     ap = argparse.ArgumentParser(prog="python -m server.voice", description="Automatic voiceover for a lesson.")
     ap.add_argument("lesson", type=Path, help="lesson folder, for example lessons/demo-v1")
-    ap.add_argument("--mode", choices=("duck", "replace"), default="duck",
-                    help="duck keeps the original audio quietly underneath; replace drops it")
+    ap.add_argument("--mode", choices=("duck", "replace", "auto"), default="duck",
+                    help="duck keeps the original audio quietly underneath; replace drops it; auto replaces when "
+                         "the take has no usable narration, else ducks")
     ap.add_argument("--voice", default=None, help=f"Kokoro voice (default HANDOVER_VOICE, now {default_voice()})")
     ap.add_argument("--dry-run", action="store_true", help="write and print the scripts without synthesizing")
     ap.add_argument("--undo", action="store_true", help="restore the original clips and captions")
     args = ap.parse_args(argv)
+    for stream in (sys.stdout, sys.stderr):  # a Windows console is cp1252: never crash on a curly quote
+        try:
+            stream.reconfigure(errors="replace")
+        except (AttributeError, ValueError):
+            pass
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(message)s")
     lesson_dir = args.lesson.resolve()
     if not (lesson_dir / "lesson.json").is_file():
@@ -879,7 +921,11 @@ def main(argv: Optional[list[str]] = None) -> int:
     lesson = _load_lesson(lesson_dir)
     steps = list(lesson.get("steps") or [])
     transcript = _lesson_transcript(lesson_dir)
-    if not needs_voiceover(transcript, steps):
+    thin = needs_voiceover(transcript, steps)
+    mode = args.mode if args.mode != "auto" else ("replace" if thin else "duck")
+    if args.mode == "auto":
+        print(f"mode auto: {mode} ({'no usable narration in the take' if thin else 'the take has narration'})")
+    elif not thin:
         print("note: the expert's narration looks usable; voicing anyway because you asked")
     with tempfile.TemporaryDirectory(prefix="handover-voice-frames-") as tmp:
         frames, seconds = _lesson_frames(lesson_dir, steps, Path(tmp))
@@ -894,7 +940,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     if args.dry_run:
         return 0
     print()
-    result = apply_voiceover(lesson_dir, scripts, args.mode, args.voice)
+    result = apply_voiceover(lesson_dir, scripts, mode, args.voice)
     print(f"voiced steps {result['voiced'] or 'none'}; kept {result['skipped'] or 'none'}")
     if result["voiceover"]:
         print("lesson.json voiceover:", json.dumps(result["voiceover"]))

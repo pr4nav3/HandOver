@@ -4,99 +4,99 @@
     {
       "start": "00:00",
       "end": "00:09.2",
-      "title": "Fold the strip in half again",
+      "title": "Fold the strip in half into a rectangle",
       "check_question": "manual",
       "prerequisites": [],
-      "ref_time": "00:09.2",
-      "common_mistake": "Keep the folded edges aligned."
+      "ref_time": "00:08.8",
+      "common_mistake": "Keep the edges aligned before creasing."
     },
     {
       "start": "00:09.2",
       "end": "00:24.9",
-      "title": "Fold the square diagonally into a triangle",
-      "check_question": "Is the paper a triangle with its open edges facing up and a folded tip?",
+      "title": "Fold the square in half into a rectangle",
+      "check_question": "manual",
       "prerequisites": [
         1
       ],
-      "ref_time": "00:24.9",
-      "common_mistake": "Match corners exactly to form the triangle."
+      "ref_time": "00:22.5",
+      "common_mistake": "Match the edges exactly before creasing."
     },
     {
       "start": "00:24.9",
       "end": "00:31.4",
-      "title": "Fold the triangle into a smaller triangle",
-      "check_question": "Is the paper a smaller triangle with its folded edge on one side?",
+      "title": "Fold the rectangle corner diagonally into a triangle",
+      "check_question": "Is the paper shaped as a triangle with three corners?",
       "prerequisites": [
         2
       ],
-      "ref_time": "00:31.4",
-      "common_mistake": "Press along the crease firmly."
+      "ref_time": "",
+      "common_mistake": "Align the corner with the opposite edge."
     },
     {
       "start": "00:31.4",
       "end": "00:43.2",
-      "title": "Fold the triangle corners into a flat shape",
-      "check_question": "Is the paper a flat triangle with a folded point along one side?",
+      "title": "Fold the top corner down across the triangle",
+      "check_question": "manual",
       "prerequisites": [
         3
       ],
-      "ref_time": "00:43.2",
-      "common_mistake": "Keep the folded layers aligned."
+      "ref_time": "",
+      "common_mistake": "Keep the flap edges lined up before folding."
     },
     {
       "start": "00:43.2",
       "end": "00:53.7",
       "title": "Fold the wide corners over the center",
-      "check_question": "Is the paper a triangle with two folded flaps meeting at the center?",
+      "check_question": "manual",
       "prerequisites": [
         4
       ],
-      "ref_time": "00:53.7",
-      "common_mistake": "Fold both sides symmetrically."
+      "ref_time": "",
+      "common_mistake": "Fold both corners equally toward the center line."
     },
     {
       "start": "00:53.7",
       "end": "01:06.8",
       "title": "Open the folded shape into a square",
-      "check_question": "Is the paper a square with diagonal creases and a folded center?",
+      "check_question": "Is the paper a square with four corners and creases meeting at the center?",
       "prerequisites": [
         5
       ],
-      "ref_time": "01:06.8",
-      "common_mistake": "Open the flaps gently to avoid tearing."
+      "ref_time": "01:06.6",
+      "common_mistake": "Unfold gently so creases stay sharp."
     },
     {
       "start": "01:06.8",
       "end": "01:27.8",
-      "title": "Fold the corners to the center to form a kite",
-      "check_question": "Is the paper a small diamond with four flaps folded inward at the center?",
+      "title": "Fold corners to the center into a rectangle",
+      "check_question": "manual",
       "prerequisites": [
         6
       ],
-      "ref_time": "01:27.8",
-      "common_mistake": "Fold each corner to the exact center point."
+      "ref_time": "01:25.8",
+      "common_mistake": "Meet the corners exactly at the center point."
     },
     {
       "start": "01:27.8",
       "end": "02:09.7",
-      "title": "Fold the flaps into a small square packet",
-      "check_question": "Is the paper a small square packet with a flat top and folded corners?",
+      "title": "Fold the flaps in to a small packet",
+      "check_question": "manual",
       "prerequisites": [
         7
       ],
-      "ref_time": "02:09.7",
-      "common_mistake": "Keep the folds crisp and aligned."
+      "ref_time": "02:09.5",
+      "common_mistake": "Tuck flaps inside evenly on both sides."
     },
     {
       "start": "02:09.7",
       "end": "02:35.9",
       "title": "Tuck the flaps to form a pocket",
-      "check_question": "Is the paper a three-dimensional folded piece with pointed corners?",
+      "check_question": "Is the paper a puffed pocket with its flaps tucked inside?",
       "prerequisites": [
         8
       ],
-      "ref_time": "02:35.9",
-      "common_mistake": "Tuck the flap fully into the pocket."
+      "ref_time": "02:35.7",
+      "common_mistake": "Tuck each flap fully inside before pressing."
     }
   ],
   "safety": [],
