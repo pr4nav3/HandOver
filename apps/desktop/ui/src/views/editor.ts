@@ -11,8 +11,6 @@ import { reloadCourse } from "./course";
 import { resetHome } from "./home";
 import { resetTeach } from "./teach";
 
-/** DESIGN 3.18 step hues. */
-
 const ed = {
   id: "",
   d: null as CourseDetail | null,
@@ -80,11 +78,11 @@ export function renderEditor(el: HTMLElement, id: string) {
     void load(id);
   }
   if (!app.library) {
-    paint(el, html`<div class="page">${empty(icons.filmBig, "Editing needs a newer hub", "This hub does not have the lesson editor yet. Update the hub, then try again.")}</div>`);
+    paint(el, html`<div class="page"><button class="secondary" data-act="ed-back">Back to Lessons</button>${empty(icons.filmBig, "Editing needs a newer hub", "Update the hub, then try again.")}</div>`);
     return;
   }
-  if (ed.error) return paint(el, html`<div class="page">${empty(icons.filmBig, "Could not open the editor", ed.error)}</div>`);
-  if (!ed.d) return paint(el, html`<div class="page">${loading("Loading the lesson")}</div>`);
+  if (ed.error) return paint(el, html`<div class="page"><button class="secondary" data-act="ed-back">Back to Lessons</button>${empty(icons.filmBig, "Could not open the editor", ed.error)}</div>`);
+  if (!ed.d) return paint(el, html`<div class="page"><button class="secondary" data-act="ed-back">Back to Lessons</button>${loading("Loading the lesson")}</div>`);
   const { course, lesson, permissions, history } = ed.d;
   const steps = lesson.steps;
   const s = steps[ed.sel];
@@ -97,7 +95,7 @@ export function renderEditor(el: HTMLElement, id: string) {
         <button class="icon-button" data-act="ed-back" title="Back" aria-label="Back">${icons.back}</button>
         <div class="editor-title"><strong>${course.title || id}</strong>
           <span class="badge-soft ${course.status}">${STATUS_WORD[course.status]}</span></div>
-        <span class="editor-status ${ed.saving === "Could not save" ? "bad" : ""}">${ed.saving === "Saved" ? "Saved on the hub" : ed.saving}</span>
+        <span class="editor-status ${ed.saving === "Could not save" ? "bad" : ""}">${ed.saving}</span>
         <button class="icon-button" data-act="ed-undo" title="Undo" aria-label="Undo" ${history?.undo && !ed.busy ? "" : "disabled"}>${icons.undo}</button>
         <button class="icon-button" data-act="ed-redo" title="Redo" aria-label="Redo" ${history?.redo && !ed.busy ? "" : "disabled"}>${icons.redo}</button>
         <button class="secondary" data-act="ed-details">Details</button>

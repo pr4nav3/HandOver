@@ -315,6 +315,7 @@ export interface Me {
   user: User | null;
   auth: "optional" | "required";
   setup_needed: boolean;
+  can_create_org?: boolean;
 }
 
 /** Aggregate-only stats for the signed-in person. Never contains raw frames, event text or identifiers. */

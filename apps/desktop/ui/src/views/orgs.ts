@@ -32,8 +32,9 @@ export function renderOrgs(el: HTMLElement) {
     paint(el, html`<div class="page">${pageHead("Organizations")}${empty(icons.peopleBig, "Sign in to see organizations", "Organizations group people and lessons, like a team or a class.", html`<button class="primary" data-act="sign-in">Sign In</button>`)}</div>`);
     return;
   }
+  const canCreate = app.me?.can_create_org ?? signedIn();
   const actions = html`<button class="secondary" data-act="join-code">${icons.key}Join with a Code</button>
-    <button class="primary" data-act="org-new">${icons.plus}New Organization</button>`;
+    ${canCreate ? html`<button class="primary" data-act="org-new">${icons.plus}New Organization</button>` : ""}`;
   const invites = app.invites.length
     ? html`<section class="block"><div class="block-head"><h2>Invitations</h2></div><div class="rows">
         ${app.invites.map(
@@ -58,7 +59,7 @@ export function renderOrgs(el: HTMLElement) {
     : app.invites.length
       ? ""
       : empty(icons.peopleBig, "No organizations yet", "Organizations group people and lessons, like a team or a class.", html`<div class="empty-actions">
-          <button class="primary" data-act="join-code">Join with a Code</button><button class="secondary" data-act="org-new">Create Organization</button></div>`);
+          <button class="primary" data-act="join-code">Join with a Code</button>${canCreate ? html`<button class="secondary" data-act="org-new">Create Organization</button>` : ""}</div>`);
   paint(el, html`<div class="page">${pageHead("Organizations", app.orgs.length ? actions : "")}${invites}${list}</div>`);
 }
 
@@ -118,8 +119,10 @@ export function renderOrg(el: HTMLElement, id: string) {
         <div class="page-actions">
           ${teaches ? html`<button class="primary" data-act="org-teach">${icons.teach}Teach</button>` : ""}
           ${admin ? html`<button class="secondary" data-act="org-invite">Invite</button>` : ""}
-          ${o.role && !lastAdmin ? html`<button class="quiet" data-act="org-leave">Leave</button>` : ""}
-          ${admin ? html`<button class="quiet danger-text" data-act="org-delete">Delete</button>` : ""}
+          ${admin || (o.role && !lastAdmin) ? html`<details class="org-more"><summary>More</summary><div class="org-more-menu">
+            ${o.role && !lastAdmin ? html`<button class="quiet" data-act="org-leave">Leave</button>` : ""}
+            ${admin ? html`<button class="quiet danger-text" data-act="org-delete">Delete</button>` : ""}
+          </div></details>` : ""}
         </div>
       </header>
       <div class="org-cols">

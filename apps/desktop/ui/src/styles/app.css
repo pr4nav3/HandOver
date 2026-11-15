@@ -1948,6 +1948,10 @@ button.option-card:hover {
   min-width: 0;
 }
 
+.org-more { position: relative; }
+.org-more summary { padding: 9px 12px; cursor: pointer; }
+.org-more-menu { position: absolute; right: 0; z-index: 5; min-width: 120px; display: grid; padding: 6px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); }
+
 .org-cols {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 340px;
