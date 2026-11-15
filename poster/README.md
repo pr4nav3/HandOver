@@ -1,6 +1,15 @@
 # HandOver poster
 
-24 x 36 in portrait, one page. Source is `poster.html` (Inter from Google Fonts, system fallback). Images live in `img/`.
+24 x 36 in portrait, one page. Source is `poster.html`, styled like the web app ("Field manual, cream": paper `#f1ece1`, navy ink `#15213b`, cobalt `#1F49D6`, Barlow Condensed and Public Sans, same tokens as `web/src/styles.css`).
+
+```
+poster.html   the poster (2304 x 3456 CSS px canvas, 96 px per inch; 28 pt = 37 px)
+poster.pdf    print file, 24 x 36 in, one page, fonts embedded, text and diagram are vector
+poster.png    1800 x 2700 preview
+render.sh     builds both
+fonts/        Barlow Condensed 500/600/700, Public Sans 400 to 700 (woff2, SIL OFL, from @fontsource)
+img/          learn-mistake.png (hero), ft-frame-01..09.jpg (fortune teller reference frames), qr-repo.svg
+```
 
 ## Re-render
 
@@ -8,32 +17,30 @@
 poster/render.sh
 ```
 
-This writes `poster.pdf` (24 x 36 in, one page) and `poster.png` (1800 x 2700 preview) with headless Google Chrome, and prints the PDF page count. It must say `pages: 1`. Set `CHROME=/path/to/chrome` to use another Chrome binary. Render while online so Inter loads. Offline, the page falls back to the system font and lines may wrap differently.
+Uses headless Google Chrome (`CHROME=/path/to/chrome` to override). It prints `pages: 1  size: 24.00 x 36.00 in` and fails if either is wrong. Fonts are local, so it works offline. After any text change, check `poster.png` for overflow: every section has a fixed slot, and the footer must not touch the diagram.
 
-The page is laid out in px on a 2304 x 3456 canvas (96 px per inch). Every size in `poster.html` uses that canvas.
+## Where the images come from
+
+- `img/learn-mistake.png`: the real web UI (commit 3442003 styling) with the real `lessons/fortune-teller-v1` lesson, shot at 1280 x 860 with device scale 2.5 against the web mock server (`web/mock/mock-server.mjs`, run from a copy outside the repo). The mock feeds the lesson's own reference frames as the camera, so the "You" pane shows the step 2 reference frame and the mistake card is a mock `behind` message using step 3's `common_mistake`. The top bar (which said "Mock iPhone") is cropped off. To retake: run the mock and Vite as described at the top of `web/e2e/screenshots.mjs`, open `#/learn/fortune-teller-v1`, go to step 3, send a `behind` mistake, screenshot, crop the top 142 px.
+- `img/ft-frame-NN.jpg`: `lessons/fortune-teller-v1/frames/NN.jpg`, top 608 x 608 crop (the paper), `ffmpeg -i frames/NN.jpg -vf crop=608:608:0:0 -q:v 2`.
+- `img/qr-repo.svg`: made locally with segno (`segno.make(url, error='m')`) for `https://github.com/pr4nav3/MetaGlasses-ExpertKnowlegeTransfer`. The same SVG is pasted inline in the footer. It decodes from the 1800 px preview.
+
+## Swap in later
+
+- **Bike lesson frames.** The front wheel lesson (`lessons/front-wheel-v1`) was not in the repo when this was made, so its card is text only (from docs/HANDOFF.md). Once it is cut, you can replace the card's `<p>` with 3 to 5 of its `frames/NN.jpg` (crop square, as above). Keep the card's height: 373 px for the whole row.
+- **Databricks dashboard screenshot.** There is no slot on purpose; the Data lane of the diagram describes the layer. If a clean dashboard or Genie screenshot exists and you want it, the least disruptive swap is the hero callouts row (`figcaption` under the hero, about 1160 x 150 px) or replacing the Genie box text. Anything taller pushes the footer off the page: re-render and check.
+- **Bike step list.** If the final take differs from "wheel off, rim checked, wheel back on, spin, front brake", edit `.bike p`.
 
 ## Print
 
-- Print `poster.pdf` at 100% on 24 x 36 in stock, with no scaling and no borders. Matte paper keeps the screenshots readable under hall lights.
-- For a letter or tabloid proof, print the PDF with "Fit to page". The text was sized so it is still readable at that scale.
-- Check one proof before the big print. The off-white background is `#fafaf9`. Some print shops add margins, so ask them for full bleed or accept a thin white edge.
+- Print `poster.pdf` at 100% on 24 x 36 in, no scaling. Matte stock keeps the screenshot readable under hall lights.
+- The background is a flat cream `#f1ece1`, printed edge to edge. Ask the shop for full bleed, or accept a thin white edge. Text keeps at least 0.5 in from every edge; the progress bar along the top edge is decoration and can be trimmed.
+- For a proof, print with "Fit to page" on letter or tabloid.
 
-## Fill in before printing
+## Content rules (team)
 
-1. **Devpost QR code.** Bottom right, the dashed box `.qr .box`. Replace its text with `<img src="img/qr.png" style="width:100%;height:100%">`. Generate the QR from the final Devpost URL, black on transparent, at least 600 px square.
-2. **Median check latency.** Footer, `Median check latency __ s`. Use the M1 measurement (`python -m server.check --time`) or the dashboard's `latency_ms` median. If there is no real number, delete the whole `Measured` row (`<dt>` and `<dd>`). Never guess.
-3. **Screenshots.** Everything in `img/` comes from `web/screenshots/` and shows the mock lesson (colored bars), not real footage. Once the fortune teller or bike lesson is cut, retake these at 1440 x 900 (hero at 1920 x 1080), keep the file names, and re-render:
-   - `img/learn.png`: Learn mid-lesson, 1920 x 1080 (hero). The three numbered pins are placed by percentage in the HTML. Recheck them: 1 = live camera, 2 = expert clip, 3 = just above the status badge.
-   - `img/record.png`: the "New lesson" card from the Teach start screen (cropped).
-   - `img/steps.png`: Teach screen with the timeline and step cards, full frame.
-   - `img/verified.png`: Learn with the green "Verified" badge, full frame.
-   - `img/done.png`: the "Lesson complete" card, tightly cropped. Pranav's branch has a newer done screen with a per-step table (Expert vs You). If it ships, screenshot that card, and change the caption under "A record of the run" to match what it shows.
-   - A Databricks dashboard screenshot could replace the hand-built "Ask Genie" card if the dashboard is ready and looks clean.
-
-## Content checks (team rules)
-
-- No "first", no "only", no training-time savings, no user counts.
-- Glasses: the poster only says the expert records on Meta glasses. It makes no live-streaming claim. Keep it that way unless the 8 PM glasses gate passed.
-- Comparisons name only Dozuki and Retrocausal.
-- "Skip a step and it says so" depends on the catch (M9 + W6) shipping. If it did not ship, change that cell's title and text, or replace the cell.
-- The privacy line says the hub never writes camera frames to disk. That matches the plan and M15. Make sure the privacy test lands before judging.
+- No "first", no "only", no savings figure, no user counts, no past-winner claims. Numbers on the poster all come from the repo: 9 steps and the 2:37 take (`lessons/fortune-teller-v1`), 0.92 (`HANDOVER_FAST_CONF`), 4 tables (`databricks/01_setup.sql`).
+- The live check is "Claude Haiku or Gemini" (`HANDOVER_CHECK_PROVIDER=auto`: Claude when an Anthropic key is present, else Gemini). It compares before, done reference and live frames. Lesson extraction is one Gemini call; narration is written by Claude and spoken by Kokoro.
+- Glasses appear only as the expert's recorder ("Meta glasses or any camera"). The learner camera is a phone (HandOver app or browser page). Do not add glasses as a live learner camera unless it was demoed.
+- No voice "next" claim. The only spoken cue claimed is the mistake line, which the web Learn screen speaks with the browser's speech synthesis.
+- Privacy text follows `docs/PRIVACY.md`.
