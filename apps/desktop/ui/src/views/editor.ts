@@ -12,7 +12,6 @@ import { resetHome } from "./home";
 import { resetTeach } from "./teach";
 
 /** DESIGN 3.18 step hues. */
-const HUES = ["#4F78A8", "#5E8B62", "#A87A3E", "#7E62A0", "#A85E57", "#3F8A86", "#8C7E2E", "#6268A8"];
 
 const ed = {
   id: "",
@@ -111,7 +110,7 @@ export function renderEditor(el: HTMLElement, id: string) {
           <div class="ed-step-list scroll">
             ${steps.map(
               (st, i) => html`<button class="ed-step ${i === ed.sel ? "on" : ""}" data-act="ed-select" data-step="${i}">
-                <span class="ed-hue" style="background:${HUES[i % HUES.length]}"></span>
+                <span class="ed-hue" style="background:${i === ed.sel ? "var(--accent)" : "var(--border-strong)"}"></span>
                 <img src="${lessonUrl(id, st.ref_frame, ed.stamp)}" alt="" loading="lazy" />
                 <span class="ed-step-text"><span class="ed-step-title">${i + 1}. ${st.title || "Untitled step"}</span>
                   <span class="ed-step-meta">${fmt(secs(st.start))} to ${fmt(secs(st.end))}${st.check_type === "manual" ? ", manual" : ""}</span></span>
@@ -131,7 +130,7 @@ export function renderEditor(el: HTMLElement, id: string) {
               const a = secs(st.start);
               const b = secs(st.end);
               return html`<button class="seg-t ${i === ed.sel ? "on" : ""}" data-act="ed-select" data-step="${i}"
-                style="left:${(a / end) * 100}%;width:${((b - a) / end) * 100}%;background:${HUES[i % HUES.length]}"
+                style="left:${(a / end) * 100}%;width:${((b - a) / end) * 100}%;background:${i === ed.sel ? "var(--accent)" : "var(--panel-2)"};border-right:1px solid var(--border-strong)"
                 title="Step ${i + 1}: ${st.title}"><span class="seg-pill">${i + 1}</span></button>`;
             })}
             ${canEdit
