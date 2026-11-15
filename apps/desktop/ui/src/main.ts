@@ -593,6 +593,9 @@ window.addEventListener("keydown", (e) => {
   } else if (e.key.toLowerCase() === "h") {
     e.preventDefault();
     learn.toggleHold();
+  } else if (e.key.toLowerCase() === "c") {
+    e.preventDefault();
+    learn.toggleCaptions();
   }
 });
 

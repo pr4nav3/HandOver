@@ -133,6 +133,7 @@ const TEMPLATE = html`<div class="learn">
           <div class="tutorial-transport">
             <button class="tutorial-play" type="button" title="Pause tutorial (K)">${icons.pause}<span>Pause</span></button>
             <button class="replay-clip" type="button" title="Replay tutorial (R)">${icons.refresh}<span class="sr-only">Replay tutorial</span></button>
+            <button class="tutorial-cc on" type="button" aria-pressed="true" title="Hide captions (C)">CC</button>
             <input class="tutorial-scrubber" type="range" min="0" max="1" step="0.01" value="0" aria-label="Tutorial position" />
             <span class="tutorial-time" aria-hidden="true">0:00 / 0:00</span>
           </div>
@@ -187,6 +188,7 @@ export class LearnView {
   private resultTimer = 0;
   private loadedClip = "";
   private userPaused = false;
+  private captionsOn = localStorage.getItem("handover.learnCaptions.v1") !== "off";
   private active = false;
   // This run (section 20.1).
   private runStart = 0;
@@ -227,6 +229,7 @@ export class LearnView {
     this.q("button.back").addEventListener("click", () => this.back());
     this.q(".replay-clip").addEventListener("click", () => this.replay());
     this.q(".tutorial-play").addEventListener("click", () => this.toggleTutorial());
+    this.q(".tutorial-cc").addEventListener("click", () => this.toggleCaptions());
     this.q<HTMLInputElement>(".tutorial-scrubber").addEventListener("input", (e) => {
       const at = Number((e.currentTarget as HTMLInputElement).value);
       if (Number.isFinite(at)) this.video.currentTime = at;
@@ -277,6 +280,7 @@ export class LearnView {
     new ResizeObserver(() => this.fit()).observe(this.q(".live-col"));
     new ResizeObserver(() => this.fit()).observe(this.q(".side"));
     this.applyLayout();
+    this.syncCaptionsControl();
     this.syncTutorialPlayback();
     this.syncTutorialTimeline();
   }
@@ -417,6 +421,21 @@ export class LearnView {
     this.syncTutorialPlayback();
   }
 
+  /** Shows or hides the tutorial's authored WebVTT captions and remembers the choice. */
+  toggleCaptions() {
+    this.captionsOn = !this.captionsOn;
+    localStorage.setItem("handover.learnCaptions.v1", this.captionsOn ? "on" : "off");
+    for (const track of Array.from(this.video.textTracks)) track.mode = this.captionsOn ? "showing" : "hidden";
+    this.syncCaptionsControl();
+  }
+
+  private syncCaptionsControl() {
+    const button = this.q<HTMLButtonElement>(".tutorial-cc");
+    button.classList.toggle("on", this.captionsOn);
+    button.setAttribute("aria-pressed", String(this.captionsOn));
+    button.title = `${this.captionsOn ? "Hide" : "Show"} captions (C)`;
+  }
+
   /** J/L: inspect the expert movement without changing the lesson step. */
   seekTutorial(delta: number) {
     const duration = this.video.duration;
@@ -524,21 +543,28 @@ export class LearnView {
     if (first) this.render();
   }
 
-  /** Fits the camera inside its own panel. Feedback and the goal keep stable space below it,
-   *  so resizing either column never creates a second, competing scroll region. */
+  /** Fits the camera at the top of its column. The old flex-fill panel centered a short
+   *  landscape feed inside all leftover height, creating a large blank block above it. */
   private fit() {
     const col = this.q<HTMLElement>(".live-col");
     const pane = this.q<HTMLElement>(".live");
     const box = this.q<HTMLElement>(".live-frame");
     const goal = this.q<HTMLElement>(".goal");
+    const feedback = this.q<HTMLElement>(".feedback-card");
+    const mistake = this.q<HTMLElement>(".mistake-card");
     const showGoal = !!this.model.lesson && col.clientHeight >= 610;
     goal.hidden = !showGoal;
-    pane.style.flex = "1 1 auto";
-    const W = pane.clientWidth;
-    const H = pane.clientHeight;
+
+    const supporting = [goal, feedback, mistake].filter((element) => !element.hidden);
+    const gap = Number.parseFloat(getComputedStyle(col).gap) || 0;
+    const reserved = supporting.reduce((height, element) => height + element.offsetHeight, 0) + gap * supporting.length;
+    const W = col.clientWidth;
+    const H = Math.max(120, col.clientHeight - reserved);
     if (!W || !H) return;
     const w = Math.min(W, H * this.liveAspect);
     const h = w / this.liveAspect;
+    pane.style.flex = `0 0 ${Math.floor(h)}px`;
+    pane.style.height = `${Math.floor(h)}px`;
     pane.classList.toggle("snug", this.hasFrame);
     box.style.width = `${Math.floor(w)}px`;
     box.style.height = `${Math.floor(h)}px`;
@@ -764,7 +790,7 @@ export class LearnView {
       track.default = true;
       track.src = lessonUrl(lesson.id, step.captions, s?.rev);
       v.appendChild(track);
-      track.track.mode = "showing";
+      track.track.mode = this.captionsOn ? "showing" : "hidden";
       replaceLessonPlayback(v, clipKey, window.speechSynthesis);
     }
     v.classList.toggle("hidden", !step);

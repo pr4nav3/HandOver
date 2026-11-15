@@ -33,10 +33,20 @@ test("Learn layout and tutorial controls expose keyboard and assistive semantics
   const main = await readFile(new URL("../src/main.ts", import.meta.url), "utf8");
   assert.match(learn, /role="separator"[^>]+aria-orientation="vertical"/);
   assert.match(learn, /class="tutorial-scrubber"[^>]+aria-label="Tutorial position"/);
+  assert.match(learn, /class="tutorial-cc on"[^>]+aria-pressed="true"/);
   assert.match(learn, /class="hold-step"[^>]+aria-pressed="false"/);
   assert.match(learn, /class="badge-wrap feedback-card[^>]+role="status"[^>]+aria-live="polite"/);
   assert.match(learn, /<details class="steps-disclosure">/);
   assert.match(learn, /class="progress" role="progressbar"/);
   assert.match(main, /key\.toLowerCase\(\) === "k"/);
   assert.match(main, /key\.toLowerCase\(\) === "h"/);
+  assert.match(main, /key\.toLowerCase\(\) === "c"/);
+});
+
+test("Learn camera media is top-stacked instead of centered in leftover column height", async () => {
+  const learn = await readFile(new URL("../src/views/learn.ts", import.meta.url), "utf8");
+  const css = await readFile(new URL("../src/styles/app.css", import.meta.url), "utf8");
+  assert.match(learn, /const supporting = \[goal, feedback, mistake\]/);
+  assert.match(learn, /pane\.style\.flex = `0 0 \$\{Math\.floor\(h\)\}px`/);
+  assert.match(css, /\.live\s*{[\s\S]*?align-self:\s*flex-start/);
 });
