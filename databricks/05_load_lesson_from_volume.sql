@@ -1,8 +1,10 @@
 -- HandOver / Databricks: FALLBACK loader for the lessons and steps tables.
 --
--- Normal path: the hub calls server.databricks.upload_lesson_files(), which uploads the lesson folder to
--- the Volume and MERGEs the lessons and steps rows. Use this file only if that has not happened for a
--- lesson (see NOTES_FOR_PRANAV.md: nothing calls upload_lesson_files yet). Without steps rows every
+-- Normal path: the hub uploads a lesson after each teach job or recut (server/main.py publish_lesson_files),
+-- scripts/databricks_setup.py uploads every real lesson in step 5, and
+-- python -m server.databricks --upload <lesson_id> does one lesson. All three call
+-- server.databricks.upload_lesson_files, which puts the folder in the Volume and MERGEs lessons and steps.
+-- Use this file only if those fail and the lesson.json is already in the Volume. Without steps rows every
 -- per-step chart is empty, because events join to steps on n = step + 1.
 --
 -- Steps
