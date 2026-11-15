@@ -111,7 +111,7 @@ export function signInSheet(after?: () => void) {
   let err = "";
   let busy = false;
   openSheet({
-    title: setup ? "Set up your hub" : "Sign In to Your Hub",
+    title: setup ? "Set Up Your Hub" : "Sign In to Your Hub",
     body: () => html`<form class="form">
       ${setup ? html`<p class="sheet-lede">You are the first person here, so you become the hub owner. Owners manage accounts and organizations.</p>` : ""}
       <label class="field"><span>Name</span><input name="name" autocomplete="username" placeholder="Sam Rivera" maxlength="40" /></label>

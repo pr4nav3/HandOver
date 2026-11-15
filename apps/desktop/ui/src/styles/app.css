@@ -2202,9 +2202,7 @@ button.option-card:hover {
 .sheet-backdrop {
   position: absolute;
   inset: 0;
-  background: color-mix(in srgb, var(--bg) 70%, transparent);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
+  background: color-mix(in srgb, var(--bg) 40%, transparent);
 }
 
 .sheet {
@@ -4868,14 +4866,19 @@ button.back:disabled {
 
 .camera-primary-options {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
 }
 
 .camera-primary-options .camera-option {
-  min-height: 132px;
-  align-items: flex-start;
+  min-height: 76px;
+  align-items: center;
+  border-radius: 0;
+  border: 0;
+  border-bottom: 1px solid var(--border);
 }
+
+.camera-primary-options .tile { background: transparent; color: var(--muted); }
 
 .camera-primary-options .camera-option .role-text {
   align-self: center;
@@ -5008,8 +5011,6 @@ button.back:disabled {
   display: grid;
   place-items: center;
   color: var(--green);
-  filter: drop-shadow(0 8px 18px color-mix(in srgb, var(--green) 24%, transparent));
-  animation: pair-check 480ms cubic-bezier(0.2, 1.4, 0.35, 1) both;
 }
 
 .pair-success-ring svg {

@@ -51,7 +51,7 @@ async function pollHandoff() {
       handoffTimer = 0;
       await refreshMe();
       if (open) drawSheet();
-      toast("Signed in from iPhone");
+      toast("Signed in from your phone");
       return;
     }
   } catch (error) {
@@ -103,7 +103,7 @@ function qrBlock(): Raw {
     return html`<div class="pair-success" role="status" aria-live="polite">
       <span class="pair-success-ring">${icons.check}</span>
       <p class="pair-success-title">Connected</p>
-      <p class="pair-success-line">${app.state?.camera?.name ?? (expectedCamera === "glasses" ? "Meta glasses" : "iPhone camera")}</p>
+      <p class="pair-success-line">${app.state?.camera?.name ?? (expectedCamera === "glasses" ? "Meta glasses" : "Phone camera")}</p>
     </div>`;
   if (pairingError || (!pairing && !loadingPairing && app.link.link === "idle"))
     return html`<div class="qr-empty"><p class="empty-title">Not connected to a hub</p>
@@ -127,17 +127,8 @@ function cameraStatus(): Raw {
   const s = app.state;
   if (app.link.link !== "connected") return html``;
   return s?.camera_connected
-    ? html`<p class="cam-status ok"><span class="dot ok"></span>${pairingConnected ? "Ready on this Mac" : "Another camera is connected"}${s.camera?.name ? html`: ${s.camera.name}` : ""}</p>`
-    : html`<p class="cam-status waiting"><span class="pair-radar"><span></span></span>Waiting for the scan</p>`;
-}
-
-function pairingContext(): Raw {
-  const hub = app.link.label || app.link.hub || "This Mac";
-  const account = app.me?.user?.name ? `Signed in as ${app.me.user.name}` : "Your iPhone sign-in syncs here";
-  return html`<div class="pair-context" role="status">
-    <span class="pair-context-check">${icons.checkFill}</span>
-    <span><strong>${app.link.link === "connected" ? `Ready on ${hub}` : `Connecting to ${hub}`}</strong><small>${account}</small></span>
-  </div>`;
+    ? html`<p class="cam-status ok"><span class="dot ok"></span>${pairingConnected ? "Camera connected" : "Another camera is connected"}${s.camera?.name ? html`: ${s.camera.name}` : ""}</p>`
+    : html`<p class="cam-status waiting">Waiting for the scan</p>`;
 }
 
 function onPairAction(act: string) {
@@ -154,7 +145,7 @@ export function pairSheet() {
   open = "pair";
   watchPairing("phone", () => {
     closeSheet();
-    toast("iPhone camera connected");
+    toast("Phone camera connected");
   });
   void loadPairing(false, "phone");
   openSheet({
@@ -163,8 +154,7 @@ export function pairSheet() {
     body: () => html`<div class="pair">
       ${qrBlock()}
       <div class="pair-text">
-        ${pairingContext()}
-        <p class="pair-instruction">Scan with the iPhone Camera</p>
+        <p class="pair-instruction">Scan with your phone</p>
         ${cameraStatus()}
         <p class="hint">HandOver opens and connects automatically.</p>
         <div class="form-actions"><button class="secondary" data-sheet="close">Cancel</button></div>
@@ -204,21 +194,19 @@ export function cameraSheet(opts: { then?: () => void; step?: CameraChoice } = {
     body: () => {
       if (step === "choose")
         return html`<div class="form">
-          ${pairingContext()}
           <p class="sheet-lede">Choose what should watch your work.</p>
           <div class="camera-primary-options" role="radiogroup" aria-label="Camera">
-            ${option("phone", icons.phone, "iPhone Camera", "Use your phone")}
-            ${option("glasses", icons.glasses, "Meta Glasses", "Use what you see")}
+            ${option("phone", icons.phone, "Phone Camera", "Stream from the HandOver app")}
+            ${option("glasses", icons.glasses, "Meta Glasses", "Stream from Ray-Ban Meta through your phone. Use the iPhone app.")}
           </div>
           <button class="quiet camera-computer" data-act="cam-pick" data-cam="computer">${icons.laptop}<span>Use this computer instead</span></button>
         </div>`;
       return html`<div class="pair">
         ${qrBlock()}
         <div class="pair-text">
-          ${pairingContext()}
-          <p class="pair-instruction">Scan with the iPhone Camera</p>
+          <p class="pair-instruction">Scan with your phone</p>
           ${cameraStatus()}
-          <p class="hint">${step === "glasses" ? "HandOver opens the Meta glasses setup on your iPhone." : "HandOver opens the iPhone camera automatically."}</p>
+          <p class="hint">${step === "glasses" ? "HandOver opens Meta glasses setup on your phone." : "HandOver opens your phone camera automatically."}</p>
           <div class="form-actions"><button class="secondary" data-act="cam-back">Back</button></div>
         </div>
       </div>`;
