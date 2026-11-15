@@ -1,217 +1,204 @@
 <!--
-BEFORE YOU SUBMIT (delete this whole comment before pasting into Devpost)
+BEFORE YOU PASTE (delete this comment; it is not for Devpost)
 
-Conditionals: each has an IF block and an ELSE block. Keep one, delete the other, delete the markers.
-  [ ] C1  Glasses gate (Sat 8 PM): frames from Ray-Ban Meta reached the hub through the iPhone app for 60 s
-          with no gap over 5 s and one camera advance. Appears in: What it does, How we built it, Challenges,
-          Accomplishments, Built with.
-  [ ] C2  iPhone app (W8a): built, signed and streaming the phone camera. Appears in: How we built it, Built with.
-  [ ] C3  The catch (M9 + W6): skipped flip named on screen and spoken. Appears in: What it does, Accomplishments.
-  [ ] C4  Done screen (S-D) merged and showing real per-step times. Appears in: What it does.
-  [ ] C5  Databricks: events landing in Unity Catalog, dashboard built, Genie answers the question.
-          Appears in: How we built it, Accomplishments, Built with.
-  [ ] C6  Motion gate (M5) merged. Appears in: How we built it, Challenges.
-  [ ] C7  Breaker (M6) merged with the "Checks off, use Next" badge. Appears in: How we built it, Challenges.
-  [ ] C8  Bike lesson really was cut from one take. Appears in: What it does. ("One take" is allowed ONLY if true.)
-  [ ] C9  Privacy test (M15) merged: a test asserts learn frames never touch disk. Appears in: How we built it.
-  [ ] C10 Clean reference frames (M8) merged: stillest hands-free frame near the end of each step.
-          Appears in: How we built it.
-  [ ] C11 Gemini gate result (6 PM): advance rule stayed at 2 confident yeses, or dropped to 1 yes plus Next.
-          Appears in: What it does, Challenges.
-
-Placeholders (search for "[[" ):
-  [ ] [[DEMO VIDEO URL]]           backup demo video (YouTube or Vimeo, public or unlisted)
-  [ ] [[MEDIAN LATENCY]]           median of the 20 timed checks from `python -m server.check --time`
-  [ ] [[NOVICE RESULTS]]           counts from the ten novice folds: camera-verified, manual, false passes, false alarms
-  [ ] [[CATCH RATE]]               planted flips caught out of 20 at the 8 AM rehearsal
-  [ ] [[REPO URL]]                 public GitHub link
-  [ ] Gallery photos: judge folding, glasses on Sikandar, bike lesson timeline, dashboard, Genie answer
-  [ ] Try-it links: Devpost has no hosted demo (the hub runs on one Mac on a hotspot). Leave "Try it out" as the
-      repo link only.
-
-Rule check before pasting: no "first", no "only", no training-time savings figure, no user count,
-competitors are Dozuki and Retrocausal and nobody else.
+1. Search this file for "[[" and fill or delete every placeholder. The full list is in "Submission checklist" at the bottom.
+2. Lines marked IF: keep only if the condition is true at submit time, then delete the IF marker.
+3. Rule check: no "first", no "only", no savings figure, no user count, no past winners, competitors are Dozuki and Retrocausal and nobody else. Every number below comes from the repo or is a placeholder.
+4. Model names: the live check runs on Claude Haiku when an Anthropic key is in .env (HANDOVER_CHECK_PROVIDER=auto), Gemini otherwise. Confirm which one the demo hub shows in state.check_mode before pasting. docs/pitch.md still says Gemini for checks; the two must match on judging day.
 -->
 
-# HandOver
+# Devpost fields (paste these first)
 
-**Tagline (under 200 characters):**
-An expert does a task once on Meta glasses. HandOver turns it into a lesson that plays their clip for each step and moves on when the learner's camera shows the step is done.
+**Project name:** HandOver
+
+**Tagline (165 characters):**
+An expert does a task once on Meta glasses. HandOver turns it into a lesson that plays their clip for each step and moves on when your camera shows the step is done.
+
+(If neither demo lesson was recorded on the glasses, use: "An expert does a task once on camera. HandOver turns it into a lesson that plays their clip for each step and moves on when your camera shows the step is done.")
+
+**Built with (Devpost tags):**
+python, fastapi, uvicorn, websockets, pydantic, pillow, numpy, ffmpeg, anthropic, claude-haiku, claude-sonnet, google-gemini, google-genai, faster-whisper, kokoro, onnxruntime, react, typescript, vite, playwright, webvtt, mkcert, databricks, unity-catalog, databricks-sql, ai-bi-dashboards, databricks-genie, databricks-volumes, swift, swiftui, kotlin, jetpack-compose, rust, tauri, meta-wearables-device-access-toolkit, meta-ray-ban-glasses
+
+**Try it out:**
+- https://github.com/pr4nav3/MetaGlasses-ExpertKnowlegeTransfer
+- Demo video: [[DEMO VIDEO URL]]
+
+**Tracks and prizes to select** (MadHacks has not published its prize list in the repo research; tick only the ones that appear on the Devpost submit form):
+
+| Track | Why we fit |
+|---|---|
+| Overall | A judge folds a fortune teller at the table and the expert's clips advance as the camera sees each fold done. |
+| Best AI project | Vision models do real work in both halves: cutting an expert take into steps with checks, and judging each learner step with yes, no or unsure plus a confidence. Unsure never advances. |
+| Databricks (sponsor) | Every learner run lands in Unity Catalog tables, lesson files go to a Volume, an AI/BI dashboard reads filtered views, and Genie answers "Which step do people get stuck on?" |
+| Best use of Gemini API (if offered) | Gemini cuts expert takes into steps and hears the narration in one call, and is the second check provider. [[confirm which provider cut the demo lessons]] |
+| Hardware / Qualcomm (if offered) | Meta glasses record the expert's point of view; iPhone and Android apps carry the Meta Wearables toolkit. Claim glasses streaming just if it was demoed. |
+| Productivity or workforce (if offered) | Built for onboarding on physical tasks: the expert's time is asked for once. |
+| Accessibility (if offered) | Captions on every clip, spoken narration, mistakes spoken aloud, an always-on Next. Not tested with disabled users, and we say so. |
 
 ---
 
 ## Inspiration
 
-A lot of hands-on skill is still passed along the slow way: someone who knows the task stands next to someone who doesn't and shows them, again and again. Manufacturers may need as many as 3.8 million new workers between 2024 and 2033, and Deloitte and the Manufacturing Institute estimate 1.9 million of those jobs could go unfilled. Demand for skilled people is growing faster than the supply of experienced people who can teach them.
+A lot of hands-on skill is still passed along the slow way. Someone who knows the task stands next to someone who doesn't and shows them, again and again. Manufacturers may need as many as 3.8 million new workers between 2024 and 2033, and Deloitte and the Manufacturing Institute estimate 1.9 million of those jobs could go unfilled. The people who can teach are a bottleneck.
 
-The tools we found split into two groups. Some turn an expert's video into a document: Dozuki CreatorPro has "Video to Guide," which outputs numbered text steps and a quiz. Others check work with cameras: Retrocausal's Assembly Copilot tracks steps live, but setup means installing a station camera that can see every step, capturing a few work cycles, labeling one, and deploying a trained model.
+The tools we found split into two groups. Some turn an expert's video into a document: Dozuki CreatorPro's "Video to Guide" outputs numbered text steps and a quiz. Others check work with cameras: Retrocausal's Assembly Copilot tracks steps live, but setup means a station camera that can see every step, a few captured work cycles, a labeled cycle and a trained model.
 
-We wanted the expert's own hands and voice as the instruction, and a camera that decides when the next clip plays. A how-to video that waits for you.
+We wanted the expert's own hands as the instruction, and the learner's camera deciding when the next clip plays. A how-to video that waits for you.
 
 ## What it does
 
 HandOver has two sides.
 
-**Teach.** An expert wears Meta glasses and does the task while talking through it. They upload the video. HandOver sends it to Gemini in one call and gets back the steps: start and end times, a short imperative title, a yes/no question about what the object looks like when the step is done, and a transcript of the narration. The server then cuts one clip per step, writes WebVTT captions from the transcript, and saves a reference frame showing the finished state. Steps whose result can't be seen in a photo (a crease made and unfolded, a felt tension) are marked manual.
+**Teach.** The expert does the task once while wearing Meta glasses (or any camera). HandOver cuts the take into steps. Each step gets a short imperative title, its own clip, timed captions, a reference frame that shows what done looks like, and a yes or no check question about shape or count. Steps whose result a camera can't judge, like a crease made and unfolded, are marked manual. A calm voiceover is written per step and spoken over the clips.
 
-**Learn.** The learner points a camera at their hands. The screen shows their live view next to the expert's clip for the current step, captioned. About once a second the hub sends Gemini the live frame, the step's reference frame and the check question. When the answer is yes with confidence of at least 0.8 twice in a row, the step is verified, a chime plays, and the next clip starts. A "no" or "unsure" resets the count, so HandOver never advances on a guess. The Next button always works, and voice "next" is built in (off by default for loud rooms).
+**Learn.** The learner points a phone or laptop camera at their hands. The screen shows their live view next to the expert's clip for the current step. About once a second, when the picture is still and has changed, the hub asks a vision model whether the step is done: it sends the step's reference frame, the previous step's reference as a "before" example, the live frame and the question. Two confident yeses on two different frames (confidence 0.8 or more) mark the step verified, a chime plays and the next clip starts. One yes at 0.92 or more that names no difference also passes. "No" or "unsure" resets the count, so a guess never moves the lesson. Next always works.
 
-<!-- IF C11 = gate passed (median 2.5 s or less): keep the paragraph above as is. -->
-<!-- ELSE C11 (median over 2.5 s): replace "twice in a row" with "once" and add: "Gemini latency on the venue hotspot was too high for two checks in a row, so one confident yes advances the step." -->
+**The catch.** After 5 seconds of steady "no", the hub makes one extra call comparing the live frame to the previous, current and next reference. If the learner still matches the previous step, the screen names it and says the step's common mistake out loud. It never moves a learner forward on its own when they are behind.
 
-The live demo is an origami fortune teller folded by a judge at our table. The pre-recorded showcase is a bike front wheel quick-release.
+**Done.** The done screen shows the learner's time on each step next to the expert's, and how many steps the camera checked.
 
-<!-- IF C8 (bike lesson was one take): -->
-The bike lesson was cut from one take with no hand editing.
-<!-- ELSE C8: -->
-The bike lesson was cut from our expert's recording by the same pipeline; we picked boundaries by reviewing the output, not by editing clips by hand.
-<!-- END C8 -->
-
-<!-- IF C3 (catch shipped): -->
-**It notices a skipped step.** If the learner sits on a "no" for 5 seconds, HandOver compares their camera against the previous, current and next reference frames. If it still looks like the previous step, an amber banner and a spoken line name the step ("Still step 4: flip it over"). If it already looks like the next step, it says "You're ahead" and moves on. In the demo, the judge can leave the paper unflipped on purpose and watch the screen call it out.
-<!-- ELSE C3: -->
-<!-- (delete the paragraph above; do not mention mistake detection anywhere) -->
-<!-- END C3 -->
-
-<!-- IF C4 (done screen shipped): -->
-**It shows how the run went.** The done screen lists the learner's time next to the expert's for each step, how many steps the camera verified, and how many were advanced by hand.
-<!-- ELSE C4: -->
-<!-- (delete the paragraph above) -->
-<!-- END C4 -->
-
-<!-- IF C1 (glasses gate passed): -->
-**Glasses on both sides.** The expert records on Ray-Ban Meta glasses, and the learner can wear them too: our iPhone app pulls the glasses camera through Meta's Wearables Device Access Toolkit and streams it to the hub.
-<!-- ELSE C1: -->
-**Glasses for the expert, any phone for the learner.** The expert records on Ray-Ban Meta glasses. The learner uses a phone on a stand or chest mount, which gives a steady angle and needs no fitting.
-<!-- END C1 -->
+**For the expert, later.** Every check, advance and caught mistake goes to Databricks. A dashboard shows time per step against the expert and where people press Next instead of passing, and Genie answers "Which step do people get stuck on?" in plain English.
 
 ## How we built it
 
-**The hub.** One FastAPI process on a Mac serves everything: the REST API for lessons and teach jobs, the lesson files with range requests, the web app, a phone camera page, and two WebSockets. Cameras send JPEGs to `/ws/camera`; the web app gets state, advances and a downscaled live preview on `/ws/ui`. It listens on HTTP 8000 and HTTPS 8443 in the same process so both share one learn session. Lessons are plain folders: `lesson.json`, `clips/NN.mp4`, `captions/NN.vtt`, `frames/NN.jpg`.
+**Hub.** One Python process (FastAPI, uvicorn, websockets) runs on the demo laptop. It serves the lesson files, the web app, a camera socket and a UI socket, plus an HTTPS port with a local mkcert certificate so phone browsers can use the camera.
 
-**Teach pipeline** (`server/teach.py`). Three stages: normalize, extract, cut.
-- Normalize with ffmpeg to 1080p, 30 fps constant, H.264 and AAC, tagged SDR bt709. Several files can be joined into one before extraction, since glasses recordings come in short pieces.
-- Extract with one `gemini-3.8-flash` call on the whole video, using a Pydantic schema for structured output. The prompt treats narration as the main signal for step boundaries and uses the video to place each boundary where the hands start the new action. It asks for 3 to 12 steps and for check questions answerable from one photo.
-- Cut each clip, slice the transcript into per-clip captions, and grab the reference frame.
-- A recut endpoint rebuilds clips from an edited `lesson.json` in a temp folder and swaps them in when every step succeeds, so a bad edit never leaves a half-built lesson.
+**Teach pipeline** (`server/teach.py`, `server/voice.py`, `server/produce.py`):
+1. ffmpeg normalizes the take to H.264, TV-range yuv420p, so it plays on every browser and on Windows.
+2. Step extraction. With a Gemini key, Gemini 3.8 Flash watches and hears the take in one call. With a Claude key, Claude reads frames and a local faster-whisper transcript with word timestamps. For silent takes, Claude Sonnet finds the earliest moment each step's end state is visible (pass 1 over sampled frames, with a template step list as the prior), then refines each cut on frames 0.25 s apart.
+3. ffmpeg cuts one clip per step. A reference frame is picked near the end of each step where the hands are out of the way. Check questions are rewritten from the frames: shape and counts, never color.
+4. A self-test runs each question against its own reference (should be yes) and the previous one (should be no). With `--strict-self-test`, steps that fail become manual.
+5. Voiceover: Claude Haiku writes one or two short lines per step, Kokoro speaks them locally, and the mix ducks under the clip with timed WebVTT captions.
+6. Output is a folder: `lesson.json`, clips, captions and reference frames. A linter checks it. `scripts/make_lesson.ps1` runs the whole chain in one command, with `-Recut` after hand edits.
+7. Built but optional: `server/produce.py` renders a produced course video per step with title cards, a slow zoom toward the hands, a highlight ring, step labels and crossfades.
 
-<!-- IF C10 (clean reference frames merged): -->
-- The reference frame is the stillest frame without hands in the last 15% of each step, not the literal last frame, which was often blurred or blocked by a hand. Check questions describe shape and seam count, not paper color, so a judge's sheet doesn't have to match the expert's.
-<!-- ELSE C10: -->
-- The reference frame is the last frame of each step's clip.
-<!-- END C10 -->
+**Learn loop** (`server/main.py`, `check.py`, `gate.py`, `mistake.py`):
+- Cameras send JPEG frames at about 15 fps, long side 640. The hub keeps just the newest frame per camera, in memory.
+- A motion gate (Pillow) lets a frame through when the picture has settled and differs from the last checked frame, plus a 6 s heartbeat.
+- The check calls Claude Haiku (`claude-haiku-5-5`, with prompt caching) or Gemini (`gemini-3.5-flash-lite`). The answer is evidence first: what it sees, what differs, done yes/no/unsure, and confidence. A "yes" that names a difference is turned into "unsure".
+- Up to two checks run at once on different settled frames. Answers are ordered by frame, so a late answer for an old frame never outweighs a newer one.
+- A breaker turns checks off after 3 errors or timeouts in a row, any rate limit, or the spend cap, and the screen says "Checks off, use Next". Claude spend has a hard $20 per day and $50 total cap.
 
-**Check loop** (`server/check.py`, `server/main.py`). The check uses `gemini-3.5-flash-lite` with two images (reference, then live), low media resolution, minimal thinking and temperature 0, and returns `{"done": "yes|no|unsure", "confidence"}`. One check runs at a time, always on the newest frame. A result that comes back after the step changed is thrown away, and a new step is never judged with a frame taken before it began. A call that takes longer than 3 seconds counts as unsure.
+**Screens.** React, TypeScript and Vite. Learn draws the live feed on a canvas (newest frame each time), preloads the next clip, and has honest states: camera lost, reconnecting, Recording for replays, checks off. A phone capture page streams the camera over the local network. Playwright end-to-end tests drive a real hub with a replayed camera.
 
-<!-- IF C6 (motion gate merged): -->
-A motion gate keeps calls down: the hub compares small grayscale thumbnails of consecutive frames and calls Gemini when the scene is still and has changed since the last check, with a heartbeat call every 6 seconds.
-<!-- END C6 -->
-<!-- IF C7 (breaker merged): -->
-After 3 errors in a row or any rate-limit response, a breaker turns checks off for 30 seconds and the screen says "Checks off, use Next" instead of silently stalling.
-<!-- END C7 -->
+**Data layer** (Databricks, never in the live loop). The hub writes every learn event to a local JSON lines file. With credentials, it batches them into Unity Catalog every 60 s and at run end, with MERGE on event id so retries never duplicate rows. One setup script creates the schema, four tables (`lessons`, `steps`, `runs`, `events`), a Volume for lesson files and 13 dashboard views, each with a `_real` twin that drops mock, replay and self-test runs. The AI/BI dashboard reads the `_real` views. A Genie space over the four tables has tested example queries and the demo question. If Databricks is slow or down, the demo doesn't notice; a test runs the loop against a hung warehouse.
 
-**Web app** (React, TypeScript, Vite). A Learn screen and a Teach screen, served by the hub. Teach shows the full take with a colored step timeline and a grid of step thumbnails; click one to play that clip. Learn shows honest live states: "Waiting for camera," "Reconnecting," a dimmed last frame with "Camera lost. Keep going with Next," and a "Recording" badge whenever frames come from a replayed video instead of a live camera.
+**Native apps** (built and tested, see the next section for what is demoed): a SwiftUI app for iPhone, iPad and Mac (250 tests), an Android app in Kotlin and Jetpack Compose (306 tests), and a Tauri desktop app for Windows, Linux and Mac with a Rust core (33 tests). Each one is a viewer of the hub and can be its camera. The iPhone and Android apps include the Meta Wearables Device Access Toolkit 1.0.1 for glasses streaming. The hub also has accounts, courses, organizations and an editor with undo and redo (46 routes, 25 tests), switched off in the demo build.
 
-**Cameras.** Any phone browser can be the camera through `/capture` over HTTPS. `server/replay.py` streams an MP4 into the hub as if it were a live camera, which is how we tested the loop without folding paper every time and how we keep a labeled fallback for the demo.
+## What is demoed live, and what is built but not demoed
 
-<!-- IF C2 (iPhone app works): -->
-A native SwiftUI iPhone app sends about one JPEG per second to the hub, shows the current step title, and has Next and Back buttons so the learner doesn't have to reach for the laptop.
-<!-- IF C1 (glasses gate passed), add: -->
-The same app can switch its source to Ray-Ban Meta glasses through Meta's Wearables Device Access Toolkit, and falls back to the phone camera on its own if the glasses stream stops.
-<!-- END C1 -->
-<!-- ELSE C2: -->
-<!-- (delete the paragraph above; the Safari /capture page is the phone path) -->
-<!-- END C2 -->
+| Live at the table | Built and tested, not in the live demo |
+|---|---|
+| Hub on a Windows laptop, Learn screen in Chrome | Native iPhone, iPad and Mac app (250 tests) |
+| Learner camera: a phone on the capture page [[IF GLASSES: or Meta glasses]] | Android app (306 tests) and Tauri desktop app (33 tests) |
+| Fortune teller lesson, folded by the judge, advanced by real model checks | Glasses as the live learner camera: the toolkit code compiles, but streaming from the iPhone needs a paid Apple Developer team, and a free team was rejected [[delete if the glasses were demoed live]] |
+| Teach view of the [[bike lesson / fortune teller]] lesson, clips playing | Produced course videos (`server/produce.py`) |
+| [[IF CATCH: the skipped-step catch named on screen and spoken]] | Accounts, courses, organizations and the lesson editor (switched off in the demo build) |
+| Done screen with time per step against the expert | Understanding mode (a per-step rubric as a second vote), behind a switch and off by default |
+| [[IF DBX: Databricks dashboard and one Genie answer, from our own rehearsal runs]] | Skipping ahead two steps on an "ahead" verdict: built, off by default because a wrong skip is worse than a missed catch |
+| Fallbacks, if needed: a replay with a visible Recording tag, "Checks off, use Next" | |
 
-<!-- IF C5 (Databricks shipped): -->
-**Data layer** (Databricks). Databricks is never in the live loop. `server/databricks.py` writes every learn event (run start and end, step entered, check result, advance, mistake, checks off) to a local JSONL file, and a background thread batches them into Unity Catalog tables through the SQL Statement Execution API: one statement per table, at most every 5 seconds, nothing sent when there is nothing new. Lesson files go to a Unity Catalog Volume. An AI/BI dashboard shows learner time per step against the expert's, how often each camera step was forced with Next, and likely false passes (a camera advance followed by Back within 60 seconds). A Genie space answers "Which step do people get stuck on?" in plain English.
-<!-- ELSE C5: -->
-<!-- (delete the paragraph above and the Databricks tags in Built with) -->
-<!-- END C5 -->
-
-**Privacy.** Learn frames live in memory. The hub keeps the newest frame in one slot and overwrites it with the next; it never writes a learner's camera frame to disk. Frames are sent to the Gemini API for the check.
-<!-- IF C9 (privacy test merged): add "A test in the suite fails if a learn frame ever lands on disk." -->
-
-**Team.** Soham built the server, the teach pipeline and the check loop, and cut both lessons. Pranav built the web app, the phone capture page, the iPhone app and the Databricks plumbing. Sikandar recorded the expert takes on the glasses, ran the props and tested with people who had never folded a fortune teller. Prayush built the Databricks dashboard and Genie space and put together the story and pitch.
+Lessons on disk are cut from our own takes. [[Say whether any step boundary or question was fixed by hand.]] The fortune teller lesson in the repo has [[3]] of [[9]] steps checked by the camera; the rest are manual by design.
 
 ## Challenges we ran into
 
-**iPhone HDR footage looked washed out in the browser.** iPhones record HDR (PQ or HLG in bt2020). Chrome played our clips gray and flat. Converting the color matrix to bt709 wasn't enough: ffmpeg carried the HDR frame tags from the input and those won over our encoder flags. We now detect the transfer function with ffprobe, convert bt2020 to bt709, and rewrite the frame tags explicitly.
-
-**Waiting on a cloud model while someone folds paper.** A single Gemini check takes a noticeable fraction of a second, and a single yes can be a fluke when the paper is half folded. We settled on two confident yeses in a row at 0.8 or higher, one check in flight at a time, and a 3 second timeout that counts as unsure. We measured [[MEDIAN LATENCY]] median over 20 real checks before tuning the debounce.
-<!-- IF C6 or C7: add "Free-tier rate limits for these models aren't published, so we added the motion gate and breaker to keep call volume down and fail visibly." -->
-
-**A dependency broke the day before.** google-genai shipped a breaking release on November 12 that changed defaults. We froze every Python dependency into `server/requirements.lock` on the demo Mac, pinned the API version to v1beta explicitly, and installed from the lock on every machine.
-
-**Phones won't open the camera over plain HTTP.** Browsers require a secure context for `getUserMedia`. We generate mkcert certificates for the laptop's hotspot IP and serve HTTPS on 8443 from the same process as HTTP, so the phone page and the laptop screen share one session. Every demo phone has the mkcert root trusted ahead of time.
-
-**A Next tap could skip a step.** If the camera advanced a step at the same moment the learner pressed Next, both landed and the learner jumped two steps. Every Next and Back now carries the step the client was showing, and the hub ignores it if the step already changed.
-
-**Keeping learner video off disk.** The easy path for debugging is to save frames. We didn't. Frames are held in memory, checked, forwarded to the screen at a reduced size, and overwritten.
-
-<!-- IF C1 (glasses gate passed): -->
-**Getting frames out of the glasses.** Meta's toolkit is a developer preview, raw frames arrive with the app in the foreground, and backgrounding ends the session. The iPhone app keeps the screen awake, throttles the glasses stream to one frame per second, and switches to the phone camera when frames stop.
-<!-- ELSE C1: -->
-**Glasses as a live camera didn't make the cut.** We time-boxed streaming from Ray-Ban Meta through an iPhone app and set an 8 PM go/no-go. It didn't pass that test reliably, so the glasses stay the expert's recorder and the learner uses a phone.
-<!-- END C1 -->
+- **Latency.** A check has to feel like a nod, not a wait. A leaner answer format brought one Claude Haiku check to about 1.1 to 1.3 s at the median in our timing runs. Pipelining two checks on different frames and a fast path for one very confident yes cut the time from "hands still" to "next clip" further.
+- **False passes.** Early checks said yes to almost-done paper. We added the previous step's reference as a "before" picture, made the model name what differs before it answers, turned a yes that names a difference into unsure, and stripped color words from questions. On synthetic folds, the plain check still said yes on 10 of 63 not-finished frames; a second vote from the rubric cut that to 4 of 63 but blocked a sheet turned 45 degrees, so it stays behind a switch.
+- **Debounce with checks in flight.** With two checks running at once, answers come back out of order. The debounce sorts them by frame so an old yes can never pass a step the newest frame says is not done.
+- **Skipping ahead.** On synthetic folds, a learner who skipped a flip was called "ahead" in 15 of 23 tries. We kept ahead as a banner and made "behind" the case we act on.
+- **Silent takes.** Cutting by narration fails when the expert works quietly. We added vision boundaries: a stronger model finds the earliest moment each step's end state is visible, then refines the cut on frames a quarter second apart. On a real take it gave eight coherent steps for about 3 cents.
+- **A Windows demo laptop.** The hub was written on a Mac and demoed on Windows: file locks while swapping voiced clips, font lookup for produced videos, ffmpeg paths, a spend ledger safe across processes, and a clear error when a port is already taken. The end-to-end demo test now passes 21 of 21 on Windows.
+- **Stale controls.** A phone pressing End after the laptop had started a new lesson would end the wrong run. End now carries the lesson and run ids, and stale ones are ignored.
+- **Databricks Free Edition.** One small warehouse and a daily compute quota. We flush every 60 s instead of every few seconds, use MERGE so retries don't duplicate, keep tests from ever reaching the warehouse, and filter mock and replay runs out of the charts.
+- **Glasses streaming.** The toolkit streams over a Wi-Fi link that needs entitlements a free Apple team can't get. The glasses stayed the expert's recorder.
 
 ## Accomplishments that we're proud of
 
 - A judge can fold a fortune teller at our table and watch the expert's clips advance as each fold is seen.
-- The expert does no editing. One Gemini call gives the steps, titles, check questions and transcript; ffmpeg does the rest.
-- The screen tells the truth about its state: camera lost, reconnecting, recorded input, and Next always works.
-- The check refuses to guess. "Unsure" never moves a step.
-<!-- IF C3: - The screen catches a skipped flip and names the step, out loud. In rehearsal under venue light it caught [[CATCH RATE]] of 20 planted mistakes. -->
-<!-- IF C5: - Every run lands in Databricks, and Genie can tell the expert which step people get stuck on. -->
-<!-- IF C1: - Ray-Ban Meta glasses streaming live into the loop through our own iPhone app. -->
-- Ten folds by people who had never folded one: [[NOVICE RESULTS]].
+- One command turns a raw take into a narrated, captioned lesson with checks, and a self-test that flags steps a camera can't tell apart.
+- The check refuses to guess. Unsure never moves a step, and Next always works.
+- The screen tells the truth: camera lost, reconnecting, Recording for replays, checks off and why.
+- A test asserts that learn frames never touch disk.
+- Every learner run lands in Databricks as rows, filtered so test runs never reach the charts.
+- Four clients on one wire contract: web, Apple, Android and desktop, each with its own test suite.
+- [[NOVICE RESULTS]]
+- [[IF CATCH: In rehearsal the catch named [[CATCH RATE]] planted skipped steps.]]
 
 ## What we learned
 
-- Narration is the strongest signal for where a step begins. The video is better at confirming where the hands actually start.
-- Check questions have to describe what a camera can see: shape, seam count, how many flaps. Color and "is it creased" are unreliable.
-- Some steps can't be checked from a photo, and saying so (a manual step) is better than a check that passes by accident.
-- A fallback for every link (phone page, replay with a visible "Recording" badge, the Next button) made it safe to demo on hackathon Wi-Fi.
-- Measure before tuning. The latency numbers decided the debounce rule, not the other way around.
+- Check questions must describe what a camera can see: shape, seam count, how many flaps. Color and "is it creased" are unreliable.
+- Some steps can't be checked from a photo. Marking them manual is better than a check that passes by accident.
+- Asking the model to name what differs before it says yes catches most of its own over-eager answers.
+- Measure before tuning. Timing runs set the debounce and the check rate, not the other way around.
+- A fallback for every link (phone page, replay with a visible tag, Next) made it safe to demo on hackathon Wi-Fi.
+- Keep analytics out of the live loop. The demo never waits on the warehouse.
 
 ## What's next for HandOver
 
-- A review editor so the expert can rename steps and drag boundaries before publishing.
-- A self-test at teach time: run each check question against its own reference frame (should be yes) and the previous one (should be no), and flag steps that can't tell them apart.
-- Safety warnings and a tools list pulled from the expert's own narration.
-- Translated captions.
-- A deployment where frames are checked on a paid tier with no data retention, or on device.
-- Testing in a real workplace with a real expert and new hires.
+- Real accuracy numbers from people who have never folded one, then from a real workplace task with a real expert.
+- Glasses as the learner's camera, on a paid Apple Developer team.
+- Checks on a no-retention tier or on device.
+- Translated captions and a voice "next" for loud rooms.
+- A hosted hub so a whole team of learners can use the same lessons.
+- Safety warnings and a tools list pulled from the expert's own take.
 
-## Built with
+## Privacy
 
-python, fastapi, uvicorn, websockets, pydantic, pillow, ffmpeg, google-gemini, gemini-3.8-flash, gemini-3.5-flash-lite, google-genai, react, typescript, vite, playwright, webvtt, mkcert, meta-ray-ban-glasses
-<!-- IF C2: add swift, swiftui -->
-<!-- IF C1: add meta-wearables-device-access-toolkit -->
-<!-- IF C5: add databricks, unity-catalog, databricks-sql, databricks-genie, ai-bi-dashboards -->
+The hub never saves your camera frames. It keeps the newest frame in memory, asks the model whether the step is done, and lets it go.
 
-## Try it out
+- Frames travel over the local network (HTTPS on the phone page, with the hub's own certificate).
+- `server/test_engine.py::test_privacy_learn_frames_never_touch_disk` asserts on every run that learn frames are never written to disk.
+- The model sees one live frame plus the step's reference frames per check, about once a second when the picture is still and changed. We don't store what we send; the provider's API terms apply.
+- The event log and Databricks hold numbers: run id, lesson id, step numbers, answers, confidence, latency and timestamps. No images, no names, and a random run id.
+- The expert's take is the product content and stays on the laptop. Lesson files can go to a Databricks Volume; that is the expert's video, never a learner's camera.
+- When a recording is the camera, the screen says Recording. When checks are off, the screen says so.
 
-- [[REPO URL]]
-- Demo video: [[DEMO VIDEO URL]]
+## Team
+
+- **Pranav:** web Learn and Teach screens, phone capture page and certificates, the iPhone camera app, Databricks plumbing in the hub, the Windows demo hub and the bike lesson.
+- **Soham:** the hub (teach pipeline, checks, motion gate, mistakes, engine), the Apple, Android and desktop apps, and the origami lesson.
+- **Sikandar:** the expert takes, props, novice runs, replays and the backup video.
+- **Prayush:** Databricks tables, dashboard and Genie, plus the pitch, poster and this Devpost.
 
 ---
 
-## Gallery (upload in this order)
+# Submission checklist (do not paste)
 
-The PNGs in `web/screenshots/` use the synthetic color-bar test lesson. Reshoot 2, 3, 4 and 6 on the real fortune teller or bike lesson if there is time; otherwise use the listed file and keep the caption.
+**Links**
+- [ ] Repo: https://github.com/pr4nav3/MetaGlasses-ExpertKnowlegeTransfer (confirm it is public before submitting)
+- [ ] Demo video: [[DEMO VIDEO URL]] (YouTube or Vimeo, public or unlisted, a real run; say "recording" in it)
+- [ ] Devpost URL into the poster QR box (`poster/README.md`, step 1)
 
-1. **Photo: a judge folding under the lamp, phone or glasses on, learn screen behind.** Caption: "A judge folds a fortune teller. Each clip plays when the camera sees the last fold is done."
-2. **Teach screen, bike lesson** (reshoot of `08-teach-lesson.png`). Caption: "The expert's take, cut into steps by one Gemini call. Click any step to play its clip."
-3. **Learn screen mid-lesson** (`02-learn-mid-lesson-1920.png` or a reshoot). Caption: "Live camera on the left, the expert's captioned clip for this step on the right."
-4. **Verified** (`11-real-server-verified.png`). Caption: "Two confident yeses from the check, a chime, and the next clip starts."
-5. **Mistake banner** (IF C3; new screenshot). Caption: "The learner skipped the flip. HandOver names the step and says it out loud."
-6. **Done screen** (IF C4; `12-real-server-done.png` or a reshoot). Caption: "Your time against the expert's for every step."
-7. **Manual step** (`04-manual-step.png`). Caption: "Steps a photo can't confirm are marked manual. The learner presses Next."
-8. **Honest states** (`13-reconnecting.png`). Caption: "When the connection drops, the screen says so and Next still works."
-9. **Databricks dashboard** (IF C5). Caption: "Learner time per step against the expert, from real runs."
-10. **Genie answer** (IF C5). Caption: "Asking Genie which step people get stuck on."
-11. **Photo: Sikandar recording the bike lesson on Ray-Ban Meta.** Caption: "The expert records once while narrating."
-12. **iPhone app** (IF C2). Caption: "The phone streams the camera and shows the current step with a Next button."
+**Placeholders to fill or delete**
+- [ ] [[DEMO VIDEO URL]]
+- [ ] [[NOVICE RESULTS]]: from ten real folds by people new to it: camera-verified steps, manual steps, false passes, false alarms. If not run, delete the bullet.
+- [ ] [[CATCH RATE]]: planted skipped steps caught out of the number tried. If not run, delete the bullet.
+- [ ] [[IF GLASSES]]: glasses used as the live learner camera? If not, delete; if yes, also delete the "paid Apple team" row.
+- [ ] [[IF CATCH]] and [[IF DBX]]: keep only what was shown working on the demo laptop.
+- [ ] [[bike lesson / fortune teller]]: which lesson the Teach view shows. `front-wheel-v1` is not in the repo yet.
+- [ ] [[3]] of [[9]]: camera-checked steps in the demo lesson (today's `fortune-teller-v1` has 3 of 9; update if a v2 replaces it).
+- [ ] Hand edits: say whether any step boundary or question was fixed by hand.
+- [ ] [[confirm which provider cut the demo lessons]] (Gemini or Claude), and the check provider shown in `state.check_mode`.
+- [ ] Tagline: keep "on Meta glasses" only if the demo lessons were recorded on the glasses.
 
-Sources for the Inspiration section (keep in the repo, not needed on Devpost): Manufacturing Institute and Deloitte, April 3, 2024, themanufacturinginstitute.org/manufacturers-need-as-many-as-3-8-million-new-employees-by-2033/; Dozuki, dozuki.com/creatorpro; Retrocausal, retrocausal.ai.
+**Image gallery (3:2, upload in this order)**
+Every PNG in `web/screenshots/` and `poster/img/` comes from mock or timer checks on a test lesson. Reshoot on the real lesson, or caption "Test lesson, simulated check".
+1. Photo: a judge or teammate folding under the lamp, Learn screen behind. "Each clip plays when the camera sees the last fold is done."
+2. Learn mid-lesson on the real lesson (reshoot of `web/screenshots/02-learn-mid-lesson.png`). "Live camera on one side, the expert's captioned clip on the other."
+3. Verified (reshoot of `19-real-server-verified.png`). "Confident yeses, a chime, and the next clip starts."
+4. Mistake card (reshoot of `06b-mistake-live.png`). "A skipped step, named on screen and said out loud."
+5. Done (reshoot of `20-real-server-done.png`). "Your time against the expert's for every step."
+6. Teach review with the step list (reshoot of `18-teach-review.png`) or `lessons/<id>/review/sheet.jpg`. "One take, cut into steps with checks."
+7. Databricks dashboard on the `_real` views. "Time per step against the expert, from our rehearsal runs."
+8. Genie answer to "Which step do people get stuck on?"
+9. Checks off (`10-checks-off.png`, caption as a test lesson). "When the model is down, the screen says so and Next still works."
+10. Native apps side by side: `apps/apple/screenshots/learn-iphone-landscape.png`, `apps/android/screenshots/learn-landscape.png`. Caption: "Built and tested; the table demo uses the web app."
+11. Poster: `poster/poster.png`.
+
+**Rule check**
+- [ ] No "first", "only", savings figure, user count or past-winner claim.
+- [ ] Competitors named: Dozuki and Retrocausal only.
+- [ ] Every number traces to the repo or a filled placeholder.
+- [ ] Model names match what the demo hub ran, and match docs/pitch.md.
+
+Sources for Inspiration (not for Devpost): Manufacturing Institute and Deloitte, April 3, 2024, themanufacturinginstitute.org/manufacturers-need-as-many-as-3-8-million-new-employees-by-2033/; dozuki.com/creatorpro; retrocausal.ai. Repo numbers: test counts from commit messages 428b737/6375880 (Apple 250), d1c71a7 (Android 306), 8a98945 (desktop 33), 2a09b03 (library 46 routes, 25 tests), 51e0c73 (e2e 21 of 21); latency `server/docs/checks.md`; synthetic accuracy `server/docs/understanding.md` and `server/docs/checks.md`; vision boundaries 6caf276.
