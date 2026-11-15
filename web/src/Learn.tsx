@@ -768,7 +768,7 @@ export function Learn() {
             </div>
 
             <div className="frame pane clip" style={paneStyle}>
-              {step && <span className="tab pane-tab">Expert · {clock(step.start)} to {clock(step.end)}</span>}
+              {step && <span className="clip-chip">Expert · {clock(step.start)} to {clock(step.end)}</span>}
               <div className={`clip-media ${step ? '' : 'hidden'}`}>
                 <video ref={clips.refA} data-slot="a" loop playsInline preload="auto" onLoadedMetadata={onClipMetadata} />
                 <video ref={clips.refB} data-slot="b" loop playsInline preload="auto" muted className="standby" onLoadedMetadata={onClipMetadata} />
