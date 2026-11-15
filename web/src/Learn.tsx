@@ -425,7 +425,8 @@ export function Learn() {
     setVoiceOn(false)
     setMistake(null)
     setStarted(false)
-    send({ type: 'end_lesson' }) // the hub stops the run and unloads the lesson (older hubs ignore it)
+    // The hub stops the run and unloads the lesson; the ids make it ignore a stale End (older hubs ignore it).
+    if (state?.lesson_id) send({ type: 'end_lesson', lesson_id: state.lesson_id, run_id: state.run_id ?? undefined })
   }
   const askEnd = () => (isDone ? endLesson() : setConfirmEnd(true))
   useEffect(() => {
