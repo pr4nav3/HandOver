@@ -16,7 +16,7 @@ On the demo laptop (Pranav's Windows laptop, `C:\Users\karth\Projects\HandOver-s
 
 ## Setup, once [2, 3]
 - [ ] `.venv\Scripts\python scripts\databricks_setup.py --with-history` ends with every step ok
-- [ ] Counts show the real lessons (`fortune-teller-v2`, `front-wheel-v1`) with their steps
+- [ ] Counts show the real lessons with their steps (`fortune-teller-v1` is there now; `fortune-teller-v2`, the live demo, and `front-wheel-v1` once uploaded)
 - [ ] `.venv\Scripts\python -m server.databricks --selftest --remote` says `SELFTEST OK`
 - [ ] One real run on the hub, then the dashboard's Runs counter goes up for that lesson
 - [ ] Optional: `--teardown-test-data`, first check row all zeros
