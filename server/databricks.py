@@ -612,8 +612,8 @@ def _execute(statement: str, parameters: Optional[list] = None, wait: bool = Fal
     """Run one SQL statement on the warehouse. None on success, else a short error string.
 
     wait_timeout 30 s covers a warm warehouse; on_wait_timeout CONTINUE lets a cold one finish the
-    statement on its own, which we count as accepted (no polling: the daily quota). Only `wait=True`
-    (the --init CLI, where order matters) polls until the statement ends.
+    statement asynchronously. The worker confirms completion before counting a batch as flushed; pending
+    statements can still fail. Setup allows ten minutes; ordinary background exports allow ninety seconds.
     """
     try:
         body: dict[str, Any] = {"warehouse_id": _cfg["warehouse"], "statement": statement,
@@ -626,9 +626,9 @@ def _execute(statement: str, parameters: Optional[list] = None, wait: bool = Fal
             return f"HTTP {code} {_error_text(raw)}"
         res = json.loads(raw or b"{}")
         state = (res.get("status") or {}).get("state", "")
-        if wait:
+        if state in ("PENDING", "RUNNING"):
             sid = res.get("statement_id")
-            deadline = time.monotonic() + 600
+            deadline = time.monotonic() + (600 if wait else 90)
             while state in ("PENDING", "RUNNING") and sid and time.monotonic() < deadline:
                 time.sleep(5)
                 code, raw = _request("GET", f"/api/2.0/sql/statements/{urllib.parse.quote(sid)}")
@@ -636,7 +636,11 @@ def _execute(statement: str, parameters: Optional[list] = None, wait: bool = Fal
                     return f"HTTP {code} {_error_text(raw)}"
                 res = json.loads(raw or b"{}")
                 state = (res.get("status") or {}).get("state", "")
-        if state in ("SUCCEEDED", "PENDING", "RUNNING"):
+            if state in ("PENDING", "RUNNING"):
+                if sid:
+                    _request("POST", f"/api/2.0/sql/statements/{urllib.parse.quote(sid)}/cancel", b"{}")
+                return "statement timed out before confirmation"
+        if state == "SUCCEEDED":
             return None
         err = (res.get("status") or {}).get("error") or {}
         return f"{state or 'unknown state'}: {err.get('error_code', '')} {err.get('message', '')}".strip()

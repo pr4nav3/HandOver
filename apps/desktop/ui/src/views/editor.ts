@@ -5,11 +5,12 @@
 import { hub, lessonUrl, toSeconds, type CourseDetail, type FullLesson, type Step } from "../api";
 import { closeSheet, drawSheet, empty, loading, openSheet, orgAvatar, STATUS_WORD } from "../components";
 import { icons } from "../icons";
-import { app, back, errorText, learn, rerender, toast } from "../state";
+import { app, back, errorText, go, learn, rerender, toast } from "../state";
 import { html, paint } from "../util";
 import { reloadCourse } from "./course";
 import { resetHome } from "./home";
 import { resetTeach } from "./teach";
+import { insightsSheet } from "./insights";
 
 const ed = {
   id: "",
@@ -38,6 +39,13 @@ async function load(id: string) {
 }
 
 const secs = (t: string) => toSeconds(t);
+
+export async function editStep(id: string, index: number) {
+  if (ed.id !== id || !ed.d) await load(id);
+  if (!ed.d) return;
+  ed.sel = Math.min(Math.max(0, index), ed.d.lesson.steps.length - 1);
+  go({ name: "editor", id });
+}
 const fmt = (s: number) => {
   const m = Math.floor(s / 60);
   const r = s - m * 60;
@@ -100,6 +108,7 @@ export function renderEditor(el: HTMLElement, id: string) {
         <button class="icon-button" data-act="ed-redo" title="Redo" aria-label="Redo" ${history?.redo && !ed.busy ? "" : "disabled"}>${icons.redo}</button>
         <button class="secondary" data-act="ed-details">Details</button>
         <button class="secondary" data-act="ed-preview">Preview</button>
+        ${permissions.can_see_insights ? html`<button class="secondary" data-act="ed-insights">Insights</button>` : ""}
         ${permissions.can_publish ? html`<button class="primary" data-act="ed-publish">${course.status === "published" ? "Update" : "Publish"}</button>` : ""}
       </header>
       ${ed.banner ? html`<div class="banner bad" role="alert">${ed.banner}</div>` : ""}
@@ -359,11 +368,16 @@ function detailsSheet() {
 }
 
 export function editorAction(act: string, t: HTMLElement) {
+  if (act === "ed-back") return back();
   if (!ed.d) return;
   const steps = ed.d.lesson.steps;
   const s = steps[ed.sel];
   const v = document.querySelector<HTMLVideoElement>("#ed-video");
-  if (act === "ed-back") back();
+  if (act === "ed-insights") insightsSheet(ed.id, ed.d.course.title, (index) => {
+    ed.sel = Math.min(Math.max(0, index), steps.length - 1);
+    if (v) v.currentTime = secs(steps[ed.sel].start);
+    rerender();
+  });
   else if (act === "ed-select") {
     ed.sel = Number(t.dataset.step);
     if (v) v.currentTime = secs(steps[ed.sel].start);

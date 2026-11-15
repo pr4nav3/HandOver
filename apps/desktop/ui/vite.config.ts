@@ -7,6 +7,11 @@ export default defineConfig({
   server: {
     port: 5175,
     strictPort: true,
+    proxy: {
+      "/api": "http://127.0.0.1:5176",
+      "/events": "http://127.0.0.1:5176",
+      "/hub": "http://127.0.0.1:5176",
+    },
   },
   build: {
     target: "es2022",

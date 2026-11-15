@@ -2060,6 +2060,22 @@ button.option-card:hover {
   gap: 12px;
 }
 
+.lesson-insights { display: grid; gap: 16px; }
+.insights-metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; padding: 16px 0; border-block: 1px solid var(--border); }
+.insights-metrics > div { display: grid; gap: 4px; }
+.insights-metrics strong { font-size: 26px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.insights-metrics span, .insights-source { font-size: 12px; color: var(--muted); }
+.insights-observation { display: grid; gap: 10px; padding: 16px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 12px; }
+.insights-observation h3 { margin: 0; }
+.insights-observation button { justify-self: start; }
+.insights-table-wrap { overflow-x: auto; }
+.insights-table { width: 100%; border-collapse: collapse; text-align: left; font-size: 12px; }
+.insights-table th, .insights-table td { padding: 10px 6px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.insights-table thead th { color: var(--muted); font-weight: 500; }
+.insights-table tbody th { min-width: 180px; width: 46%; font-weight: 500; }
+.insights-table .quiet { text-align: left; padding: 0; font-size: 13px; }
+.insights-table small { display: block; margin-top: 3px; color: var(--muted); font-size: 12px; }
+
 .profile-metrics {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
@@ -2534,7 +2550,8 @@ button.option-card:hover {
 
 
 .live-frame {
-  position: relative;
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
   overflow: hidden;
@@ -2688,8 +2705,8 @@ video::cue {
   padding: 5px 12px;
   border-radius: 999px;
   border: 1px solid rgba(255, 255, 255, 0.2);
-  background: rgba(0, 0, 0, 0.6);
-  color: #fff;
+  background: var(--video-surface);
+  color: var(--video-ink);
   font-size: 13px;
   z-index: 2;
 }
@@ -2711,8 +2728,8 @@ video::cue {
   gap: 9px;
   border: 1px solid rgba(255, 255, 255, 0.16);
   border-radius: 11px;
-  background: rgba(8, 8, 10, 0.72);
-  color: #fff;
+  background: var(--video-surface);
+  color: var(--video-ink);
   opacity: 0.9;
   transform: translateY(0);
   transition: opacity 140ms ease, transform 140ms ease;
@@ -2737,7 +2754,7 @@ video::cue {
   border: 0;
   border-radius: 8px;
   background: transparent;
-  color: #fff;
+  color: var(--video-ink);
   font-size: 12px;
 }
 
@@ -2758,9 +2775,9 @@ video::cue {
 }
 
 .tutorial-cc.on {
-  background: #fff;
-  border-color: #fff;
-  color: #111;
+  background: var(--video-ink);
+  border-color: var(--video-ink);
+  color: var(--panel);
   opacity: 1;
 }
 
@@ -2768,14 +2785,14 @@ video::cue {
   min-width: 80px;
   flex: 1 1 auto;
   height: 18px;
-  accent-color: #fff;
+  accent-color: var(--video-ink);
   cursor: pointer;
 }
 
 .tutorial-time {
   width: 76px;
   flex: none;
-  color: rgba(255, 255, 255, 0.76);
+  color: var(--muted);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
   text-align: right;

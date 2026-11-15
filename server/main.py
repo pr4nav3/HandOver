@@ -1013,6 +1013,7 @@ class Engine:
                         "restart" if previous_lesson == lesson_id else "new")
         now = time.monotonic()
         self.emit("run_start", total=len(self.steps), learner=learner, attempt_kind=attempt_kind,
+                  lesson_revision=library.lesson_revision({"steps": self.steps}),
                   source=self.active.source if self.active else None,
                   platform=self.active.platform if self.active else None,
                   camera_connect_age_ms=(round((now - self.active.connected_at) * 1000)

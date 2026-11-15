@@ -1050,6 +1050,14 @@ def course_insights(lesson_id: str, all: bool = False, org: Optional[str] = None
     return out
 
 
+@router.get("/courses/{lesson_id}/analytics")
+def course_analytics(lesson_id: str, user: Optional[dict] = Depends(accounts.current_user)) -> dict:
+    """Desktop aggregates from retained local activity and the optional warehouse, scoped to this revision."""
+    lesson, course = _ctx(lesson_id, user, "insights")
+    from server import lesson_insights
+    return lesson_insights.course(lesson_id, lesson, course.get("steps_changed_at"))
+
+
 @router.get("/courses/{lesson_id}/runs")
 def course_runs(lesson_id: str, user: Optional[dict] = Depends(accounts.current_user)) -> dict:
     lesson, _ = _ctx(lesson_id, user, "view")

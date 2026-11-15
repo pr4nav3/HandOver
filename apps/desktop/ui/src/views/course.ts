@@ -7,6 +7,8 @@ import { icons } from "../icons";
 import { app, errorText, learn, localProgress, rerender, toast } from "../state";
 import { html, paint, type Raw } from "../util";
 import { cameraRow } from "./pair";
+import { insightsSheet } from "./insights";
+import { editStep } from "./editor";
 
 let detail: { id: string; d: CourseDetail | null; ratings: Ratings | null; error: string } | null = null;
 
@@ -122,6 +124,7 @@ export function renderCourse(el: HTMLElement, id: string) {
           <div class="detail-foot">
             <div class="detail-quiet">
               ${permissions.can_edit ? html`<button class="quiet" data-go="${JSON.stringify({ name: "editor", id })}">Edit Lesson</button>` : ""}
+              ${permissions.can_see_insights ? html`<button class="quiet" data-act="course-insights">Insights</button>` : ""}
               ${permissions.can_rate ? html`<button class="quiet" data-act="course-rate">${r?.mine ? "Edit Your Rating" : "Rate This Lesson"}</button>` : ""}
             </div>
             ${r && r.count
@@ -189,7 +192,8 @@ export function courseAction(act: string, t: HTMLElement) {
   if (!detail?.d) return;
   const id = detail.id;
   const p = localProgress()[id];
-  if (act === "course-start") learn.start(id, 0, true);
+  if (act === "course-insights") insightsSheet(id, detail.d.course.title, (index) => void editStep(id, index));
+  else if (act === "course-start") learn.start(id, 0, true);
   else if (act === "course-continue" && p) learn.start(id, p.step);
   else if (act === "course-restart") learn.start(id, 0, true);
   else if (act === "course-step") learn.start(id, Number(t.dataset.step), !p || p.done);
