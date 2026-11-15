@@ -805,7 +805,7 @@ def test_pipelined_confirm_halves_the_wait() -> None:
             wait_for(lambda: main.engine.step == 1)
     assert took["2"][1] == 2 and took["1"][1] == 1, took
     assert took["2"][0] < latency + 0.35, took  # second check started on the next frame, not after the first
-    assert took["1"][0] >= 2 * latency, took
+    assert took["1"][0] >= 2 * latency - 0.05, took  # one after the other; 0.05 s covers Windows' 15.6 ms clock tick
 
 
 def test_pipelined_stale_step_results_dropped() -> None:
@@ -2132,6 +2132,183 @@ def test_privacy_learn_frames_never_touch_disk() -> None:
 
     leaked = [p for p in created if main.LESSONS in p.parents or starts_jpeg(p)]
     assert leaked == [], leaked
+
+
+# ---------------------------------------------------------------- demo path (Windows demo review, 2026-11-14)
+
+def test_end_lesson_from_an_older_run_of_the_same_lesson_is_ignored() -> None:
+    """A screen still showing the previous run of the same lesson (the learner restarted it elsewhere) must not
+    end the new run; the screen showing the current run can. A run_id alone, from another lesson's run, too."""
+    make_lesson("end-guard")
+    with hub() as c, c.websocket_connect("/ws/ui") as ui:
+        first = select(ui, "end-guard")["run_id"]
+        second = select(ui, "end-guard")["run_id"]
+        assert first and second and first != second
+        ui.send_json({"type": "end_lesson", "lesson_id": "end-guard", "run_id": first})
+        ui.send_json({"type": "end_lesson", "run_id": first})
+        assert not [m for m in drain(ui, 0.3) if m.get("text")]  # ignored: no state, no error
+        assert main.engine.lesson_id == "end-guard" and main.engine.run_id() == second
+        ui.send_json({"type": "end_lesson", "lesson_id": "end-guard", "run_id": second})
+        st = recv_json(ui, lambda m: is_state(m) and m["lesson_id"] is None)
+        assert st["run_id"] is None and main.engine.run is None
+
+
+def test_frame_gap_lets_15_fps_through_and_thins_bunched_frames() -> None:
+    """The default HANDOVER_MIN_FRAME_GAP (0.04 s) takes every frame of a 15 fps camera, drops the second of
+    two frames Wi-Fi delivers 10 ms apart, and thins a 30 fps sender to about 15 fps. Fake clock, no sockets."""
+    with env(HANDOVER_MIN_FRAME_GAP=None):
+        engine = main.Engine()
+        cam = main.Camera(None, 1, 0.0)  # type: ignore[arg-type]
+        engine.cams, engine.cameras, engine.active = [cam], 1, cam
+        before = main.metrics["frames_too_fast"]
+        t = 100.0
+        for _ in range(30):  # 2 s at 15 fps
+            engine.camera_frame(cam, FRAME, t)
+            t += 1 / 15
+        assert engine.frame_seq == 30 and main.metrics["frames_too_fast"] == before
+        for _ in range(10):  # bunched pairs: 10 ms apart, then a normal gap
+            engine.camera_frame(cam, FRAME, t)
+            engine.camera_frame(cam, FRAME, t + 0.01)
+            t += 2 / 15
+        assert engine.frame_seq == 40 and main.metrics["frames_too_fast"] == before + 10
+        seq = engine.frame_seq
+        for _ in range(60):  # 2 s at 30 fps
+            engine.camera_frame(cam, FRAME, t)
+            t += 1 / 30
+        assert 29 <= engine.frame_seq - seq <= 31, engine.frame_seq - seq
+
+
+def test_goto_right_after_select_without_a_camera() -> None:
+    """After a hub restart the web app re-selects its lesson and jumps back to its step at once, before any
+    camera is back. The hub takes the goto, shows that step and keeps accepting next with from."""
+    make_lesson()
+    with hub() as c, c.websocket_connect("/ws/ui") as ui:
+        ui.send_json({"type": "select_lesson", "id": LESSON})
+        ui.send_json({"type": "goto", "step": 2})
+        st = recv_json(ui, lambda m: is_state(m) and m["step"] == 2)
+        assert (st["lesson_id"], st["status"], st["camera_connected"]) == (LESSON, "watching", False)
+        assert not [m for m in drain(ui, 0.3) if m.get("text") and json.loads(m["text"])["type"] == "error"]
+        ui.send_json({"type": "next", "reason": "button", "from": 2})
+        st = recv_json(ui, lambda m: is_state(m) and m["status"] == "done")
+        assert st["step"] == 2 and main.engine.done
+
+
+@contextlib.contextmanager
+def claude_provider(behavior: Callable[[], Any], key: str | None = "sk-ant-test-not-real",
+                    spend_total_usd: float = 0.0) -> Iterator[list]:
+    """Claude mode through the real check.check_frame with a fake client (never the SDK: HANDOVER_NO_NETWORK
+    stays on), a fake or no key (the repo .env is not read) and a temp ledger holding spend_total_usd."""
+    ledger = TMP / f"spend-{time.monotonic_ns()}.json"
+    ledger.write_text(json.dumps({"version": 1, "days": {}, "total": {"usd": spend_total_usd, "calls": 1}}), "utf-8")
+    calls: list = []
+
+    async def create(**kw: Any) -> Any:
+        calls.append(kw)
+        out = behavior()
+        if isinstance(out, BaseException):
+            raise out
+        return out
+
+    from types import SimpleNamespace
+    fake = SimpleNamespace(messages=SimpleNamespace(create=create))
+    with env(HANDOVER_CHECK=None, HANDOVER_CHECK_PROVIDER="claude", ANTHROPIC_API_KEY=key,
+             HANDOVER_CLAUDE_SPEND_FILE=str(ledger), HANDOVER_NO_NETWORK="1"), \
+            patched(check, _get_claude=lambda: fake, _read_env_file=lambda: {}):
+        yield calls
+
+
+def test_offline_reasons_reached_through_the_real_check_path() -> None:
+    """no_key, budget, rate_limited and errors each turn checks off with that reason when the real check_frame
+    runs (only the SDK client is faked): what the demo shows when a key is missing or invalid, the ledger is
+    full, the provider says 429, or calls keep failing."""
+    import anthropic
+    import httpx2
+
+    req = httpx2.Request("POST", "https://api.anthropic.com/v1/messages")
+    make_lesson()
+    with claude_provider(lambda: AssertionError("no call without a key"), key=None) as calls, hub() as c, \
+            c.websocket_connect("/ws/ui") as ui:
+        assert (recv_json(ui, is_state)["check_offline_reason"]) == "no_key"  # at startup, before any frame
+        assert calls == []
+    invalid = anthropic.AuthenticationError("401 test", response=httpx2.Response(401, request=req), body=None)
+    rate = anthropic.RateLimitError("429 test", response=httpx2.Response(429, request=req), body=None)
+    for behavior, total, want in ((lambda: invalid, 0.0, "no_key"),  # a key that is set but invalid
+                                  (lambda: AssertionError("budget makes no call"), 1000.0, "budget"),
+                                  (lambda: rate, 0.0, "rate_limited"),
+                                  (lambda: RuntimeError("provider down"), 0.0, "errors")):
+        with claude_provider(behavior, spend_total_usd=total) as calls, hub() as c, \
+                c.websocket_connect("/ws/ui") as ui, c.websocket_connect("/ws/camera") as cam:
+            assert not select(ui)["check_offline"]
+            i = 0
+            deadline = time.monotonic() + 5
+            while not main.engine.breaker.offline and time.monotonic() < deadline:
+                cam.send_bytes(jpeg((i * 40 % 255, 60, 60), (320, 240)))
+                i += 1
+                time.sleep(0.25)
+            st = recv_json(ui, lambda m: is_state(m) and m["check_offline"])
+            assert st["check_offline_reason"] == want, (want, st["check_offline_reason"])
+            assert st["check_mode"] == "claude"
+            if want == "budget":
+                assert calls == []
+            ui.send_json({"type": "next", "reason": "button", "from": 0})  # Next still works while checks are off
+            assert recv_json(ui, lambda m: m["type"] == "advance")["to"] == 1
+
+
+def test_slow_databricks_never_delays_checks_or_advances() -> None:
+    """With Databricks on and the warehouse hanging, the flush thread is stuck in its send, yet a camera
+    advance and a Next arrive on time; when the send then fails, nothing reaches the engine and the thread
+    lives on. No request leaves the process: the send itself is the fake."""
+    import threading
+
+    from server import databricks
+
+    make_lesson()
+    entered, release = threading.Event(), threading.Event()
+    sink_errors = main.metrics["event_sink_errors"]
+
+    def hanging_send(batch: list) -> tuple[int, list]:
+        entered.set()
+        release.wait(10)
+        raise OSError("warehouse unreachable")
+
+    try:
+        with patched(databricks, _enabled=lambda: True, _send_batch=hanging_send, BACKOFF_MAX=0.2), \
+                env(HANDOVER_MOCK_PASS_SECONDS="1", HANDOVER_DEBOUNCE_N="1"), \
+                patched(main, VERIFIED_HOLD=0.05, check_mode=lambda: "claude"), \
+                hub() as c, c.websocket_connect("/ws/ui") as ui, c.websocket_connect("/ws/camera") as cam:
+            # Mock checks, but the run is tagged as a real one, so its events take the queue (a mock run stays
+            # in the local JSONL only) and every event below goes through the enqueue path during the hang.
+            select(ui)
+            assert databricks._queue
+            with databricks._cond:  # what end_run does after a run; here so the worker sends at once
+                databricks._flush_now.set()
+                databricks._cond.notify_all()
+            assert entered.wait(3), "flush thread never started its send"
+            start = time.monotonic()
+            while main.engine.step == 0 and time.monotonic() - start < 4:
+                cam.send_bytes(FRAME)
+                time.sleep(0.1)
+            camera_s = time.monotonic() - start
+            assert main.engine.step == 1 and camera_s < 2.5, camera_s  # 1 s mock pass plus a check, not 10 s
+            t0 = time.monotonic()
+            ui.send_json({"type": "next", "reason": "button", "from": 1})
+            recv_json(ui, lambda m: is_state(m) and m["step"] == 2)
+            assert time.monotonic() - t0 < 0.5 and not release.is_set()  # all while the send still hangs
+            assert databricks._queue  # the advances queued behind the hanging send
+            release.set()
+            time.sleep(0.3)  # the send raises in the worker thread
+            ui.send_json({"type": "back", "from": 2})
+            assert recv_json(ui, lambda m: is_state(m) and m["step"] == 1)
+            assert databricks._thread is not None and databricks._thread.is_alive()
+            assert main.metrics["event_sink_errors"] == sink_errors
+            with databricks._cond:  # empty before the real send is back, so nothing is ever sent for real
+                databricks._queue.clear()
+                databricks._flush_now.clear()
+    finally:
+        release.set()
+        with databricks._cond:
+            databricks._queue.clear()
+            databricks._flush_now.clear()
 
 
 if __name__ == "__main__":

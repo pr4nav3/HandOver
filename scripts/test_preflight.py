@@ -400,7 +400,7 @@ def test_certs_cases():
         assert [rows[k].status for k in ("certs", "cert IP", "cert expiry")] == [pf.OK] * 3
         with patch(pf, "run", openssl()):
             r = by_check(pf.check_certs(repo, "192.168.1.9"))["cert IP"]
-        assert r.status == pf.FAIL and "192.168.1.9" in r.detail and "certs.sh" in r.fix
+        assert r.status == pf.FAIL and "192.168.1.9" in r.detail and pf.CERTS_FIX in r.fix
         with patch(pf, "run", openssl(days=-2)):
             assert by_check(pf.check_certs(repo, "10.0.0.5"))["cert expiry"].status == pf.FAIL
         with patch(pf, "run", openssl(days=3)):
@@ -416,7 +416,7 @@ def test_certs_cases():
 def test_hub_not_running():
     with env(), patch(pf, "hub_running", lambda p: False):
         rows = pf.check_hub()
-    assert rows[0].status == pf.SKIP and "run_server.sh" in rows[0].fix
+    assert rows[0].status == pf.SKIP and pf.RUN_HUB in rows[0].fix
 
 
 def test_hub_state_rows():
@@ -454,6 +454,13 @@ def test_network():
 
 
 def test_lan_ip_fallbacks():
+    with patch(pf, "WINDOWS", False):
+        _lan_ip_mac()
+    with patch(pf, "WINDOWS", True), patch(pf, "route_ip", lambda: "172.20.10.2"):
+        assert pf.lan_ip() == "172.20.10.2"
+
+
+def _lan_ip_mac():
     run = fake_run({("ipconfig", "getifaddr", "en0"): (1, "", ""),
                     ("ipconfig", "getifaddr", "en1"): (0, "172.20.10.2\n", "")})
     with patch(pf, "run", run):
@@ -466,6 +473,15 @@ def test_lan_ip_fallbacks():
 # ---------------------------------------------------------------- 11. mac health
 
 def test_health():
+    with patch(pf, "WINDOWS", False):
+        _health_mac()
+    with patch(pf, "WINDOWS", True), patch(pf, "win_memory_free_pct", lambda: 8):
+        rows = by_check(pf.check_health(REPO))
+    assert rows["memory"].status == pf.FAIL and rows["load"].status == rows["thermal"].status == pf.SKIP
+    assert rows["disk"].status in (pf.OK, pf.WARN, pf.FAIL)
+
+
+def _health_mac():
     good = fake_run({("sysctl",): (0, "{ 3.1 2.9 2.5 }\n18\n", ""),
                      ("memory_pressure",): (0, "System-wide memory free percentage: 64%", ""),
                      ("pmset",): (0, "Note: No thermal warning level has been recorded", "")})
@@ -481,6 +497,44 @@ def test_health():
     with patch(pf, "run", fake_run({})):
         rows = by_check(pf.check_health(REPO))
     assert rows["load"].status == rows["memory"].status == rows["thermal"].status == pf.SKIP
+
+
+# ---------------------------------------------------------------- ports
+
+NETSTAT = """
+Active Connections
+
+  Proto  Local Address          Foreign Address        State           PID
+  TCP    0.0.0.0:8000           0.0.0.0:0              LISTENING       42320
+  TCP    0.0.0.0:8443           0.0.0.0:0              LISTENING       42320
+  TCP    127.0.0.1:8000         127.0.0.1:51000        ESTABLISHED     9999
+  TCP    0.0.0.0:18000          0.0.0.0:0              LISTENING       7
+"""
+STALE = r'"C:\Python312\python.exe" -m server.main'
+
+
+def test_ports_name_a_stale_listener():
+    run = fake_run({("netstat",): (0, NETSTAT, ""), ("powershell",): (0, STALE + "\n", "")})
+    with env(), patch(pf, "WINDOWS", True), patch(pf, "run", run):
+        assert pf.listener_pids(8000) == [42320] and pf.listener_pids(18) == []
+        rows = by_check(pf.check_ports(REPO))
+    for name, p in (("http port", "8000"), ("https port", "8443")):
+        r = rows[name]
+        assert r.status == pf.WARN and p in r.detail and "PID 42320" in r.detail, r
+        assert "python.exe -m server.main" in r.detail and "Stop-Process -Id 42320" in r.fix
+    assert sum(c[0] == "powershell" for c in run.calls) == 1  # one lookup per PID
+    ours = f'"{REPO / ".venv" / "Scripts" / "python.exe"}" -m server.main'
+    with env(), patch(pf, "WINDOWS", True), \
+            patch(pf, "run", fake_run({("netstat",): (0, NETSTAT, ""), ("powershell",): (0, ours, "")})):
+        assert by_check(pf.check_ports(REPO))["http port"].status == pf.OK
+    with env(HANDOVER_PORT="8061", HANDOVER_HTTPS_PORT="8062"), patch(pf, "WINDOWS", False), \
+            patch(pf, "run", fake_run({("lsof",): (1, "", "")})):
+        rows = by_check(pf.check_ports(REPO))
+    assert rows["http port"].status == rows["https port"].status == pf.OK
+    with env(), patch(pf, "WINDOWS", False), \
+            patch(pf, "run", fake_run({("lsof",): (0, "501\n", ""), ("ps",): (0, "/usr/bin/nc -l 8000\n", "")})):
+        r = by_check(pf.check_ports(REPO))["http port"]
+    assert r.status == pf.WARN and "PID 501: nc -l 8000 (in /usr/bin)" in r.detail and "kill 501" in r.fix
 
 
 # ---------------------------------------------------------------- 12. git

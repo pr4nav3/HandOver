@@ -4,6 +4,27 @@ What to run on the Mac, in order, and what to do when something breaks.
 
 Back to [server/README.md](../README.md).
 
+## Demo day on Windows
+
+PowerShell in the repo root. Never set `HANDOVER_CHECK=mock` for the real demo.
+
+| # | Step | Command or action | Expect |
+|---|---|---|---|
+| 1 | Stop stale hubs | `Get-NetTCPConnection -State Listen -LocalPort 8000,8443 -ErrorAction SilentlyContinue \| select LocalPort,OwningProcess`, then `Stop-Process -Id <PID>` for each | Nothing listens on 8000 or 8443. `run_server.ps1` refuses to start and names the PID otherwise |
+| 2 | Preflight | `.venv\Scripts\python.exe scripts\preflight.py` | `READY` or `READY WITH WARNINGS`. The `Ports` rows name any PID still on 8000 or 8443; `cert IP` must cover the laptop IP |
+| 3 | Start the hub | `scripts\run_server.ps1` | `Hub: ... LAN: http://<IP>:8000/`, `Phone camera page: https://<IP>:8443/capture`, then `check: claude claude-haiku-5-5`. Ctrl+C stops it cleanly |
+| 4 | Open the screens | Laptop: `http://localhost:8000/` (the Learn screen); a second screen or projector: `http://<IP>:8000/` | Lessons list loads; the live pane shows "Connect a camera" with a QR code |
+| 5 | Pair the phone | Same Wi-Fi or hotspot as the laptop. Scan the QR code (or open `https://<IP>:8443/capture` in Safari), allow the camera. The HandOver app: enter `http://<IP>:8000` (the hub logs it as `pair a phone: ...`) | The top bar names the camera; frames show on the big screen |
+| 6 | Replay fallback | `.venv\Scripts\python.exe -m server.replay lessons\fortune-teller-v1\norm.mp4 --select fortune-teller-v1 --loop` (or a clean fold recording) | The "Recording" banner shows; steps advance from the file |
+| 7 | Breaker fallback | Rehearse once: `$env:ANTHROPIC_API_KEY = "sk-ant-invalid"; scripts\run_server.ps1` (the 401 is not billed) | "Checks off, use Next" with reason `no_key`; Next still moves every step. Remove the variable and restart before judging |
+| 8 | Last look | `.venv\Scripts\python.exe -m server.spend` | Today and the total are well under $20 and $50 |
+
+Phone pairing, once per laptop and network:
+
+- Trust the mkcert root on the iPhone: `mkcert -CAROOT` shows the folder; AirDrop or mail `rootCA.pem` to the phone, install the profile, then Settings, General, About, Certificate Trust Settings, turn it on.
+- The certs must name the laptop IP: rerun `mkcert -cert-file certs/cert.pem -key-file certs/key.pem <laptop IP> localhost 127.0.0.1` after an IP change, then restart the hub.
+- Windows Defender Firewall must allow Python on the network in use. A phone hotspot is often a Public network: allow `.venv\Scripts\python.exe` on Public too, or mark the network Private. Test from the phone: `http://<IP>:8000/` must load.
+
 ## 1. Start the hub
 
 ```sh
@@ -100,7 +121,7 @@ Frames go from the hub to the AI provider (Claude or Gemini, whichever `state.ch
 | No `Phone camera page` line at start | No certs | `scripts/certs.sh` |
 | Safari will not open the camera | Page opened over http, or root not trusted | Use `https://...:8443/capture`; trust the mkcert root on the phone |
 | Capture page worked yesterday, not today | Mac IP changed | Rerun `scripts/certs.sh`, restart the hub |
-| Hub exits at start | Port 8000 or 8443 in use (another hub) | `lsof -nP -iTCP:8000 -sTCP:LISTEN`, stop that process |
+| Hub exits at start | Port 8000 or 8443 in use (another hub) | The hub logs `port 8000 is already in use`. Mac: `lsof -nP -iTCP:8000 -sTCP:LISTEN`; Windows: `netstat -ano \| findstr :8000` (or preflight's `Ports` rows), then stop that PID |
 | Steps never advance by camera | Manual step, no camera connected, or no lesson selected | Check `status` and `camera_connected` in state; select the lesson |
 | Log: `reference frame missing` | `frames/NN.jpg` gone | Recut the lesson |
 | `last_check` is `unsure`, 0 every time | Provider failing: key, network, model id, budget | Read the `check failed` log line; see section 6 |

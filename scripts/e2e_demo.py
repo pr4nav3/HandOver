@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """End-to-end demo test: the real learn screen in Chrome against a mock hub and the replay camera.
 
-    .venv/bin/python scripts/e2e_demo.py [--headed] [--keep]
+    .venv/bin/python scripts/e2e_demo.py [--headed] [--keep]        (Windows: .venv/Scripts/python.exe)
 
 Builds web/ into a temp folder (never touches web/dist), copies lessons/demo-v1 into a temp lessons
 folder with a common_mistake on step 2, starts the hub in mock mode on 8095 (no keys, no Databricks, events
@@ -9,12 +9,14 @@ to a temp file, HANDOVER_NO_NETWORK=1) with a planted "behind"
 mistake on step 2, runs scripts/e2e/learn_flow.mjs in installed Chrome, and starts server.replay once
 the page is up. Screenshots, flow.json, summary.json and the hub and replay logs go to
 scripts/out/e2e-<time>/. Prints a PASS/FAIL table; exit code 0 only when every row passed.
-Everything it starts is stopped at the end, by process group. Ports 8095, 8096 and 5192 must be free.
+Everything it starts is stopped at the end, by process group (taskkill /T on Windows). Ports 8095, 8096
+and 5192 must be free. The browser is installed Chrome, else Edge (E2E_CHANNEL picks one).
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
 import datetime as dt
 import json
 import os
@@ -30,7 +32,8 @@ import urllib.request
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-PY = REPO / ".venv" / "bin" / "python"
+WINDOWS = os.name == "nt"
+PY = REPO / ".venv" / ("Scripts/python.exe" if WINDOWS else "bin/python")
 FLOW = REPO / "scripts" / "e2e" / "learn_flow.mjs"
 LESSON = "demo-v1"
 MISTAKE = "Flip it over first."
@@ -89,12 +92,31 @@ def start(cmd: list[str], cwd: Path, log: Path, env: dict | None = None, pipe: b
     isolated_env() instead of the full environment."""
     out = subprocess.PIPE if pipe else open(log, "wb")
     base = isolated_env() if isolated else dict(os.environ)
+    group = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if WINDOWS else {"start_new_session": True}
+    text = {"text": True, "encoding": "utf-8", "errors": "replace"} if pipe else {}
     return subprocess.Popen(cmd, cwd=cwd, env={**base, **(env or {})}, stdout=out, stderr=subprocess.STDOUT,
-                            stdin=subprocess.DEVNULL, start_new_session=True, text=pipe or None)
+                            stdin=subprocess.DEVNULL, **group, **text)
 
 
-def stop(proc: subprocess.Popen | None) -> None:
+def stop(proc: subprocess.Popen | None, graceful: bool = False) -> None:
+    """Stops proc and everything it spawned: SIGTERM then SIGKILL to the group. Windows: with graceful, Ctrl+Break
+    to its process group first (the hub shuts down cleanly on it); then taskkill /T /F on the tree if it still
+    runs (a browser started by node is not on the console, so only the tree kill reaches it)."""
     if proc is None or proc.poll() is not None:
+        return
+    if WINDOWS:
+        if graceful:
+            with contextlib.suppress(OSError):
+                proc.send_signal(signal.CTRL_BREAK_EVENT)
+            with contextlib.suppress(subprocess.TimeoutExpired):
+                proc.wait(5)
+            if proc.poll() is not None:
+                return
+        subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], capture_output=True)
+        try:
+            proc.wait(10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
         return
     for sig, wait in ((signal.SIGTERM, 5), (signal.SIGKILL, 5)):
         try:
@@ -108,6 +130,8 @@ def stop(proc: subprocess.Popen | None) -> None:
 
 
 def wait_for_load() -> None:
+    if not hasattr(os, "getloadavg"):  # Windows
+        return
     while True:
         load = os.getloadavg()[1]
         if load <= LOAD_LIMIT:
@@ -120,10 +144,25 @@ def make_lessons(tmp: Path) -> Path:
     lessons = tmp / "lessons"
     shutil.copytree(REPO / "lessons" / LESSON, lessons / LESSON)
     f = lessons / LESSON / "lesson.json"
-    data = json.loads(f.read_text())
+    data = json.loads(f.read_text(encoding="utf-8"))
     data["steps"][1]["common_mistake"] = MISTAKE
-    f.write_text(json.dumps(data, indent=2) + "\n")
+    f.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
     return lessons
+
+
+def link_dir(src: Path, dst: Path) -> None:
+    """dst points at src: a symlink, or on Windows a directory junction (no admin rights needed)."""
+    if WINDOWS:
+        import _winapi
+        _winapi.CreateJunction(str(src), str(dst))
+    else:
+        os.symlink(src, dst, target_is_directory=True)
+
+
+def unlink_dir(link: Path) -> None:
+    """Removes a link made by link_dir without touching what it points at."""
+    if link.is_symlink() or (WINDOWS and link.is_junction()):
+        (os.rmdir if WINDOWS else os.unlink)(link)
 
 
 def build_web(tmp: Path, out: Path) -> tuple[Path, str]:
@@ -132,15 +171,16 @@ def build_web(tmp: Path, out: Path) -> tuple[Path, str]:
     shutil.copytree(REPO / "web", web, ignore=shutil.ignore_patterns("node_modules", "dist", "screenshots"))
     log = out / "web-build.log"
     how = "node_modules linked"
+    npm = shutil.which("npm") or "npm"  # npm.cmd on Windows
     try:
-        os.symlink(REPO / "web" / "node_modules", web / "node_modules", target_is_directory=True)
+        link_dir(REPO / "web" / "node_modules", web / "node_modules")
     except OSError:
         how = "npm ci in the temp copy"
         with open(log, "ab") as f:
-            subprocess.run(["npm", "ci", "--no-audit", "--no-fund"], cwd=web, stdout=f, stderr=subprocess.STDOUT,
+            subprocess.run([npm, "ci", "--no-audit", "--no-fund"], cwd=web, stdout=f, stderr=subprocess.STDOUT,
                            check=True)
     with open(log, "ab") as f:
-        subprocess.run(["npm", "run", "build"], cwd=web, stdout=f, stderr=subprocess.STDOUT, check=True)
+        subprocess.run([npm, "run", "build"], cwd=web, stdout=f, stderr=subprocess.STDOUT, check=True)
     if not (web / "dist" / "index.html").is_file():
         raise RuntimeError("build finished without dist/index.html")
     return web, how
@@ -151,7 +191,7 @@ def run_flow(app: str, out: Path, web: Path, headed: bool, on_ready, timeout: fl
     env = {"E2E_APP": app, "E2E_OUT": str(out), "E2E_WEB": str(REPO / "web"), "E2E_LESSON": LESSON,
            "E2E_MISTAKE": MISTAKE, "E2E_HEADED": "1" if headed else "0"}
     proc = start(["node", str(FLOW)], REPO, out / "flow.log", env, pipe=True)
-    log = open(out / "flow.log", "w")
+    log = open(out / "flow.log", "w", encoding="utf-8")
 
     def pump() -> None:
         for line in proc.stdout:
@@ -198,6 +238,7 @@ def main() -> int:
     ap.add_argument("--keep", action="store_true", help="keep the temp folder (web build and lessons copy)")
     ap.add_argument("--timeout", type=float, default=240, help="seconds for the whole browser flow (default 240)")
     a = ap.parse_args()
+    sys.stdout.reconfigure(errors="replace")  # a cp1252 Windows console must not crash on a curly quote
 
     out = REPO / "scripts" / "out" / f"e2e-{dt.datetime.now().strftime('%Y%m%d-%H%M%S')}"
     out.mkdir(parents=True)
@@ -246,7 +287,8 @@ def main() -> int:
             rows.add("PASS", "app served", time.monotonic() - t, "hub serves the temp build (HANDOVER_WEB_DIST)")
         else:
             app = f"http://localhost:{VITE_PORT}"
-            procs["vite"] = start([str(web / "node_modules" / ".bin" / "vite"), "--port", str(VITE_PORT), "--strictPort"],
+            vite = web / "node_modules" / ".bin" / ("vite.cmd" if WINDOWS else "vite")
+            procs["vite"] = start([str(vite), "--port", str(VITE_PORT), "--strictPort"],
                                   web, out / "vite.log", {"VITE_API_TARGET": base})
             if not wait_http(app, 30, procs["vite"]):
                 rows.add("FAIL", "app served", time.monotonic() - t, f"Vite did not start; see {out / 'vite.log'}")
@@ -273,7 +315,7 @@ def main() -> int:
         if code is None:
             rows.add("FAIL", "browser flow", time.monotonic() - t, f"timed out after {a.timeout:g} s")
         if flow_file.is_file():
-            rows.rows.extend(json.loads(flow_file.read_text())["rows"])
+            rows.rows.extend(json.loads(flow_file.read_text(encoding="utf-8"))["rows"])
         elif code is not None:
             rows.add("FAIL", "browser flow", time.monotonic() - t, f"exit {code}, no flow.json; see {out / 'flow.log'}")
         return 1 if rows.failed() else 0
@@ -282,14 +324,15 @@ def main() -> int:
         return 130
     finally:
         for name in ("replay", "vite", "hub"):
-            stop(procs[name])
+            stop(procs[name], graceful=name in ("replay", "hub"))
         if a.keep:
             print(f"temp folder kept: {tmp}")
         else:
+            unlink_dir(tmp / "web" / "node_modules")  # never delete the real web/node_modules through the link
             shutil.rmtree(tmp, ignore_errors=True)
         (out / "summary.json").write_text(json.dumps(
             {"when": dt.datetime.now().isoformat(timespec="seconds"), "app": base, "lesson": LESSON,
-             "passed": not rows.failed(), "rows": rows.rows}, indent=2) + "\n")
+             "passed": not rows.failed(), "rows": rows.rows}, indent=2) + "\n", encoding="utf-8")
         print_table(rows.rows, f"HandOver e2e demo  lesson {LESSON}  hub {base}")
         print(f"screenshots and logs: {out}")
 

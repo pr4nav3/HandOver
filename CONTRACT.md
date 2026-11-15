@@ -84,7 +84,7 @@ Errors are FastAPI style: status plus `{"detail": "<message>"}`; messages below 
 - Stale guard: `next` and `back` may carry `from` (the step the client showed). The hub ignores the command when `from` differs from the current position (on the done screen both `total - 1` and `total` count). `from` absent = always applied.
 - Every step change resets the debouncer, `last_check`, timers, and ignores frames taken before the step began.
 - Status precedence: `done` > `manual` > `verified` > `checking` > `watching`. No lesson: `watching`, `step 0`, `total 0`.
-- Camera check only on camera steps, only with a camera connected and a readable `ref_frame`. One check in flight, newest frame only. Advance by camera: N consecutive passes, `verified` for 1.2 s, then `go(position + 1, "camera")`.
+- Camera check only on camera steps, only with a camera connected and a readable `ref_frame`. Up to `HANDOVER_MAX_INFLIGHT` (2) checks in flight, each on a different settled frame. Advance by camera: N consecutive passes, `verified` for `HANDOVER_VERIFIED_HOLD` (0.8 s), then `go(position + 1, "camera")`.
 - Manual steps advance only by next (button, voice, or the phone).
 - Active camera (NEW, W8): the camera that connected or sent hello most recently; only its frames are judged and forwarded. If it sends nothing for 5 s and another camera sent a frame in the last 2 s, that camera becomes active. `camera_connected` broadcasts on 0 to 1, 1 to 0, and on active-camera change.
 
@@ -149,7 +149,7 @@ Hub to client:
 | `camera_connected` | bool | EXISTS |
 | `camera` | `{"name","platform","source"}` of the active camera, or null. UI shows a "Recording" banner when `source == "file"` | NEW (W5, W8) |
 | `check_offline` | bool: Gemini not in use although mode is gemini; UI shows "Checks off, use Next" | NEW (M6) |
-| `check_offline_reason` | `"no_key"`, `"rate_limited"`, `"errors"`, or null | NEW (M6) |
+| `check_offline_reason` | `"no_key"` (no key, or an invalid one), `"rate_limited"`, `"errors"`, `"budget"` (a Claude spend cap is reached), or null | NEW (M6) |
 | `mistake` | the current mistake object (7.2 fields minus `type`) or null; cleared on step change, `dismiss_mistake`, or a yes on this step | NEW (M9) |
 | `check_interval_s` | float: seconds between frames offered to the vision model, at least (`set_check_interval`, else `HANDOVER_CHECK_INTERVAL_S`). Optional for readers | EXISTS |
 | `ui_fps` | int: live frames per second forwarded to each viewer, at most (`HANDOVER_UI_FPS`). Optional for readers | EXISTS |
