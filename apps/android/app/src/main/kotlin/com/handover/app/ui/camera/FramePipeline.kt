@@ -13,16 +13,19 @@ data class FrameSize(val width: Int, val height: Int) {
 
 /**
  * How a camera picture becomes a frame for the hub (CONTRACT.md section 6): turned upright, scaled
- * so the long side is at most [MAX_LONG_SIDE], JPEG at [JPEG_QUALITY], about one per second. Never
- * mirrored, never saved. The socket's send-when-idle drops a frame rather than queue it.
+ * so the long side is at most [MAX_LONG_SIDE], JPEG at [JPEG_QUALITY], about 15 a second so the
+ * learner's feed on the big screen moves smoothly. The hub forwards up to 15 a second to screens and
+ * samples on its own for checks, so a higher send rate does not mean more checks. Never mirrored,
+ * never saved. [FrameSender] drops a frame rather than queue it.
  */
 object FramePipeline {
-    const val MAX_LONG_SIDE = 960
-    const val JPEG_QUALITY = 70
-    const val INTERVAL_MS = 1_000L
+    const val MAX_LONG_SIDE = 640
+    const val JPEG_QUALITY = 50
+    const val FPS = 15
+    const val INTERVAL_MS = 1_000L / FPS
 
     /** Thermal or battery trouble halves the rate (SCREENS.md 10). */
-    const val SLOW_INTERVAL_MS = 2_000L
+    const val SLOW_INTERVAL_MS = INTERVAL_MS * 2
 
     /** The upright size of a [width] x [height] sensor picture after [rotation] degrees. */
     fun upright(width: Int, height: Int, rotation: Int): FrameSize =
@@ -63,7 +66,7 @@ object FramePipeline {
  * one was due, and may go [slackMs] early, so camera jitter neither skips a frame nor speeds the
  * rate up. After a long gap (nothing could be sent) the schedule restarts from now.
  */
-class FrameGate(@Volatile var intervalMs: Long = FramePipeline.INTERVAL_MS, private val slackMs: Long = 50) {
+class FrameGate(@Volatile var intervalMs: Long = FramePipeline.INTERVAL_MS, private val slackMs: Long = 10) {
     private var due = Long.MIN_VALUE / 2
 
     @Synchronized
@@ -72,6 +75,37 @@ class FrameGate(@Volatile var intervalMs: Long = FramePipeline.INTERVAL_MS, priv
     @Synchronized
     fun sent(now: Long) {
         due = if (now - due > intervalMs) now + intervalMs else due + intervalMs
+    }
+}
+
+/**
+ * Sends the newest frame only when the gate is open and the socket is idle; otherwise the frame is
+ * dropped before it is encoded (never queued), so a slow network shows a fresh picture a little less
+ * often instead of a growing delay. Call [offer] from the camera's analysis thread, never the main
+ * thread: the JPEG is made there, and only for frames that will go out.
+ */
+class FrameSender(
+    val gate: FrameGate = FrameGate(),
+    private val busy: () -> Boolean,
+    private val send: (ByteArray) -> Boolean,
+    private val clock: () -> Long = { android.os.SystemClock.elapsedRealtime() },
+) {
+    private val encoding = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /** True when a frame went out. [encode] runs only when the frame will be sent. */
+    fun offer(encode: () -> ByteArray): Boolean {
+        val now = clock()
+        if (!gate.ready(now) || busy()) return false
+        // A second camera thread offering at the same moment is dropped too.
+        if (!encoding.compareAndSet(false, true)) return false
+        try {
+            val bytes = runCatching(encode).getOrNull() ?: return false
+            if (!send(bytes)) return false
+            gate.sent(now)
+            return true
+        } finally {
+            encoding.set(false)
+        }
     }
 }
 

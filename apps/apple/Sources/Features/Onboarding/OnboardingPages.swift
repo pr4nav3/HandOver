@@ -1,7 +1,8 @@
 import SwiftUI
 
 /// The shared layout of a step page: "Step 2 of 5", title, line, content, and the primary button at the
-/// bottom (SCREENS.md 25.1).
+/// bottom (SCREENS.md 25.1). On a short screen (iPhone landscape) the button scrolls with the page instead of
+/// staying pinned, so the content keeps the room.
 struct OnboardingPage<Content: View, Actions: View>: View {
     var stepLabel: String?
     var title: String
@@ -11,42 +12,51 @@ struct OnboardingPage<Content: View, Actions: View>: View {
     @Environment(\.theme) private var theme
 
     var body: some View {
-        VStack(spacing: 0) {
-            ScrollView {
-                VStack(spacing: HOSpace.xl) {
-                    VStack(spacing: HOSpace.s) {
-                        if let stepLabel {
-                            Text(stepLabel)
-                                .font(theme.fonts.footnote)
-                                .foregroundStyle(theme.colors.ink2)
-                        }
-                        Text(title)
-                            .hoFont(.display, theme)
-                            .foregroundStyle(theme.colors.ink)
-                            .multilineTextAlignment(.center)
-                            .accessibilityAddTraits(.isHeader)
-                        if let line {
-                            Text(line)
-                                .font(theme.fonts.body)
-                                .foregroundStyle(theme.colors.ink2)
+        GeometryReader { geo in
+            let inline = HOLayout.isShort(geo.size.height)
+            VStack(spacing: 0) {
+                ScrollView {
+                    VStack(spacing: HOSpace.xl) {
+                        VStack(spacing: HOSpace.s) {
+                            if let stepLabel {
+                                Text(stepLabel)
+                                    .font(theme.fonts.footnote)
+                                    .foregroundStyle(theme.colors.ink2)
+                            }
+                            Text(title)
+                                .hoFont(.display, theme)
+                                .foregroundStyle(theme.colors.ink)
                                 .multilineTextAlignment(.center)
-                                .fixedSize(horizontal: false, vertical: true)
-                                .frame(maxWidth: 360)
+                                .accessibilityAddTraits(.isHeader)
+                            if let line {
+                                Text(line)
+                                    .font(theme.fonts.body)
+                                    .foregroundStyle(theme.colors.ink2)
+                                    .multilineTextAlignment(.center)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .frame(maxWidth: 360)
+                            }
+                        }
+                        .padding(.top, inline ? HOSpace.s : HOSpace.xxl)
+                        content
+                        if inline {
+                            VStack(spacing: HOSpace.s) { actions }
                         }
                     }
-                    .padding(.top, HOSpace.xxl)
-                    content
+                    .padding(.horizontal, HOSpace.l)
+                    .padding(.bottom, HOSpace.l)
+                    .frame(maxWidth: 520)
+                    .frame(maxWidth: .infinity)
                 }
-                .padding(.horizontal, HOSpace.l)
-                .padding(.bottom, HOSpace.l)
-                .frame(maxWidth: 520)
-                .frame(maxWidth: .infinity)
+                .scrollBounceBehavior(.basedOnSize)
+                if !inline {
+                    VStack(spacing: HOSpace.s) { actions }
+                        .padding(.horizontal, HOSpace.l)
+                        .padding(.bottom, HOSpace.l)
+                        .frame(maxWidth: 520)
+                }
             }
-            .scrollBounceBehavior(.basedOnSize)
-            VStack(spacing: HOSpace.s) { actions }
-                .padding(.horizontal, HOSpace.l)
-                .padding(.bottom, HOSpace.l)
-                .frame(maxWidth: 520)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 }
@@ -66,59 +76,14 @@ struct ConnectPage: View {
     @State private var appeared = false
 
     var body: some View {
-        VStack(spacing: 0) {
-            Spacer(minLength: HOSpace.xxl)
-            VStack(spacing: HOSpace.l) {
-                HubMark(size: 88)
-                    .scaleEffect(appeared || reduceMotion ? 1 : 0.9)
-                    .opacity(appeared ? 1 : 0)
-                VStack(spacing: HOSpace.s) {
-                    if let label = flow.progress.stepLabel {
-                        Text(label).font(theme.fonts.footnote).foregroundStyle(theme.colors.ink2)
-                    }
-                    Text("Connect to your hub")
-                        .hoFont(.largeTitle, theme)
-                        .foregroundStyle(theme.colors.ink)
-                        .multilineTextAlignment(.center)
-                    Text("The hub is HandOver running on a computer near you. It keeps your lessons.")
-                        .font(theme.fonts.body)
-                        .foregroundStyle(theme.colors.ink2)
-                        .multilineTextAlignment(.center)
-                        .frame(maxWidth: 360)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .opacity(appeared ? 1 : 0)
+        // Fills the screen when it fits; scrolls on a short screen (iPhone landscape) instead of clipping.
+        GeometryReader { geo in
+            ScrollView {
+                page(short: HOLayout.isShort(geo.size.height))
+                    .frame(minHeight: geo.size.height)
             }
-            .padding(.horizontal, HOSpace.l)
-            Spacer(minLength: HOSpace.xxl)
-            VStack(spacing: HOSpace.s) {
-                #if os(macOS)
-                Button { open(address: true) } label: { Text("Enter Address") }
-                    .buttonStyle(HOButtonStyle(.primary, size: .large, fullWidth: true))
-                    .keyboardShortcut(.defaultAction)
-                if CameraCapture.isAvailable {
-                    Button { open(address: false) } label: { Label("Scan a Code", systemImage: "qrcode.viewfinder") }
-                        .buttonStyle(HOButtonStyle(.secondary, size: .large, fullWidth: true))
-                }
-                #else
-                Button { open(address: false) } label: { Label("Connect to a Hub", systemImage: "qrcode.viewfinder") }
-                    .buttonStyle(HOButtonStyle(.primary, size: .large, fullWidth: true))
-                Button { open(address: true) } label: { Text("Enter Address") }
-                    .buttonStyle(HOButtonStyle(.secondary, size: .large, fullWidth: true))
-                #endif
-                Text("A hub is the HandOver server running on a computer near you.")
-                    .font(theme.fonts.caption)
-                    .foregroundStyle(theme.colors.ink3)
-                    .multilineTextAlignment(.center)
-                    .padding(.top, HOSpace.xs)
-            }
-            .padding(.horizontal, HOSpace.l)
-            .padding(.bottom, HOSpace.l)
-            .frame(maxWidth: 520)
-            .opacity(appeared ? 1 : 0)
-            .offset(y: appeared || reduceMotion ? 0 : 12)
+            .scrollBounceBehavior(.basedOnSize)
         }
-        .frame(maxWidth: .infinity)
         .onAppear {
             withAnimation(HOMotion.resolve(HOMotion.panel, reduceMotion: reduceMotion).delay(0.05)) { appeared = true }
         }
@@ -137,6 +102,57 @@ struct ConnectPage: View {
         .onChange(of: flow.progress.connected) { _, connected in
             if connected { pairing = false }
         }
+    }
+
+    private func page(short: Bool) -> some View {
+        VStack(spacing: 0) {
+            Spacer(minLength: short ? HOSpace.s : HOSpace.xxl)
+            VStack(spacing: short ? HOSpace.m : HOSpace.l) {
+                HubMark(size: short ? 56 : 88)
+                    .scaleEffect(appeared || reduceMotion ? 1 : 0.9)
+                    .opacity(appeared ? 1 : 0)
+                VStack(spacing: HOSpace.s) {
+                    if let label = flow.progress.stepLabel {
+                        Text(label).font(theme.fonts.footnote).foregroundStyle(theme.colors.ink2)
+                    }
+                    Text("Connect to your hub")
+                        .hoFont(.largeTitle, theme)
+                        .foregroundStyle(theme.colors.ink)
+                        .multilineTextAlignment(.center)
+                    Text("The hub is the HandOver app running on a laptop near you. It keeps your lessons.")
+                        .font(theme.fonts.body)
+                        .foregroundStyle(theme.colors.ink2)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: 360)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .opacity(appeared ? 1 : 0)
+            }
+            .padding(.horizontal, HOSpace.l)
+            Spacer(minLength: short ? HOSpace.l : HOSpace.xxl)
+            VStack(spacing: HOSpace.s) {
+                // The hub shows no QR code of its own (run_server.sh prints the address), so typing comes first.
+                Button { open(address: true) } label: { Text("Enter Address") }
+                    .buttonStyle(HOButtonStyle(.primary, size: .large, fullWidth: true))
+                    .keyboardShortcut(.defaultAction)
+                if CameraCapture.isAvailable {
+                    Button { open(address: false) } label: { Label("Scan a Code", systemImage: "qrcode.viewfinder") }
+                        .buttonStyle(HOButtonStyle(.secondary, size: .large, fullWidth: true))
+                }
+                Text("No hub yet? Start HandOver on a laptop on the same Wi-Fi, then tap Enter Address.")
+                    .font(theme.fonts.footnote)
+                    .foregroundStyle(theme.colors.ink2)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, HOSpace.xs)
+            }
+            .padding(.horizontal, HOSpace.l)
+            .padding(.bottom, HOSpace.l)
+            .frame(maxWidth: 520)
+            .opacity(appeared ? 1 : 0)
+            .offset(y: appeared || reduceMotion ? 0 : 12)
+        }
+        .frame(maxWidth: .infinity)
     }
 
     private var cover: some View {
@@ -202,9 +218,9 @@ struct RolePage: View {
                     HStack {
                         Text("Both").font(theme.fonts.bodyMedium)
                         Spacer()
-                        if choice == .both {
-                            Image(systemName: "checkmark.circle.fill").foregroundStyle(theme.colors.accentInk)
-                        }
+                        Image(systemName: choice == .both ? "checkmark.circle.fill" : "circle")
+                            .font(.title3)
+                            .foregroundStyle(choice == .both ? theme.colors.accentInk : theme.colors.ink3)
                     }
                     .foregroundStyle(choice == .both ? theme.colors.accentInk : theme.colors.ink)
                     .padding(.horizontal, HOSpace.l)

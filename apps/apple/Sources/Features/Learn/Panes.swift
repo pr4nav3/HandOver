@@ -290,7 +290,7 @@ struct LivePane: View {
                 view
             case .waiting:
                 placeholder(symbol: "video", title: "Waiting for camera",
-                            hint: "Open HandOver on your phone and tap Be the Camera.")
+                            hint: "On a second phone, open HandOver and tap Be the Camera.")
             case .lost(let last):
                 if let last {
                     Image(decorative: last, scale: 1).resizable().aspectRatio(contentMode: .fit).opacity(0.4)

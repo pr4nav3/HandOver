@@ -211,12 +211,16 @@ extension HubError {
     var friendly: String {
         switch self {
         case .http(let status, let detail):
-            if status == 401, detail.contains("wrong name") { return "That name and passcode do not match." }
+            if status == 401, detail.contains("wrong name") { return "That name and passcode do not match. Check both, then try again." }
             if status == 429 { return "Too many tries. Wait a minute, then try again." }
-            if status == 403 { return "You do not have permission to do that." }
+            if status == 403 { return "You do not have permission to do that. Ask an admin if you need it." }
             return Self.sentence(detail)
-        default:
-            return errorDescription ?? "Something went wrong."
+        case .unreachable:
+            return "Can't reach the hub. Check that it is running and on the same Wi-Fi, then try again."
+        case .badResponse:
+            return "The hub sent an answer this app does not understand. Update the hub, then try again."
+        case .fileUnreadable:
+            return errorDescription ?? "Can't read that file. Try a different one."
         }
     }
 

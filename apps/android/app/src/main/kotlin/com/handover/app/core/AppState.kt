@@ -16,6 +16,13 @@ data class UploadState(
 }
 
 /**
+ * A run ended on this phone. End also sends end_lesson, but the mark stays local until the hub's
+ * state confirms it: a new run (another run id, another lesson, or this phone picking a lesson
+ * again) clears it.
+ */
+data class EndedRun(val lessonId: String, val runId: String?)
+
+/**
  * Everything the screens draw, in one value. The live camera picture is kept apart (see
  * [AppViewModel.frame]) so four pictures a second do not rebuild every screen.
  */
@@ -36,8 +43,19 @@ data class AppState(
     /** The newest problem to show, in plain words, or null. */
     val error: String? = null,
     val upload: UploadState? = null,
+    /** The run this person ended with End on this phone; Learn treats it as no lesson until a new one starts. */
+    val ended: EndedRun? = null,
 ) {
     val connected: Boolean get() = connection.phase == SocketPhase.Open
+
+    /** True when the hub has a lesson and this person has not ended that run here. */
+    val lessonRunning: Boolean
+        get() {
+            val s = session ?: return false
+            val id = s.lessonId ?: return false
+            val e = ended ?: return true
+            return !(e.lessonId == id && (e.runId == null || e.runId == s.runId))
+        }
 
     /** The current step of the active lesson, or null with no lesson or on the done screen. */
     val currentStep: Step? get() = session?.takeIf { !it.done }?.let { lesson?.steps?.getOrNull(it.step) }

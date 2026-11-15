@@ -352,16 +352,30 @@ struct SignInSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: HOSpace.xl) {
-                    Text("Sign In to \(accounts.hub?.host ?? "the Hub")")
-                        .hoFont(.title, theme)
-                        .foregroundStyle(theme.colors.ink)
-                        .multilineTextAlignment(.center)
-                        .padding(.top, HOSpace.l)
+                    VStack(spacing: HOSpace.s) {
+                        Text(accounts.support.setupNeeded ? "Set Up \(accounts.hub?.host ?? "the Hub")"
+                                                          : "Sign In to \(accounts.hub?.host ?? "the Hub")")
+                            .hoFont(.title, theme)
+                            .foregroundStyle(theme.colors.ink)
+                            .multilineTextAlignment(.center)
+                        Text(accounts.support.setupNeeded
+                             ? "No one has an account here yet. Make the first one and you run this hub."
+                             : "Use the name and passcode you have on this hub.")
+                            .font(theme.fonts.callout)
+                            .foregroundStyle(theme.colors.ink2)
+                            .multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(.top, HOSpace.l)
                     if accounts.support.setupNeeded {
                         OwnerSetupForm(hubName: accounts.hub?.host ?? "this hub", onDone: { dismiss() },
                                        onTaken: { Task { await accounts.refresh() } })
                     } else {
-                        SignInForm { dismiss() }
+                        SignInForm(showsFooter: false) { dismiss() }
+                        Text("No account yet? Ask the person who runs this hub to add you. Passcodes stay on the hub.")
+                            .font(theme.fonts.footnote)
+                            .foregroundStyle(theme.colors.ink2)
+                            .multilineTextAlignment(.center)
                     }
                 }
                 .padding(HOSpace.l)

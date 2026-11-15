@@ -14,14 +14,16 @@ struct RecordView: View {
     var onImport: (URL) -> Void
     @State private var model: RecordModel
     @State private var glasses: GlassesController?
-    private let previewLayer: AVCaptureVideoPreviewLayer?
+    /// The phone camera, kept for the screen's life: its preview layer is the one on screen, and switching back
+    /// from the glasses returns to it.
+    @State private var phoneEngine: any RecordCaptureEngine
     private let isPreview: Bool
 
     init(onMakeCourse: @escaping (URL, String) -> Void, onImport: @escaping (URL) -> Void) {
         self.onMakeCourse = onMakeCourse
         self.onImport = onImport
         let recorder = CameraRecorder()
-        previewLayer = recorder.previewLayer
+        _phoneEngine = State(initialValue: recorder)
         _model = State(initialValue: RecordModel(engine: recorder))
         _glasses = State(initialValue: GlassesFeature.isEnabled ? GlassesController.make() : nil)
         isPreview = false
@@ -31,15 +33,15 @@ struct RecordView: View {
     init(preview model: RecordModel, glasses: GlassesController? = nil) {
         onMakeCourse = { _, _ in }
         onImport = { _ in }
-        previewLayer = nil
+        _phoneEngine = State(initialValue: model.engine)
         _model = State(initialValue: model)
         _glasses = State(initialValue: glasses)
         isPreview = true
     }
 
     var body: some View {
-        RecordScreen(model: model, glasses: glasses, previewLayer: previewLayer, isPreview: isPreview,
-                     onMakeCourse: onMakeCourse, onImport: onImport, phoneEngine: model.engine)
+        RecordScreen(model: model, glasses: glasses, previewLayer: (phoneEngine as? CameraRecorder)?.previewLayer,
+                     isPreview: isPreview, onMakeCourse: onMakeCourse, onImport: onImport, phoneEngine: phoneEngine)
     }
 }
 
@@ -204,14 +206,16 @@ private struct RecordScreen: View {
         .padding(.vertical, HOSpace.m)
     }
 
+    /// Camera app style on its side: close and the import on the leading edge, the timer and meter on top, the
+    /// shutter in the middle of the trailing edge with flip (or pause) above it and the last take below.
     private var landscapeControls: some View {
-        HStack {
-            VStack(alignment: .leading) {
+        HStack(alignment: .top, spacing: HOSpace.m) {
+            VStack(alignment: .leading, spacing: HOSpace.s) {
                 closeButton
-                Spacer()
+                Spacer(minLength: 0)
+                if glasses != nil && !model.isRecording { sourceSwitcher }
                 if !model.isRecording { glassesImport }
             }
-            Spacer()
             VStack(spacing: HOSpace.s) {
                 if model.isRecording {
                     RecordTimerPill(elapsed: { model.elapsed() }, paused: model.phase == .paused)
@@ -220,17 +224,28 @@ private struct RecordScreen: View {
                     Text("Say each step out loud as you do it. Pause between steps.")
                         .font(theme.fonts.footnote)
                         .foregroundStyle(.white.opacity(0.7))
+                        .multilineTextAlignment(.center)
                         .padding(.horizontal, HOSpace.m)
                         .padding(.vertical, HOSpace.xs)
                         .hoGlassCapsule()
                 }
-                Spacer()
+                Spacer(minLength: 0)
+                if source == .glasses, let glasses {
+                    if glasses.state.isStreaming {
+                        RecordGlassesChip(state: glasses.state)
+                    } else {
+                        RecordGlassesCard(controller: glasses) { source = .phone }
+                            .frame(maxWidth: 420)
+                    }
+                }
             }
-            Spacer()
+            .frame(maxWidth: .infinity)
             VStack(spacing: HOSpace.xl) {
-                trailingButton
+                Spacer(minLength: 0)
+                if model.isRecording { trailingButton } else { flipButton }
                 RecordShutterButton(mode: shutterMode) { Task { await model.shutter() } }
                 lastTakeButton
+                Spacer(minLength: 0)
             }
         }
         .padding(HOSpace.l)

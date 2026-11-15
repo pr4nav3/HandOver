@@ -39,6 +39,28 @@ export async function invoke<T = unknown>(cmd: string, args: Record<string, unkn
   return JSON.parse(await bridge(`__${cmd}`, args)) as T;
 }
 
+/** One webcam JPEG for the hub, as raw bytes (app/src/main.rs `camera_frame`). */
+export async function sendCameraFrame(jpeg: Uint8Array): Promise<void> {
+  if (inApp) {
+    await window.__TAURI__!.core.invoke("camera_frame", jpeg as unknown as Record<string, unknown>);
+    return;
+  }
+  const r = await fetch("/api/__camera_frame", { method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: jpeg as BodyInit });
+  if (!r.ok) throw new Error("camera frame failed");
+}
+
+/** What a phone needs to pair with this hub (core/src/phone.rs). All null when this computer
+ *  has no address on the local network. */
+export interface Pairing {
+  hub: string | null;
+  label: string | null;
+  link: string | null;
+  svg: string | null;
+}
+
+/** This computer's webcam link to the hub (core/src/camera.rs). */
+export type CameraLink = "connecting" | "sending" | "standby" | "reconnecting" | "replaced" | "off";
+
 export async function onHub(cb: (e: HubEvent) => void) {
   if (inApp) return window.__TAURI__!.event.listen("hub", (e) => cb(e.payload as HubEvent));
   const source = new EventSource("/events");
@@ -108,6 +130,10 @@ export interface HubState {
   check_offline_reason: string | null;
   /** Absent from older hubs; only an explicit value replaces the one on screen. */
   mistake?: Mistake | null;
+  /** Seconds between frames offered to the vision model (Revision 6). Absent from older hubs. */
+  check_interval_s?: number;
+  /** Live frames per second the hub forwards, at most (Revision 6). Absent from older hubs. */
+  ui_fps?: number;
   /** Derived by the core. */
   position: number;
   offline_label: string | null;
@@ -126,7 +152,8 @@ export type HubEvent =
   | { kind: "advance"; advance: Advance }
   | { kind: "mistake"; mistake: Mistake }
   | { kind: "error"; message: string }
-  | { kind: "frame"; n: number };
+  | { kind: "frame"; n: number }
+  | { kind: "camera"; camera: CameraLink };
 
 export interface LessonSummary {
   id: string;

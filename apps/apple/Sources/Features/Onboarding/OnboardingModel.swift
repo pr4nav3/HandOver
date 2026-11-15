@@ -39,6 +39,8 @@ final class OnboardingModel {
 
     func replayWelcome() { update { $0.replayWelcome() } }
 
+    func hideHomeCard() { update { $0.hideHomeCard() } }
+
     /// Settings, About, Show Welcome Again is the only way back in once finished.
     func reset() {
         progress = OnboardingProgress()

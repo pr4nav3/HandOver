@@ -6,46 +6,43 @@ enum CourseRoute: Hashable {
     case editor(String)
 }
 
-/// Starting a lesson: tells the hub (`select_lesson`, then `goto` once the hub is on it) and shows Learn, as a
-/// full screen cover on iPhone and iPad (SCREENS.md 1) and pushed on Mac.
+/// Starting a lesson from a screen. Hands the request to the app's `LearnFlow`, which asks for a camera the
+/// first time, tells the hub (`select_lesson`, then `goto`) and opens the Learn tab with its End button.
 @MainActor
 @Observable
 final class LessonLauncher {
-    var isPresented = false
+    struct Request: Equatable {
+        var lessonId: String
+        var step: Int?
+        var serial: Int
+    }
+
+    private(set) var request: Request?
+    private var serial = 0
 
     func start(_ id: String, at step: Int? = nil, model: AppModel) {
-        model.select(lesson: id)
-        if let step, step > 0 {
-            Task {
-                // goto applies to the hub's current lesson, so wait until the hub switched (at most 3 s).
-                for _ in 0..<30 where model.state.lessonId != id {
-                    try? await Task.sleep(for: .milliseconds(100))
-                }
-                if model.state.lessonId == id { model.goto(step: step) }
-            }
-        }
-        isPresented = true
+        serial += 1
+        request = Request(lessonId: id, step: step, serial: serial)
     }
+
+    func clear() { request = nil }
 }
 
 private struct LessonLaunchPresenter: ViewModifier {
-    @Bindable var launcher: LessonLauncher
+    var launcher: LessonLauncher
+    @Environment(AppModel.self) private var model
+    @Environment(LearnFlow.self) private var flow: LearnFlow?
 
     func body(content: Content) -> some View {
-        #if os(iOS)
-        content.fullScreenCover(isPresented: $launcher.isPresented) {
-            NavigationStack {
-                LearnView()
-                    .toolbar {
-                        ToolbarItem(placement: .cancellationAction) {
-                            Button("Close", systemImage: "xmark") { launcher.isPresented = false }
-                        }
-                    }
+        content.onChange(of: launcher.request) { _, request in
+            guard let request else { return }
+            launcher.clear()
+            if let flow {
+                flow.requestStart(request.lessonId, at: request.step, model: model)
+            } else {
+                model.select(lesson: request.lessonId)
             }
         }
-        #else
-        content.navigationDestination(isPresented: $launcher.isPresented) { LearnView() }
-        #endif
     }
 }
 

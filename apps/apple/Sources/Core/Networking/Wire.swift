@@ -77,6 +77,9 @@ enum HubCommand: Sendable, Equatable {
     case back(from: Int?)
     case goto(step: Int)
     case dismissMistake
+    /// Stops the run and unloads the lesson. The ids name the lesson and run this screen shows; the hub ignores
+    /// an End whose ids no longer match (a stale End must not unload a lesson someone else started).
+    case endLesson(lessonId: String?, runId: String?)
     case hello(CameraHello)
 
     var isNavigation: Bool {
@@ -102,6 +105,10 @@ enum HubCommand: Sendable, Equatable {
             object = ["type": .string("goto"), "step": .int(step)]
         case .dismissMistake:
             object = ["type": .string("dismiss_mistake")]
+        case .endLesson(let lessonId, let runId):
+            object = ["type": .string("end_lesson")]
+            if let lessonId { object["lesson_id"] = .string(lessonId) }
+            if let runId { object["run_id"] = .string(runId) }
         case .hello(let hello):
             object = [
                 "type": .string("hello"), "device_id": .string(hello.deviceId), "name": .string(hello.name),

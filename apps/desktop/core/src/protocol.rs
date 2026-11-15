@@ -145,6 +145,12 @@ pub struct State {
     pub check_offline_reason: Option<OfflineReason>,
     #[serde(default, deserialize_with = "explicit", skip_serializing_if = "Option::is_none")]
     pub mistake: Option<Option<Mistake>>,
+    /// Seconds between frames offered to the vision model (Revision 6). `None` from older hubs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_interval_s: Option<f64>,
+    /// Live frames per second the hub forwards to each viewer, at most (Revision 6).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ui_fps: Option<u32>,
 }
 
 /// Keeps "absent" (outer None, from `default`) apart from "null" (Some(None)).
@@ -247,8 +253,11 @@ pub fn parse_server_message(text: &str) -> Result<ServerMessage, ParseError> {
     })
 }
 
+/// The check interval the hub accepts (CONTRACT.md 7, `set_check_interval`).
+pub const CHECK_INTERVAL_RANGE: (f64, f64) = (0.2, 10.0);
+
 /// A message to the hub on `/ws/ui` (CONTRACT.md 7).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ClientMessage {
     SelectLesson {
@@ -267,9 +276,27 @@ pub enum ClientMessage {
         step: i64,
     },
     DismissMistake,
+    /// Seconds between frames offered to the vision model, for the whole session.
+    SetCheckInterval {
+        seconds: f64,
+    },
+    /// Stops the run and unloads the lesson; every client gets a state with no lesson. The ids let the hub
+    /// ignore a stale End (this screen on an older lesson or run).
+    EndLesson {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        lesson_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        run_id: Option<String>,
+    },
 }
 
 impl ClientMessage {
+    /// `set_check_interval`, clamped to the hub's range. A value that is not a finite number is refused.
+    pub fn set_check_interval(seconds: f64) -> Option<ClientMessage> {
+        let (lo, hi) = CHECK_INTERVAL_RANGE;
+        seconds.is_finite().then(|| ClientMessage::SetCheckInterval { seconds: seconds.clamp(lo, hi) })
+    }
+
     pub fn to_json(&self) -> String {
         serde_json::to_string(self).expect("client messages always serialize")
     }

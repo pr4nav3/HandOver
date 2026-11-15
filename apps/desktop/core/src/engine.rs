@@ -4,7 +4,9 @@
 
 use crate::address::HubAddress;
 use crate::api::{self, Tokens};
+use crate::camera::{CameraSink, CameraSocket, Hello};
 use crate::http;
+use crate::phone;
 use crate::protocol::{ClientMessage, ServerMessage, State};
 use crate::socket::{Link, LinkStatus, Sink, SocketEvent, UiSocket};
 use crate::store::{app_data_dir, Recent, Settings, SettingsStore};
@@ -39,6 +41,8 @@ pub struct Engine {
     shared: Arc<Shared>,
     hub: Mutex<Option<HubAddress>>,
     socket: Mutex<Option<UiSocket>>,
+    /// This computer's webcam, sent to the hub while Learn uses it.
+    camera: Mutex<Option<CameraSocket>>,
     recent: Recent,
     settings: SettingsStore,
     catalog: Catalog,
@@ -84,6 +88,7 @@ impl Engine {
             }),
             hub: Mutex::new(None),
             socket: Mutex::new(None),
+            camera: Mutex::new(None),
             recent: Recent::new(&dir),
             settings: SettingsStore::new(&dir),
             catalog: catalog(),
@@ -142,6 +147,20 @@ impl Engine {
             "back" => self.send(ClientMessage::Back { from: int("from") })?,
             "goto" => self.send(ClientMessage::Goto { step: int("step").ok_or("goto needs a step")? })?,
             "dismissMistake" => self.send(ClientMessage::DismissMistake)?,
+            "setCheckInterval" => {
+                let seconds = args.get("seconds").and_then(Value::as_f64).unwrap_or(f64::NAN);
+                self.send(ClientMessage::set_check_interval(seconds).ok_or("setCheckInterval needs seconds")?)?
+            }
+            "endLesson" => {
+                let opt = |v: String| if v.is_empty() { None } else { Some(v) };
+                self.send(ClientMessage::EndLesson { lesson_id: opt(s("lessonId")), run_id: opt(s("runId")) })?
+            }
+            "pairing" => self.pairing()?,
+            "cameraStart" => self.camera_start(&s("name"), &s("platform"))?,
+            "cameraStop" => {
+                self.camera_stop();
+                Value::Null
+            }
             "setSettings" => self.set_settings(args)?,
             "api" => self.api(args)?,
             "upload" => self.upload(args)?,
@@ -204,6 +223,7 @@ impl Engine {
             }
         });
         self.files.clear();
+        self.camera_stop();
         let socket = UiSocket::start(hub.clone(), sink);
         *self.hub.lock().expect("hub lock") = Some(hub.clone());
         // Dropping the old socket closes it; its late events carry an old generation.
@@ -212,6 +232,7 @@ impl Engine {
     }
 
     pub fn disconnect(&self) {
+        self.camera_stop();
         self.shared.generation.fetch_add(1, Ordering::SeqCst);
         *self.socket.lock().expect("socket lock") = None;
         *self.hub.lock().expect("hub lock") = None;
@@ -325,6 +346,73 @@ impl Engine {
         }
         self.settings.save(&s)?;
         Ok(json!(s))
+    }
+
+    /// What a phone needs to pair with this hub: the address it can reach, the link and its QR.
+    /// The hub's own `/api/hub-info` comes first; older hubs fall back to this computer's address.
+    fn pairing(&self) -> Result<Value, String> {
+        let hub = self.require_hub()?;
+        if let Some((url, link)) =
+            phone::from_hub_info(&api::request(&hub, None, "GET", "/api/hub-info", &Value::Null, None))
+        {
+            let label = HubAddress::parse(&url).map(|h| h.authority()).unwrap_or_else(|_| url.clone());
+            return Ok(json!({ "hub": url, "label": label, "link": link, "svg": phone::qr_svg(&link)? }));
+        }
+        let lan = phone::lan_ip();
+        Ok(match phone::phone_hub(&hub, lan) {
+            Some(p) => {
+                let link = phone::connect_link(&p);
+                json!({ "hub": p.base(), "label": p.authority(), "link": link, "svg": phone::qr_svg(&link)? })
+            }
+            None => json!({ "hub": null, "label": null, "link": null, "svg": null }),
+        })
+    }
+
+    /// Starts sending this computer's webcam to the hub. Frames arrive with `camera_frame`.
+    fn camera_start(&self, name: &str, platform: &str) -> Result<Value, String> {
+        let hub = self.require_hub()?;
+        let platform = if matches!(platform, "macos" | "windows" | "linux") { platform } else { "other" };
+        let name = if name.trim().is_empty() { "Computer camera" } else { name.trim() };
+        let hello =
+            Hello { device_id: self.camera_id(), name: name.chars().take(64).collect(), platform: platform.into() };
+        let shared = self.shared.clone();
+        let sink: CameraSink = Arc::new(move |link| shared.emit(json!({ "kind": "camera", "camera": link })));
+        *self.camera.lock().expect("camera lock") = Some(CameraSocket::start(hub, hello, sink));
+        Ok(Value::Null)
+    }
+
+    pub fn camera_stop(&self) {
+        if self.camera.lock().expect("camera lock").take().is_some() {
+            self.shared.emit(json!({ "kind": "camera", "camera": "off" }));
+        }
+    }
+
+    /// One JPEG from the window's webcam. Dropped when the camera is not started.
+    pub fn camera_frame(&self, jpeg: Vec<u8>) {
+        if let Some(cam) = self.camera.lock().expect("camera lock").as_ref() {
+            cam.frame(jpeg);
+        }
+    }
+
+    /// A random id kept in the data folder, so the hub knows a reconnect is the same camera.
+    fn camera_id(&self) -> String {
+        let path = self.dir.join("camera_id");
+        if let Ok(id) = std::fs::read_to_string(&path) {
+            let id = id.trim();
+            if !id.is_empty() && id.len() <= 64 {
+                return id.to_string();
+            }
+        }
+        use std::hash::{BuildHasher, Hasher};
+        let mut h = std::collections::hash_map::RandomState::new().build_hasher();
+        h.write_u128(
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0),
+        );
+        h.write_u32(std::process::id());
+        let id = format!("desktop-{:016x}", h.finish());
+        let _ = std::fs::create_dir_all(&self.dir);
+        let _ = std::fs::write(&path, &id);
+        id
     }
 
     /// True while a hub is paired and its socket is open.

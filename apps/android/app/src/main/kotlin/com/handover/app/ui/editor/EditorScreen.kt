@@ -580,7 +580,7 @@ private fun PublishSheet(ui: EditorUi, actions: EditorActions, onDismiss: () -> 
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text("Unlisted", style = HandOver.type.body, color = c.ink)
-                    Text("Not shown in Library. Share the link instead.", style = HandOver.type.footnote, color = c.ink2)
+                    Text("Not shown on Home. Share the link instead.", style = HandOver.type.footnote, color = c.ink2)
                 }
                 Switch(unlisted, { unlisted = it }, colors = SwitchDefaults.colors(checkedTrackColor = c.accent, checkedThumbColor = c.onAccent))
             }

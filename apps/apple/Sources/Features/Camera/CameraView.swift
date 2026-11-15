@@ -28,7 +28,7 @@ struct CameraView: View {
             start
             #endif
         }
-        .navigationTitle("Camera")
+        .navigationTitle("Be the Camera")
         #if os(iOS)
         .fullScreenCover(isPresented: $running) { CameraModeScreen { running = false }.environment(model) }
         #endif
@@ -61,17 +61,17 @@ struct CameraView: View {
         ScrollView {
             VStack(spacing: HOSpace.xl) {
                 VStack(spacing: HOSpace.m) {
-                    SymbolTile(symbol: "camera.viewfinder", side: 64)
-                    Text("Use \(DeviceWord.this) as the camera")
+                    SymbolTile(symbol: "video.circle", side: 64)
+                    Text("Be the Camera")
                         .hoFont(.display, theme).foregroundStyle(theme.colors.ink).multilineTextAlignment(.center)
-                    Text("Point it at your work. The hub watches through it to know when a step is done. Frames go to your hub only and are never saved.")
-                        .font(theme.fonts.callout).foregroundStyle(theme.colors.ink2).multilineTextAlignment(.center)
+                    Text("Use \(DeviceWord.this) as the camera for someone else's lesson.")
+                        .font(theme.fonts.body).foregroundStyle(theme.colors.ink2).multilineTextAlignment(.center)
                         .frame(maxWidth: 400)
                 }
-                .padding(.top, HOSpace.xxl)
-                if model.hub == nil {
-                    HOBanner(symbol: "wifi.exclamationmark", text: "Connect to a hub in Settings first.")
-                }
+                .padding(.top, HOSpace.xl)
+                hubStatus.frame(maxWidth: 400)
+                SetupSteps(title: "How to use it", steps: Self.steps)
+                .frame(maxWidth: 400)
                 VStack(spacing: HOSpace.s) {
                     Button { begin() } label: { Label("Start Camera", systemImage: "video.fill") }
                         .buttonStyle(HOButtonStyle(.primary, size: .large, fullWidth: true))
@@ -84,6 +84,9 @@ struct CameraView: View {
                         .font(theme.fonts.footnote).foregroundStyle(theme.colors.ink2).multilineTextAlignment(.center)
                         .padding(.top, HOSpace.xs)
                     #endif
+                    Text("Frames go to your hub only and are never saved.")
+                        .font(theme.fonts.footnote).foregroundStyle(theme.colors.ink2).multilineTextAlignment(.center)
+                        .padding(.top, HOSpace.xs)
                 }
                 .frame(maxWidth: 400)
             }
@@ -91,6 +94,28 @@ struct CameraView: View {
             .frame(maxWidth: .infinity)
         }
         .hoPaperBackground()
+    }
+
+    private static var steps: [String] {
+        #if os(macOS)
+        ["Point this Mac's camera at the learner's hands.", "Click Start Camera.",
+         "Start the lesson on the learner's screen. This screen shows the step and Next."]
+        #else
+        ["Prop \(DeviceWord.this) up so the back camera sees the learner's hands.", "Tap Start Camera.",
+         "Start the lesson on the learner's screen. This screen shows the step and Next."]
+        #endif
+    }
+
+    /// Which hub the frames go to, or what to do first.
+    @ViewBuilder private var hubStatus: some View {
+        if let hub = model.hub {
+            HOBanner(symbol: model.connection.isConnected ? "checkmark.circle.fill" : "arrow.clockwise",
+                     tone: model.connection.isConnected ? .good : .caution,
+                     text: model.connection.isConnected ? "Connected to the hub at \(hub.displayName)."
+                         : "Connecting to the hub at \(hub.displayName).")
+        } else {
+            HOBanner(symbol: "wifi.exclamationmark", text: "Connect to a hub in Settings first.")
+        }
     }
 
     private func begin() {
@@ -125,7 +150,7 @@ struct CameraModeScreen: View {
             if preview == nil {
                 switch streamer.phase {
                 case .streaming:
-                    if let capture = streamer.captureSession { CameraPreview(capture: capture).ignoresSafeArea() }
+                    if let capture = streamer.captureSession { CameraPreview(capture: capture, deviceID: streamer.deviceID).ignoresSafeArea() }
                 case .denied:
                     CameraProblem(symbol: "video.slash", title: "HandOver cannot use the camera",
                                   message: "Allow it in Settings to send your work to the hub.", settings: true)
@@ -254,6 +279,12 @@ struct CameraChrome<Source: View>: View {
     @State private var showStats = true
 
     var body: some View {
+        GeometryReader { geo in
+            chrome(short: HOLayout.isShort(geo.size.height))
+        }
+    }
+
+    private func chrome(short: Bool) -> some View {
         VStack(spacing: HOSpace.s) {
             HStack(alignment: .top, spacing: HOSpace.s) {
                 Button { Haptics.tap(); onClose() } label: { Image(systemName: "xmark").font(.body.weight(.semibold)) }
@@ -277,7 +308,7 @@ struct CameraChrome<Source: View>: View {
                 VideoPill(symbol: "pause.circle", text: "Another camera is active. This one takes over if it stops.", tone: .neutral)
             }
             Spacer()
-            bottomPanel
+            bottomPanel(short: short)
         }
         .padding(HOSpace.l)
     }
@@ -305,8 +336,12 @@ struct CameraChrome<Source: View>: View {
         return parts.joined(separator: ", ")
     }
 
-    private var bottomPanel: some View {
-        VStack(alignment: .leading, spacing: HOSpace.m) {
+    /// The step, its status, Back and Next. On a short screen (iPhone landscape) they sit in one row, so the
+    /// panel covers less of the picture.
+    private func bottomPanel(short: Bool) -> some View {
+        let layout = short ? AnyLayout(HStackLayout(alignment: .center, spacing: HOSpace.l))
+                           : AnyLayout(VStackLayout(alignment: .leading, spacing: HOSpace.m))
+        return layout {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: HOSpace.xxs) {
                     Text(info.stepLine ?? "No lesson started")
@@ -335,10 +370,11 @@ struct CameraChrome<Source: View>: View {
                 .keyboardShortcut(.rightArrow, modifiers: [])
                 .disabled(!info.canStep)
             }
+            .frame(maxWidth: short ? 280 : .infinity)
         }
-        .padding(HOSpace.l)
+        .padding(short ? HOSpace.m : HOSpace.l)
         .hoGlassPanel()
-        .frame(maxWidth: 560)
+        .frame(maxWidth: short ? 720 : 560)
         .frame(maxWidth: .infinity)
     }
 }

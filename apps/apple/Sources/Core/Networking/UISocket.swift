@@ -31,6 +31,9 @@ actor UISocket {
     func selectLesson(_ id: String) async { await socket.send(.selectLesson(id: id)) }
     func goto(step: Int) async { await socket.send(.goto(step: step)) }
     func dismissMistake() async { await socket.send(.dismissMistake) }
+    func endLesson(lessonId: String?, runId: String?) async {
+        await socket.send(.endLesson(lessonId: lessonId, runId: runId))
+    }
 
     /// Sends `next` from the current position. False when it was not sent (nothing to do, or a command
     /// from this position is still in flight).

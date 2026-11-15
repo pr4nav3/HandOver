@@ -158,6 +158,25 @@ class AppViewModel(
     /** Chooses the lesson on the hub. Signed in, the sign-in token goes along so the hub tags the run with this learner. */
     fun selectLesson(id: String) {
         if (ui?.selectLesson(id, AccountSession.token(_state.value.hub)) != true) notConnected()
+        else _state.update { it.copy(ended = null) }
+    }
+
+    /** Back into the hub's current lesson after End on this phone (Start or Continue on the same lesson). */
+    fun resumeLesson() = _state.update { it.copy(ended = null) }
+
+    /**
+     * End on Learn: stops this phone's camera, tells the hub (end_lesson stops the run and unloads
+     * the lesson for every screen), and marks the run as ended here, so Learn shows "No lesson running".
+     */
+    fun endLesson() {
+        stopCamera()
+        val session = _state.value.session
+        // The ids let the hub ignore a stale End (this phone on an old lesson while someone started another).
+        if (ui?.endLesson(session?.lessonId, session?.runId) != true) notConnected()
+        _state.update { s ->
+            val id = s.session?.lessonId ?: return@update s
+            s.copy(ended = EndedRun(id, s.session.runId))
+        }
     }
 
     /** Next from the step on screen. Nothing is sent on the done screen or with no lesson. */

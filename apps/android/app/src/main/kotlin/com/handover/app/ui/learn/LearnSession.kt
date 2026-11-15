@@ -136,6 +136,9 @@ class LearnSession(private val now: () -> Long = System::currentTimeMillis) : Vi
     fun clearMoment() { _moment.value = null }
     fun clearToast() { _toast.value = null }
 
+    /** A short line at the bottom of Learn, such as why the glasses stopped. */
+    fun showToast(text: String) { _toast.value = text }
+
     /** Practice one step from Done: its old record is cleared and Learn returns to Done when it is finished. */
     fun practice(step: Int) {
         val vm = attached ?: return

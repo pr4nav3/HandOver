@@ -13,7 +13,7 @@ struct WelcomePages: View {
     static let pages: [(title: String, line: String)] = [
         ("An expert does it once", "They record the task on their phone or Ray-Ban Meta glasses and talk through each step."),
         ("We turn it into steps", "HandOver finds where each step starts and ends, cuts a clip for each one, and adds captions."),
-        ("Your camera follows along", "Point a phone at your work. When a step looks done, the next clip starts."),
+        ("Your camera follows along", "Prop up a phone or wear Meta glasses. When a step looks done, the next clip starts."),
         ("You get a score and a tip", "See how each step went against the expert, and what to practice next."),
     ]
 
@@ -27,24 +27,12 @@ struct WelcomePages: View {
 
     var body: some View {
         GeometryReader { geo in
-            let width = geo.size.width
-            let wide = sizeClass == .regular
-            VStack(spacing: 0) {
-                WelcomeStage(page: page, settled: settled || reduceMotion,
-                             scale: min(wide ? 1.3 : min(1, width / 360), geo.size.height * 0.52 / 270))
-                    .frame(height: geo.size.height * 0.52)
-                    .offset(x: reduceMotion ? 0 : drag * 0.6)
-                    .opacity(reduceMotion ? 1 : 1 - min(0.35, abs(drag) / max(width, 1)))
-                    .id(reduceMotion ? page : 0)
-                    .transition(.opacity)
-                texts(width: width)
-                    .frame(maxHeight: .infinity, alignment: .top)
-                dots
-                    .padding(.bottom, HOSpace.l)
-                buttons
+            let size = geo.size
+            Group {
+                if Self.isSideBySide(size) { sideBySide(size) } else { stacked(size) }
             }
             .contentShape(Rectangle())
-            .gesture(swipe(width: width))
+            .gesture(swipe(width: Self.isSideBySide(size) ? size.width / 2 : size.width))
         }
         .onKeyPress(.rightArrow) { advance(); return .handled }
         .onKeyPress(.leftArrow) { retreat(); return .handled }
@@ -54,7 +42,52 @@ struct WelcomePages: View {
         .sensoryFeedback(.selection, trigger: page)
     }
 
-    private func texts(width: CGFloat) -> some View {
+    /// A short, wide space (iPhone landscape): the picture on the leading half, the words and buttons on the
+    /// trailing half, so nothing is squeezed off the bottom.
+    static func isSideBySide(_ size: CGSize) -> Bool {
+        size.width > size.height * 1.3 && HOLayout.isShort(size.height)
+    }
+
+    private func stacked(_ size: CGSize) -> some View {
+        let width = size.width
+        let wide = sizeClass == .regular
+        return VStack(spacing: 0) {
+            stage(scale: min(wide ? 1.3 : min(1, width / 360), size.height * 0.52 / 270), width: width)
+                .frame(height: size.height * 0.52)
+            texts(width: width)
+                .frame(maxHeight: .infinity, alignment: .top)
+            dots
+                .padding(.bottom, HOSpace.l)
+            buttons
+        }
+    }
+
+    private func sideBySide(_ size: CGSize) -> some View {
+        let half = size.width / 2
+        return HStack(spacing: 0) {
+            stage(scale: min(1.2, half / 360, size.height * 0.85 / 270), width: half)
+                .frame(width: half)
+            VStack(spacing: 0) {
+                Spacer(minLength: 0)
+                texts(width: half, top: 0)
+                Spacer(minLength: HOSpace.s)
+                dots
+                    .padding(.bottom, HOSpace.s)
+                buttons
+            }
+            .frame(width: half)
+        }
+    }
+
+    private func stage(scale: CGFloat, width: CGFloat) -> some View {
+        WelcomeStage(page: page, settled: settled || reduceMotion, scale: scale)
+            .offset(x: reduceMotion ? 0 : drag * 0.6)
+            .opacity(reduceMotion ? 1 : 1 - min(0.35, abs(drag) / max(width, 1)))
+            .id(reduceMotion ? page : 0)
+            .transition(.opacity)
+    }
+
+    private func texts(width: CGFloat, top: CGFloat = HOSpace.xl) -> some View {
         HStack(alignment: .top, spacing: 0) {
             ForEach(Self.pages.indices, id: \.self) { i in
                 VStack(spacing: HOSpace.m) {
@@ -70,7 +103,7 @@ struct WelcomePages: View {
                         .frame(maxWidth: 340)
                 }
                 .padding(.horizontal, HOSpace.xl)
-                .padding(.top, HOSpace.xl)
+                .padding(.top, top)
                 .frame(width: width)
                 .opacity(i == page ? 1 : 0.0)
                 .accessibilityElement(children: .combine)

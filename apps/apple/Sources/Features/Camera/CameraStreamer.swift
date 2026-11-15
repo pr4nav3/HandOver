@@ -50,6 +50,8 @@ final class CameraStreamer {
     /// The size of the frames sent.
     private(set) var frameSize: CGSize = .zero
     private(set) var framesSent = 0
+    /// Frames dropped because the socket was still busy or the hub's gap had not passed.
+    private(set) var framesDropped = 0
     private(set) var choices: [CameraChoice] = []
     private(set) var deviceID: String?
     /// iPhone is warm: one frame every 2 s at most.
@@ -64,6 +66,7 @@ final class CameraStreamer {
     @ObservationIgnored private var tasks: [Task<Void, Never>] = []
     @ObservationIgnored private var rate = SendRate()
     @ObservationIgnored private var startedAt: TimeInterval = 0
+    @ObservationIgnored private var isPushing = false
 
     init(feed: PhoneCameraFeed = .shared) {
         self.feed = feed
@@ -103,8 +106,34 @@ final class CameraStreamer {
         startedAt = ProcessInfo.processInfo.systemUptime
         rate = SendRate()
         phase = .streaming
-        setIdleTimer(disabled: true)
+        beginSending(socket: socket, slot: slot)
+    }
 
+    /// Streams frames handed to `push(_:)` instead of this device's camera, for example the Meta glasses during
+    /// Learn. `makeSocket` is `AppModel.makeCameraSocket(source: .glasses)`.
+    func startPushing(makeSocket: () -> CameraSocket?) async {
+        guard phase == .idle || isReplaced else { return }
+        stop()
+        guard let socket = makeSocket() else { return }
+        let slot = LatestFrameSlot<CameraFrameImage>()
+        self.socket = socket
+        self.slot = slot
+        isPushing = true
+        startedAt = ProcessInfo.processInfo.systemUptime
+        rate = SendRate()
+        phase = .streaming
+        beginSending(socket: socket, slot: slot)
+    }
+
+    /// One frame for `startPushing`. Only the newest waits; older ones are replaced. Any size; frames larger than
+    /// the send size are scaled down off the main thread.
+    func push(_ image: CGImage) {
+        guard isPushing else { return }
+        slot?.put(CameraFrameImage(image: image))
+    }
+
+    private func beginSending(socket: CameraSocket, slot: LatestFrameSlot<CameraFrameImage>) {
+        setIdleTimer(disabled: true)
         tasks.append(Task { [weak self] in
             await socket.start()
             for await event in socket.events {
@@ -113,10 +142,12 @@ final class CameraStreamer {
         })
         let owner = WeakBox(self)
         tasks.append(Task.detached(priority: .userInitiated) {
-            await CameraStreamer.sendLoop(socket: socket, slot: slot) { size in
+            await CameraStreamer.sendLoop(sink: socket, slot: slot) { size in
                 await owner.value?.didSend(size: size)
+            } didDrop: {
+                await owner.value?.didDrop()
             } minGap: {
-                await owner.value?.minGap ?? CameraSocket.minFrameGap
+                await owner.value?.minGap ?? FrameSizing.sendGap
             }
         })
         tasks.append(Task { [weak self] in
@@ -144,7 +175,8 @@ final class CameraStreamer {
         capture = nil
         if let socket { Task { await socket.stop() } }
         socket = nil
-        feed.setRunning(false)
+        if !isPushing { feed.setRunning(false) }
+        isPushing = false
         setIdleTimer(disabled: false)
         if phase == .streaming || phase == .starting { phase = .idle }
         connection = .idle
@@ -154,9 +186,13 @@ final class CameraStreamer {
 
     /// Switches camera without dropping the socket.
     func switchCamera(to id: String) async {
-        deviceID = id
-        guard let capture else { return }
+        guard let capture else {
+            deviceID = id
+            return
+        }
         _ = await capture.start(deviceID: id)
+        // Set after the switch, so the preview (which watches this) turns with the new camera.
+        deviceID = capture.device?.uniqueID ?? id
     }
 
     @discardableResult
@@ -174,7 +210,7 @@ final class CameraStreamer {
         return false
     }
 
-    private var minGap: Duration { isThrottled ? .seconds(2) : CameraSocket.minFrameGap }
+    private var minGap: Duration { isThrottled ? .seconds(2) : FrameSizing.sendGap }
 
     private func handle(_ event: HubSocket.Event) {
         switch event {
@@ -204,6 +240,8 @@ final class CameraStreamer {
         sentFPS = rate.fps(now: now, since: startedAt)
     }
 
+    private func didDrop() { framesDropped += 1 }
+
     private func tick() {
         let now = ProcessInfo.processInfo.systemUptime
         rate.trim(now: now)
@@ -223,12 +261,23 @@ final class CameraStreamer {
         #endif
     }
 
-    /// Takes the newest frame, encodes it, sends it, waits for that send to finish and for the hub's minimum
-    /// gap, then takes the newest again. Nothing queues: frames that arrive meanwhile replace each other.
+    /// Takes the newest frame, encodes it and hands it to the socket, at most once per `minGap`. If the socket is
+    /// still busy with the previous frame, this frame is dropped and the loop waits for the next one: nothing
+    /// queues, so the hub always sees the latest moment. Runs off the main thread.
     nonisolated static func sendLoop(socket: CameraSocket, slot: LatestFrameSlot<CameraFrameImage>,
                                      encoder: FrameEncoder = .shared,
                                      didSend: @Sendable (CGSize) async -> Void,
                                      minGap: @Sendable () async -> Duration) async {
+        await sendLoop(sink: socket, slot: slot, encoder: encoder, didSend: didSend, minGap: minGap)
+    }
+
+    /// The loop behind `sendLoop(socket:...)`, for any sink. `didDrop` counts frames the sink refused.
+    nonisolated static func sendLoop<Sink: FrameSink>(sink: Sink, slot: LatestFrameSlot<CameraFrameImage>,
+                                                      encoder: FrameEncoder = .shared,
+                                                      didSend: @Sendable (CGSize) async -> Void,
+                                                      didDrop: @Sendable () async -> Void = {},
+                                                      retryDelay: Duration = .milliseconds(66),
+                                                      minGap: @Sendable () async -> Duration) async {
         let clock = ContinuousClock()
         var lastSent: ContinuousClock.Instant?
         while !Task.isCancelled, var frame = await slot.take() {
@@ -240,22 +289,20 @@ final class CameraStreamer {
                 }
             }
             guard !Task.isCancelled else { return }
-            guard let jpeg = encoder.jpeg(frame.image) else { continue }
-            let before = await socket.framesSent
-            guard await socket.send(frame: jpeg) else {
-                // Not connected yet, or the previous frame is still going out. Try again shortly with
-                // whatever is newest then.
-                try? await Task.sleep(for: .milliseconds(80))
+            // Not connected or still busy: drop this frame before spending time encoding it, and wait a frame
+            // interval so a reconnect does not spin through every camera frame.
+            guard await sink.isReady() else {
+                await didDrop()
+                try? await Task.sleep(for: retryDelay)
                 continue
             }
-            lastSent = clock.now
-            // The socket sends in the background; wait until it reports this frame out (or 3 s).
-            let deadline = clock.now + .seconds(3)
-            while clock.now < deadline, !Task.isCancelled, await socket.framesSent == before {
-                try? await Task.sleep(for: .milliseconds(10))
-            }
-            if await socket.framesSent > before {
-                await didSend(CGSize(width: frame.image.width, height: frame.image.height))
+            guard let image = encoder.fitted(frame.image), let jpeg = encoder.jpeg(image) else { continue }
+            if await sink.trySend(jpeg) {
+                lastSent = clock.now
+                await didSend(CGSize(width: image.width, height: image.height))
+            } else {
+                await didDrop()
+                try? await Task.sleep(for: retryDelay)
             }
         }
     }

@@ -70,12 +70,17 @@ fn handle(
             range = Some(h[6..].trim().to_string());
         }
     }
-    let mut body = vec![0u8; length.min(1 << 20)];
+    let mut body = vec![0u8; length.min(handover_core::camera::FRAME_MAX)];
     reader.read_exact(&mut body)?;
     let mut parts = request.split_whitespace();
     let (method, path) = (parts.next().unwrap_or(""), parts.next().unwrap_or("/"));
     let mut out = stream;
     if method == "POST" {
+        // A webcam frame from the window, as raw JPEG bytes (the app's `camera_frame`).
+        if path == "/api/__camera_frame" {
+            engine.camera_frame(body);
+            return respond(&mut out, 200, &[("Content-Type", "application/json")], b"null");
+        }
         if let Some(cmd) = path.strip_prefix("/api/") {
             let args: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
             let result = match cmd {

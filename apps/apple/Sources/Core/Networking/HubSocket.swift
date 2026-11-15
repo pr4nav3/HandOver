@@ -86,6 +86,8 @@ actor HubSocket {
     }
 
     var isSendingFrame: Bool { frameInFlight }
+    /// Connected and no frame in flight: `sendFrameIfIdle` would send now.
+    var canSendFrame: Bool { isOpen && !frameInFlight && transport != nil }
     /// Frames that went out on any connection of this socket.
     private(set) var framesSent = 0
 

@@ -38,7 +38,7 @@ private struct EditorScreen: View {
                 HOEmptyState(title: "Loading lesson", loading: true)
             case .failed(let message):
                 HOEmptyState(symbol: "exclamationmark.triangle", title: "Can't open the editor", message: message) {
-                    Button("Try Again") { Task { await store.load() } }.buttonStyle(HOButtonStyle(.secondary))
+                    Button("Try Again") { Task { await store.load() } }.buttonStyle(HOButtonStyle(.primary))
                 }
             case .loaded:
                 if isCompact { compact } else { regular }
@@ -96,13 +96,8 @@ private struct EditorScreen: View {
         .lessonLauncher(launcher)
     }
 
-    private var isCompact: Bool {
-        #if os(iOS)
-        sizeClass == .compact
-        #else
-        false
-        #endif
-    }
+    /// iPhone layout. The Mac reports regular, so it keeps its own layout; snapshots ask for compact.
+    private var isCompact: Bool { sizeClass == .compact }
 
     // MARK: - Layouts
 
@@ -132,11 +127,23 @@ private struct EditorScreen: View {
     }
 
     private var compact: some View {
+        GeometryReader { geo in
+            compactList(short: HOLayout.isShort(geo.size.height), height: geo.size.height)
+        }
+    }
+
+    /// On a short screen (iPhone landscape) the player keeps to 60% of the height, so the timeline and the steps
+    /// are in view without scrolling past a screen-sized video.
+    private func compactList(short: Bool, height: CGFloat) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: HOSpace.l) {
+                guide
                 player
+                    .frame(maxHeight: short ? height * 0.6 : nil)
+                    .frame(maxWidth: .infinity)
                 EditorTimeline(store: store, playhead: $playhead)
                 stepActions
+                Text("Steps").sectionHeaderStyle(theme)
                 VStack(spacing: 0) {
                     ForEach(Array(store.lesson.steps.enumerated()), id: \.element.id) { index, step in
                         Button {
@@ -151,9 +158,35 @@ private struct EditorScreen: View {
                     }
                 }
                 .hoCard()
+                if let next = nextLine {
+                    Text(next)
+                        .font(theme.fonts.footnote)
+                        .foregroundStyle(theme.colors.ink2)
+                        .padding(.horizontal, HOSpace.xs)
+                }
             }
             .padding(HOSpace.l)
         }
+    }
+
+    /// One line on what this screen is for (iPhone, where there is no inspector column to explain it).
+    private var guide: some View {
+        Text(store.permissions.canEdit
+             ? "Check each step. Tap one to fix its title, times or how it is checked. Changes save on their own."
+             : "You can watch these steps. Only the lesson's editors can change them.")
+            .font(theme.fonts.callout)
+            .foregroundStyle(theme.colors.ink2)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    /// What to do once the steps look right.
+    private var nextLine: String? {
+        guard store.capabilities.course, store.permissions.canPublish else {
+            return store.permissions.canEdit ? "Tap More, then Preview, to try it as a learner." : nil
+        }
+        return store.course?.status == .draft
+            ? "When the steps look right, tap Publish so learners can find it."
+            : "Tap Update to change who can find it."
     }
 
     private var stepList: some View {

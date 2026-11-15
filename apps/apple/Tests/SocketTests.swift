@@ -30,9 +30,28 @@ struct MessageRoutingTests {
         #expect(HubCommand.back(from: 0).text == #"{"from":0,"type":"back"}"#)
         #expect(HubCommand.goto(step: 2).text == #"{"step":2,"type":"goto"}"#)
         #expect(HubCommand.dismissMistake.text == #"{"type":"dismiss_mistake"}"#)
+        #expect(HubCommand.endLesson(lessonId: "demo-v1", runId: "r7").text
+            == #"{"lesson_id":"demo-v1","run_id":"r7","type":"end_lesson"}"#)
+        #expect(HubCommand.endLesson(lessonId: "demo-v1", runId: nil).text == #"{"lesson_id":"demo-v1","type":"end_lesson"}"#)
+        #expect(HubCommand.endLesson(lessonId: nil, runId: nil).text == #"{"type":"end_lesson"}"#)
         let hello = CameraHello(deviceId: "ios-1", name: "iPhone camera", platform: .ios, source: .glasses)
         #expect(HubCommand.hello(hello).text
             == #"{"device_id":"ios-1","name":"iPhone camera","platform":"ios","source":"glasses","type":"hello"}"#)
+    }
+
+    /// End names the lesson this app runs, and the run only when the hub is on that lesson.
+    @Test func endLessonCarriesTheCurrentIds() throws {
+        let data = Data(#"{"type":"state","lesson_id":"demo-v1","rev":1,"step":0,"total":3,"run_id":"r7"}"#.utf8)
+        let state = try JSONDecoder().decode(HubState.self, from: data)
+        #expect(state.runId == "r7")
+        var ids = AppModel.endIds(lessonId: "demo-v1", state: state)
+        #expect(ids.lessonId == "demo-v1" && ids.runId == "r7")
+        ids = AppModel.endIds(lessonId: nil, state: state)
+        #expect(ids.lessonId == "demo-v1" && ids.runId == "r7")
+        ids = AppModel.endIds(lessonId: "other", state: state)
+        #expect(ids.lessonId == "other" && ids.runId == nil, "another lesson's run is never sent")
+        ids = AppModel.endIds(lessonId: nil, state: .empty)
+        #expect(ids.lessonId == nil && ids.runId == nil)
     }
 
     @Test func reconnectPolicy() {

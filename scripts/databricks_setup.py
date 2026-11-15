@@ -306,8 +306,11 @@ AS SELECT run_id, replay, mock FROM (
   GROUP BY run_id
 ) WHERE replay OR mock"""
     events = f"""CREATE OR REPLACE VIEW {t}.`events_real`
-COMMENT 'events without mock or replay runs and without selftest rows'
-AS SELECT e.* FROM {t}.`events` e
+COMMENT 'events without mock or replay runs and without selftest rows; recovery advances count as camera'
+AS SELECT e.* EXCEPT (reason),
+  CASE WHEN e.reason IN ('ahead_confirm', 'understand_override') THEN 'camera' ELSE e.reason END AS reason,
+  e.reason AS reason_detail
+FROM {t}.`events` e
 LEFT ANTI JOIN {t}.`runs_excluded` x ON x.run_id = e.run_id
 WHERE coalesce(e.lesson_id, '') <> 'selftest' AND NOT coalesce({mock_or_replay_row('e.')}, false)"""
     runs = f"""CREATE OR REPLACE VIEW {t}.`runs_real`

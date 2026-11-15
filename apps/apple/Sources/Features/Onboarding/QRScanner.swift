@@ -24,6 +24,9 @@ struct QRCameraView {
             guard let device = CameraCapture.defaultDevice(),
                   let input = try? AVCaptureDeviceInput(device: device), session.canAddInput(input) else { return }
             session.addInput(input)
+            #if os(iOS)
+            followRotation(of: device)
+            #endif
             let output = AVCaptureMetadataOutput()
             guard session.canAddOutput(output) else { return }
             session.addOutput(output)
@@ -47,21 +50,29 @@ struct QRCameraView {
             preview.frame = bounds
         }
         #else
+        /// Turns the preview with the device, so the viewfinder is upright in every orientation.
+        private var rotation: CameraRotationFollower?
+        private var angle: CGFloat?
+
         override func layoutSubviews() {
             super.layoutSubviews()
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
             preview.frame = bounds
-            if let connection = preview.connection, connection.isVideoRotationAngleSupported(rotationAngle) {
-                connection.videoRotationAngle = rotationAngle
-            }
+            CATransaction.commit()
+            applyAngle()
         }
 
-        private var rotationAngle: CGFloat {
-            switch window?.windowScene?.effectiveGeometry.interfaceOrientation {
-            case .landscapeLeft?: 180
-            case .landscapeRight?: 0
-            case .portraitUpsideDown?: 270
-            default: 90
-            }
+        private func followRotation(of device: AVCaptureDevice) {
+            rotation = CameraRotationFollower(device: device, previewLayer: preview, preview: { [weak self] angle in
+                self?.angle = angle
+                self?.applyAngle()
+            })
+        }
+
+        private func applyAngle() {
+            guard let angle else { return }
+            preview.connection?.apply(rotation: angle)
         }
         #endif
 
