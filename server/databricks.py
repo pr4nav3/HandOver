@@ -113,7 +113,9 @@ def _load_config() -> dict[str, str]:
     env = _read_env_file()
 
     def get(name: str, default: str = "") -> str:
-        return (os.environ.get(name) or env.get(name) or default).strip()
+        # A variable set in the environment wins even when empty, so tests and scripts can switch one off.
+        value = os.environ[name] if name in os.environ else env.get(name)
+        return (value or default).strip()
 
     host = get("DATABRICKS_HOST").rstrip("/")
     if host and not host.startswith(("https://", "http://")):
@@ -141,6 +143,8 @@ def _config_error() -> Optional[str]:
 
 
 def _enabled() -> bool:
+    if os.environ.get("HANDOVER_NO_NETWORK", "").strip().lower() in ("1", "true", "yes", "on"):
+        return False  # tests and offline runs never reach the warehouse
     return bool(_cfg["host"] and _cfg["token"] and _cfg["warehouse"]) and _config_error() is None
 
 
@@ -193,7 +197,7 @@ def _statement_for(table: str) -> str:
     struct = ", ".join(f"`{c}`: {'STRING' if t == 'TIMESTAMP' else t}" for c, t in cols.items())
     select = ", ".join(f"CAST(`{c}` AS TIMESTAMP) AS `{c}`" if t == "TIMESTAMP" else f"`{c}`"
                        for c, t in cols.items())
-    src = f"SELECT {select} FROM (SELECT inline(from_json(:rows, 'ARRAY<STRUCT<{struct}>>')) AS r)"
+    src = f"SELECT {select} FROM (SELECT inline(from_json(:rows, 'ARRAY<STRUCT<{struct}>>')))"
     names = ", ".join(f"`{c}`" for c in cols)
     if spec["key"] is None:
         return f"INSERT INTO {_fq(table)} ({names}) {src}"

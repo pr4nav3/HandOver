@@ -234,7 +234,7 @@ REGISTRY: tuple[Tunable, ...] = (
     T("HANDOVER_HELLO_GRACE_MS", 300, "float", "main.py",
       "ms a new camera has to send hello before its first state broadcast", 0, 5000),
     T("HANDOVER_WEB_DIST", None, "str", "main.py", "folder with the built web app; default <repo>/web/dist"),
-    T("HANDOVER_MIN_FRAME_GAP", 0.05, "float", "main.py",
+    T("HANDOVER_MIN_FRAME_GAP", 0.03, "float", "main.py",
       "seconds between camera frames the hub accepts (0.05 lets 15 fps senders through)", 0, 5),
     T("HANDOVER_UI_FPS", 15, "int", "main.py", "live frames forwarded to each viewer per second, at most", 1, 30),
     T("HANDOVER_MAX_CAMERAS", 8, "int", "main.py", "camera connections allowed at once", 1, 64),
