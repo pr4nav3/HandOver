@@ -642,6 +642,40 @@ def test_max_output_tokens_per_thinking():
     assert check._config({}, "gemini-3.5-flash-lite").max_output_tokens == 256
 
 
+def test_parse_answer_min_conf_rule():
+    """yes survives a named difference when confident; only a yes below HANDOVER_MIN_CONF becomes unsure."""
+    ans = lambda done, conf: json.dumps(  # noqa: E731
+        {"seen": "s", "differs": "smaller, rotated", "done": done, "confidence": conf})
+    assert check._parse_answer(ans("yes", 0.85)) == ("yes", 0.85, "smaller, rotated")
+    assert check._parse_answer(ans("yes", 0.6)) == ("unsure", 0.6, "smaller, rotated")
+    assert check._parse_answer(ans("no", 0.9)) == ("no", 0.9, "smaller, rotated")
+    assert check._parse_answer(ans("no", 0.3)) == ("no", 0.3, "smaller, rotated")
+    assert check._parse_answer(ans("yes", 0.8))[0] == "yes"  # the minimum itself passes
+    saved = os.environ.get("HANDOVER_MIN_CONF")
+    os.environ["HANDOVER_MIN_CONF"] = "0.9"
+    try:
+        assert check._parse_answer(ans("yes", 0.85))[0] == "unsure"  # follows the configured minimum
+    finally:
+        _restore("HANDOVER_MIN_CONF", saved)
+
+
+def test_prompts_tolerate_learner_object_differences():
+    """Both providers tell the model the learner's object differs from DONE and to judge structure only."""
+    texts = {"gemini": check.PROMPT.format(question="Q?", rule=check.RULE, before=check.BEFORE_RULE),
+             **{f"claude {k}": v for k, v in check.CLAUDE_SYSTEMS.items()}}
+    for name, text in texts.items():
+        for phrase in ("size, color, brand, position, distance, angle and lighting", "hands may be in view",
+                       "Judge only the fold or assembly state", "never a reason to answer no",
+                       'answer yes with differs "nothing"', "fold or part that DONE has is missing",
+                       "structural differences only"):
+            assert phrase in text, (name, phrase)
+        assert "what LIVE lacks" not in text, name
+    for desc in (check._answer_schema()["properties"]["differs"]["description"],
+                 check._claude_answer_schema()["properties"]["differs"]["description"],
+                 check._claude_answer_schema("full")["properties"]["differs"]["description"]):
+        assert "structural differences only" in desc
+
+
 def test_generic_prompt_wording():
     for text in (check.PROMPT, check.RULE, check.BEFORE_RULE, json.dumps(check._answer_schema())):
         assert "paper" not in text and "flap" not in text, text
@@ -870,14 +904,16 @@ def test_claude_cache_read_tokens_reported():
     assert abs(r.cost_usd - spend.cost("claude-haiku-5-5", usage)) < 1e-12  # reads at 0.1x
 
 
-def test_done_normalized_and_contradiction_guard():
+def test_done_normalized_and_low_confidence_guard():
     img = _jpeg()
-    for raw, differs, want_done, want_reason in [
-        (" Yes ", "nothing", "yes", None),
-        ("NO", "flap open", "no", "flap open"),
-        ("yes", "left flap still open", "unsure", "left flap still open"),  # says done, names a gap
+    for raw, differs, conf, want_done, want_reason in [
+        (" Yes ", "nothing", 0.9, "yes", None),
+        ("NO", "flap open", 0.9, "no", "flap open"),
+        ("yes", "slightly smaller paper", 0.85, "yes", "slightly smaller paper"),  # confident yes stays yes
+        ("yes", "left flap still open", 0.6, "unsure", "left flap still open"),  # hedged yes
+        ("no", "left flap still open", 0.6, "no", "left flap still open"),  # no stays no at any confidence
     ]:
-        text = json.dumps({"seen": "s", "differs": differs, "done": raw, "confidence": 0.9})
+        text = json.dumps({"seen": "s", "differs": differs, "done": raw, "confidence": conf})
         with claude_client(lambda: _claude_msg(text)):
             r = _run(check_frame(img, img, "q"))
         assert (r.done, r.reason, r.error) == (want_done, want_reason, None), raw
@@ -1119,8 +1155,8 @@ def test_claude_lean_form_is_default_and_full_still_parses():
         r = _run(check_frame(img, img, "q"))
     assert (r.done, r.reason, r.error) == ("no", "left flap open", None)
     assert fake.calls[0]["system"][0]["text"] == check.CLAUDE_SYSTEMS["lean"]
-    contra = json.dumps({"differs": "flap open", "done": "yes", "confidence": 0.95})
-    with claude_client(lambda: _claude_msg(contra)):
+    hedged = json.dumps({"differs": "flap open", "done": "yes", "confidence": 0.5})
+    with claude_client(lambda: _claude_msg(hedged)):
         assert _run(check_frame(img, img, "q")).done == "unsure"  # the guard still holds without seen
 
 

@@ -25,6 +25,7 @@ os.environ["HANDOVER_LESSONS"] = str(TMP / "lessons")  # before importing server
 os.environ["HANDOVER_CHECK"] = "mock"
 os.environ["HANDOVER_GATE"] = "0"
 os.environ["HANDOVER_MIN_FRAME_GAP"] = "0"  # tests stream faster than the 5 fps cap; test_frame_gap covers it
+os.environ["HANDOVER_CHECK_INTERVAL_S"] = "0.2"  # the floor: pipelining tests need checks close together; test_check_interval covers 1 s
 os.environ.pop("HANDOVER_MOCK_MISTAKE", None)
 os.environ["HANDOVER_EVENTS_JSONL"] = str(TMP / "scratch" / "events.jsonl")  # server.databricks local mirror
 os.environ["HANDOVER_DATA"] = str(TMP / "data")  # accounts and library state, never the repo's
@@ -247,6 +248,8 @@ def test_state_has_new_fields() -> None:
             assert key in st, key  # every EXISTS field kept
         assert st["camera"] is None and st["mistake"] is None
         assert (st["check_offline"], st["check_offline_reason"]) == (False, None)
+        assert st["check_interval_s"] == 0.2 and st["ui_fps"] == 15  # this module sets the 0.2 s floor
+        assert isinstance(st["ui_fps"], int)
 
 
 # ---------------------------------------------------------------- active camera
@@ -434,6 +437,57 @@ def test_frame_to_ui_adds_little_latency() -> None:
     assert len(pairs) >= 8, (len(arrived), len(stamps))
     delays = sorted(b - a for a, b in pairs)
     assert delays[len(delays) // 2] < 0.02, delays
+
+
+def test_set_check_interval_clamps_and_broadcasts() -> None:
+    """set_check_interval works with no lesson, is clamped to 0.2..10, and every state carries the value;
+    bad values are ignored."""
+    with env(HANDOVER_CHECK_INTERVAL_S=None, HANDOVER_UI_FPS="20"), hub() as c, c.websocket_connect("/ws/ui") as ui:
+        st = recv_json(ui, is_state)
+        assert st["check_interval_s"] == 1.0 and st["ui_fps"] == 20  # registry default, env value
+        for sent, want in ((0.5, 0.5), (2, 2.0), (0.01, 0.2), (99, 10.0), (0.2, 0.2)):
+            ui.send_json({"type": "set_check_interval", "seconds": sent})
+            st = recv_json(ui, is_state)
+            assert st["check_interval_s"] == want, (sent, st["check_interval_s"])
+        for bad in ("1", True, None, [1]):
+            ui.send_json({"type": "set_check_interval", "seconds": bad})
+        ui.send_text('{"type":"set_check_interval","seconds":NaN}')
+        assert not [m for m in drain(ui, 0.3) if m.get("text")]  # ignored: no state, no error
+        assert main.engine.check_interval_s() == 0.2
+        make_lesson()
+        assert select(ui)["check_interval_s"] == 0.2  # kept across select_lesson
+
+
+def test_check_interval_caps_model_calls_at_camera_rate() -> None:
+    """A 12 fps camera with the gate off (every frame wanted): the model is offered at most one frame per
+    check_interval_s, and a set_check_interval takes effect at once."""
+    make_lesson()
+    fake = FakeCheck(lambda ref: check.CheckResult("no", 0.9, 1))
+    with env(HANDOVER_CHECK_INTERVAL_S=None), patched(check, check_frame=fake), hub() as c,             c.websocket_connect("/ws/ui") as ui, c.websocket_connect("/ws/camera") as cam:
+        select(ui)
+
+        def stream(seconds: float) -> int:
+            start, n = time.monotonic(), 0
+            while time.monotonic() - start < seconds:
+                cam.send_bytes(jpeg((n % 200, 90, 90), (320, 240)))
+                n += 1
+                time.sleep(1 / 12)
+            return n
+
+        fake.calls.clear()
+        sent = stream(2.5)
+        assert sent >= 20, sent
+        assert 2 <= len(fake.calls) <= 3, len(fake.calls)  # 1 s default: about 2.5 checks, never one per frame
+        gaps = [b - a for a, b in zip(fake.times, fake.times[1:])]
+        assert all(g >= 0.95 for g in gaps), gaps
+        ui.send_json({"type": "set_check_interval", "seconds": 0.5})
+        recv_json(ui, lambda m: is_state(m) and m["check_interval_s"] == 0.5)
+        fake.calls.clear()
+        fake.times.clear()
+        stream(2.5)
+        assert 4 <= len(fake.calls) <= 6, len(fake.calls)
+        gaps = [b - a for a, b in zip(fake.times, fake.times[1:])]
+        assert all(g >= 0.45 for g in gaps), gaps
 
 
 # ---------------------------------------------------------------- check loop: gate, breaker, reason

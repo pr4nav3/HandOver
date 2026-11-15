@@ -29,6 +29,9 @@ const OFFLINE_REASON: Record<CheckOfflineReason, string> = {
 // A check reason is shown only when the model was at least this sure (CONTRACT.md 7).
 const REASON_MIN_CONF = 0.7
 
+// Choices for how often the vision model is offered a frame (set_check_interval, CONTRACT.md 7).
+const CHECK_INTERVALS = [0.5, 1, 2]
+
 interface StepRow {
   n: number
   title: string
@@ -67,8 +70,15 @@ export function Learn() {
   const resumingRef = useRef(false)
   resumingRef.current = resuming
 
+  // Two stacked <img>s: a new frame decodes in the hidden one, then the two swap, so
+  // the picture never blanks between frames. Only the front one is visible.
   const liveRef = useRef<HTMLImageElement>(null)
+  const liveBackRef = useRef<HTMLImageElement>(null)
+  const frontIsA = useRef(true)
   const frameUrl = useRef<string | null>(null)
+  const decoding = useRef(false)
+  const pendingFrame = useRef<Blob | null>(null)
+  const mounted = useRef(true)
   // The live panel hugs the camera's real shape (glasses and replays are landscape,
   // a phone held upright is portrait). Null until the first frame decodes.
   const liveCellRef = useRef<HTMLElement>(null)
@@ -86,25 +96,60 @@ export function Learn() {
   const [serverError, setServerError] = useState('')
   const errorTimer = useRef<number | undefined>(undefined)
 
-  // Live frames go straight to the <img> so React does not re-render per frame.
-  const onFrame = useCallback((jpeg: Blob) => {
-    const url = URL.createObjectURL(jpeg)
-    const img = liveRef.current
-    if (img) img.src = url
-    if (frameUrl.current) URL.revokeObjectURL(frameUrl.current)
-    frameUrl.current = url
-    setHasFrame(true)
-    setStale(false)
-  }, [])
-
-  // Runs per frame but sets state only when the shape changes, so frames of the
-  // same size never re-render or move the layout.
-  const onLiveLoad = useCallback(() => {
-    const img = liveRef.current
-    if (!img?.naturalWidth || !img.naturalHeight) return
+  // Sets state only when the shape changes, so frames of the same size never
+  // re-render or move the layout.
+  const noteAspect = useCallback((img: HTMLImageElement) => {
+    if (!img.naturalWidth || !img.naturalHeight) return
     const next = img.naturalWidth / img.naturalHeight
     setLiveAspect((prev) => (prev !== null && Math.abs(prev - next) < 0.01 ? prev : next))
   }, [])
+
+  // Live frames go straight to the <img>s so React does not re-render per frame.
+  // One decode at a time; frames arriving meanwhile keep only the newest, so a
+  // slow decode drops frames instead of building up delay.
+  const showFrame = useCallback(
+    (jpeg: Blob) => {
+      const front = frontIsA.current ? liveRef.current : liveBackRef.current
+      const back = frontIsA.current ? liveBackRef.current : liveRef.current
+      if (!front || !back) return
+      decoding.current = true
+      const url = URL.createObjectURL(jpeg)
+      back.src = url
+      const finish = (ok: boolean) => {
+        decoding.current = false
+        if (!mounted.current) {
+          URL.revokeObjectURL(url)
+          return
+        }
+        if (ok) {
+          back.style.opacity = '1'
+          front.style.opacity = '0'
+          frontIsA.current = !frontIsA.current
+          // The old frame is off screen now, so its URL can go.
+          if (frameUrl.current) URL.revokeObjectURL(frameUrl.current)
+          frameUrl.current = url
+          noteAspect(back)
+          setHasFrame(true)
+          setStale(false)
+        } else URL.revokeObjectURL(url) // a bad JPEG: keep showing the last good frame
+        const pending = pendingFrame.current
+        pendingFrame.current = null
+        if (pending) showFrame(pending)
+      }
+      back.decode().then(
+        () => finish(true),
+        () => finish(false),
+      )
+    },
+    [noteAspect],
+  )
+  const onFrame = useCallback(
+    (jpeg: Blob) => {
+      if (decoding.current) pendingFrame.current = jpeg
+      else showFrame(jpeg)
+    },
+    [showFrame],
+  )
 
   // For the done screen: when this run began, and how each step was finished.
   const runStart = useRef(0)
@@ -200,14 +245,17 @@ export function Learn() {
   const { down, send } = useUiSocket({ onFrame, onState, onAdvance, onError, onMistake, onOpen })
   sendRef.current = send
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+      pendingFrame.current = null
       window.clearTimeout(flashTimer.current)
       window.clearTimeout(errorTimer.current)
       if (frameUrl.current) URL.revokeObjectURL(frameUrl.current)
-    },
-    [],
-  )
+      frameUrl.current = null
+    }
+  }, [])
 
   // Lesson list for the picker.
   useEffect(() => {
@@ -407,6 +455,8 @@ export function Learn() {
   const cameraLost = showLive && (stale || !state?.camera_connected)
   const recording = showLive && !cameraLost && state?.camera?.source === 'file'
   const cameraName = !down && state?.camera_connected ? state?.camera?.name : undefined
+  const checkInterval = state?.check_interval_s
+  const setCheckInterval = (seconds: number) => send({ type: 'set_check_interval', seconds })
 
   // Before start, or when the server has no lesson (restart, lesson gone) and
   // no resume is in flight, the learner picks one.
@@ -429,6 +479,22 @@ export function Learn() {
           </span>
         )}
         {down && <span className="note">Reconnecting</span>}
+        {started && !down && checkInterval !== undefined && (
+          <span className="check-rate" role="group" aria-label="How often the model checks a frame">
+            <span>Model sees: every</span>
+            {CHECK_INTERVALS.map((s, i) => {
+              const on = Math.abs(checkInterval - s) < 0.01
+              return (
+                <span key={s} className="check-rate-item">
+                  {i > 0 && <span className="check-rate-sep">/</span>}
+                  <button type="button" className={on ? 'on' : ''} aria-pressed={on} onClick={() => setCheckInterval(s)}>
+                    {s} s
+                  </button>
+                </span>
+              )
+            })}
+          </span>
+        )}
         {voiceAvailable && (
           <button
             type="button"
@@ -446,7 +512,8 @@ export function Learn() {
       <main className="learn-grid" ref={gridRef} style={sideWidth ? { gridTemplateColumns: `minmax(0, 1fr) ${sideWidth}px` } : undefined}>
         <section className="live-cell" ref={liveCellRef} aria-label="Live camera">
           <div className="panel live" style={liveAspect && liveBox ? { width: liveBox.w, height: liveBox.h } : undefined}>
-            <img ref={liveRef} alt="Live camera" onLoad={onLiveLoad} className={showLive ? (cameraLost ? 'lost' : '') : 'hidden'} />
+            <img ref={liveRef} alt="Live camera" style={FRONT_STYLE} className={showLive ? (cameraLost ? 'lost' : '') : 'hidden'} />
+            <img ref={liveBackRef} alt="" aria-hidden="true" style={BACK_STYLE} className={showLive ? (cameraLost ? 'lost' : '') : 'hidden'} />
             {cameraLost && (
               <p className="live-note" role="status">
                 Camera lost. Keep going with Next.
@@ -662,6 +729,11 @@ export function Learn() {
     </div>
   )
 }
+
+// Initial opacity of the two live <img>s; showFrame flips them from then on. Constant
+// objects, so React sets them once at mount and never overwrites the flips.
+const FRONT_STYLE = { opacity: 1 } as const
+const BACK_STYLE = { opacity: 0 } as const
 
 // Gap between the clip and the step title; matches .clip-area in styles.css.
 const CLIP_GAP = 18

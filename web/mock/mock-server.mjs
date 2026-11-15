@@ -104,6 +104,8 @@ const state = {
   check_offline: !!process.env.MOCK_OFFLINE,
   check_offline_reason: process.env.MOCK_OFFLINE || null,
   mistake: null,
+  check_interval_s: 1,
+  ui_fps: 15,
 }
 let cameraSource = process.env.MOCK_SOURCE || 'phone'
 const cameraInfo = () =>
@@ -361,6 +363,13 @@ wss.on('connection', (ws) => {
     // stale (a camera advance won the race) and is dropped. No `from` = legacy.
     const stale = (msg.type === 'next' || msg.type === 'back') && msg.from !== undefined && msg.from !== state.step
     if (msg.type === 'select_lesson') selectLesson(msg.id, ws)
+    else if (msg.type === 'set_check_interval') {
+      // Like the real server: clamped to 0.2..10, works with no lesson, ignores non-numbers.
+      if (typeof msg.seconds === 'number' && Number.isFinite(msg.seconds)) {
+        state.check_interval_s = Math.min(10, Math.max(0.2, msg.seconds))
+        broadcast(stateMsg())
+      }
+    }
     else if (!state.lesson_id) ws.send(JSON.stringify({ type: 'error', message: 'No lesson selected' }))
     else if (stale) console.log(`ignored stale ${msg.type} from ${msg.from} (at ${state.step})`)
     else if (msg.type === 'next' && state.status !== 'done') goTo(state.step + 1, msg.reason || 'button')

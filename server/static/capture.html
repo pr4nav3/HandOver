@@ -84,13 +84,14 @@
   <p class="privacy">Frames go to the hub on this network only and are never saved.</p>
   <p id="idle" class="idle" hidden>Not sending. Check the hub address and network.</p>
   <div class="row">
-    <span class="label">Send a frame every</span>
+    <span class="label">Live view</span>
     <div class="seg" id="seg">
-      <button data-ms="500">0.5 s</button>
-      <button data-ms="1000" class="sel">1 s</button>
-      <button data-ms="2000">2 s</button>
+      <button data-fps="6">6 fps</button>
+      <button data-fps="12" class="sel">12 fps</button>
+      <button data-fps="15">15 fps</button>
     </div>
   </div>
+  <p class="note" id="model" hidden></p>
   <div class="row">
     <span class="stats" id="stats">0 frames sent</span>
     <span class="stats" id="wake"></span>
@@ -112,7 +113,9 @@
   const rec = $("rec"), idleEl = $("idle"), camEl = $("cam"), stepEl = $("step"), stage = $("stage");
   const nextBtn = $("next"), backBtn = $("back");
   const wsUrl = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws/camera`;
-  const MAX_BUFFERED = 256 * 1024;
+  // Frames are dropped while more than about two are still waiting in the socket, so latency never grows.
+  const MAX_BUFFERED = 64 * 1024;
+  const MAX_SIDE = 640, JPEG_QUALITY = 0.55, DEFAULT_FPS = 12;
   const IDLE_MS = 5000, BACKOFF_MIN = 500, BACKOFF_MAX = 5000;
 
   // Stable device id and label, kept in localStorage (falls back to per-page values if storage is blocked).
@@ -134,7 +137,7 @@
   const deviceName = stored("handover.device_name", () => "iPhone Safari");
 
   let stream = null, ws = null, timer = null, reconnectTimer = null, wakeLock = null, flashTimer = null;
-  let running = false, sent = 0, skipped = 0, intervalMs = 1000, encoding = false;
+  let running = false, sent = 0, skipped = 0, intervalMs = 1000 / DEFAULT_FPS, encoding = false;
   let backoff = BACKOFF_MIN, lastSentAt = 0, helloSent = false, hubState = null;
 
   function setConn(state, text) {
@@ -165,7 +168,13 @@
     nextBtn.disabled = !ok;
     backBtn.disabled = !ok;
   }
+  function showModelRate() {
+    const el = $("model"), s = hubState && hubState.checkInterval;
+    el.hidden = !s;
+    if (s) el.textContent = `Model sees 1 frame every ${Number(s.toFixed(2))} s`;
+  }
   function showState() {
+    showModelRate();
     if (!hubState) { stepEl.textContent = "No step yet"; return; }
     const { step, total, status } = hubState;
     stepEl.textContent = total > 0 ? `Step ${step + 1} of ${total}` + (status ? ` · ${status}` : "") : "No lesson selected";
@@ -183,7 +192,9 @@
     if (!m || typeof m !== "object") return;
     if (m.type === "state") {
       if (!Number.isInteger(m.step) || !Number.isInteger(m.total)) return;
-      hubState = { step: m.step, total: m.total, status: typeof m.status === "string" ? m.status : "" };
+      const ci = m.check_interval_s;
+      hubState = { step: m.step, total: m.total, status: typeof m.status === "string" ? m.status : "",
+        checkInterval: typeof ci === "number" && isFinite(ci) && ci > 0 ? ci : null };
       showState(); updateNav();
     } else if (m.type === "advance") {
       if (m.reason === "camera") flashStage();
@@ -241,8 +252,10 @@
   function sendFrame() {
     if (!socketOpen() || !helloSent || encoding) return;
     if (ws.bufferedAmount > MAX_BUFFERED) { skipped++; updateStats(); return; }
-    const w = video.videoWidth, h = video.videoHeight;
-    if (!w || !h) return;
+    const vw = video.videoWidth, vh = video.videoHeight;
+    if (!vw || !vh) return;
+    const scale = Math.min(1, MAX_SIDE / Math.max(vw, vh));
+    const w = Math.round(vw * scale), h = Math.round(vh * scale);
     if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
     ctx.drawImage(video, 0, 0, w, h);
     encoding = true;
@@ -252,7 +265,7 @@
       ws.send(blob);
       sent++; lastSentAt = Date.now();
       updateStats(); updateSending();
-    }, "image/jpeg", 0.7);
+    }, "image/jpeg", JPEG_QUALITY);
   }
 
   function restartTimer() {
@@ -348,9 +361,9 @@
   });
 
   $("seg").addEventListener("click", (e) => {
-    const b = e.target.closest("button[data-ms]");
+    const b = e.target.closest("button[data-fps]");
     if (!b) return;
-    intervalMs = Number(b.dataset.ms);
+    intervalMs = 1000 / Number(b.dataset.fps);
     for (const x of $("seg").querySelectorAll("button")) x.classList.toggle("sel", x === b);
     restartTimer();
   });

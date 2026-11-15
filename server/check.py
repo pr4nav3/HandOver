@@ -112,6 +112,11 @@ class MatchResult:
         return {"step": self.step, "confidence": round(self.confidence, 3), "latency_ms": self.latency_ms}
 
 
+# differs names structural gaps only: an earlier wording ("what LIVE lacks compared with DONE")
+# made the model name size, position or lighting even for the reference frame itself.
+_DIFFERS_WHAT = "structural differences only (a missing fold, a different outline, fewer layers)"
+
+
 class _Answer(BaseModel):
     """Flat schema the model must answer with."""
 
@@ -122,7 +127,7 @@ class _Answer(BaseModel):
     # as the schema description, so keep it short.
 
     seen: str = Field(default="", description="At most 8 words on LIVE: outline shape, orientation, visible parts")
-    differs: str = Field(default="", description='At most 8 words on what LIVE lacks compared with DONE, or "nothing"')
+    differs: str = Field(default="", description=f'At most 8 words on {_DIFFERS_WHAT}, or "nothing"')
     done: Literal["yes", "no", "unsure"] = Field(description="yes, no, or unsure")
     confidence: float = Field(ge=0, le=1, description="0 to 1")
 
@@ -497,18 +502,28 @@ async def _mock_check(ref_jpeg: bytes, step_started_at: Optional[float]) -> Chec
 
 # ---------------------------------------------------------------- real check
 
+# The learner's object is never the expert's: a teach-time self-test failed 5 of 8 questions
+# against their own reference frames because the model treated size or lighting as a gap.
 RULE = (
+    "The learner's object may differ from DONE in size, color, brand, position, distance, angle and lighting, "
+    "and hands may be in view. "
+    "Judge only the fold or assembly state: which folds or parts exist, the outline shape, and how many layers "
+    "are visible. "
+    "Differences in size, color, position or lighting are never a reason to answer no "
+    "(a square turned 45 degrees looks like a diamond and still counts). "
+    "Size words in the question (smaller, larger) compare the object with its state before this step, not with DONE. "
     "Answer yes only if every feature in the question is visible in LIVE. "
-    "If any feature is missing or hidden answer no or unsure. "
-    "Hands, shadows, background, rotation and scale do not matter: the same shape turned to any angle, moved, "
-    "or at another size matches DONE (a square turned 45 degrees looks like a diamond and still counts)."
+    'If LIVE shows the same state as DONE, answer yes with differs "nothing". '
+    "Answer no when a fold or part that DONE has is missing in LIVE, or when LIVE still looks like the state "
+    "before this step. If a feature is hidden, answer unsure."
 )
 
 PROMPT = (
     "Question: {question}\n\n"
     "{rule}{before}\n"
     'First write "seen": at most 8 words on LIVE (outline shape, orientation, visible parts). '
-    'Then "differs": at most 8 words on what LIVE lacks compared with DONE, or "nothing". '
+    f'Then "differs": at most 8 words on {_DIFFERS_WHAT} between LIVE and DONE, or "nothing"; '
+    "never size, color, position or lighting. "
     'Then "done": yes, no, or unsure (unsure if the object is not visible or blurred), '
     'and "confidence" from 0 to 1.'
 )
@@ -606,9 +621,13 @@ def _parse_answer(text: str) -> tuple[Done, float, Optional[str]]:
     log.debug("check seen: %s", trim_reason(ans.seen, SEEN_MAX_WORDS))
     reason = differs_to_reason(ans.differs)
     done: Done = ans.done
-    if done == "yes" and reason is not None:
-        done = "unsure"  # it says done but names a difference: never advance on a contradiction
-    return done, float(ans.confidence), reason
+    conf = float(ans.confidence)
+    # A yes below HANDOVER_MIN_CONF is a hedge: report unsure. A confident yes stays yes even
+    # when differs names something: the model nearly always names some difference (size,
+    # position), and treating that as a contradiction failed the reference frame against itself.
+    if done == "yes" and conf < float(config.get("HANDOVER_MIN_CONF")):  # type: ignore[arg-type]
+        done = "unsure"
+    return done, conf, reason
 
 
 def _check_labels(with_before: bool) -> list[str]:
@@ -634,7 +653,7 @@ _CLAUDE_FIELDS: dict[str, tuple[str, ...]] = {
     "lean": ("differs", "done", "confidence"),
     "full": ("seen", "differs", "done", "confidence"),
 }
-_LEAN_DIFFERS = f'At most {LEAN_DIFFERS_WORDS} words on what LIVE lacks compared with DONE, or "nothing"'
+_LEAN_DIFFERS = f'At most {LEAN_DIFFERS_WORDS} words on {_DIFFERS_WHAT}, or "nothing"'
 
 
 def _claude_answer_schema(form: ClaudeForm = CLAUDE_FORM) -> dict:
@@ -679,6 +698,7 @@ _CLAUDE_SYSTEM_HEAD = (
     "You check whether a learner finished one step of a hands-on task, from photos. "
     "IMAGE DONE shows the finished step. IMAGE LIVE is the camera now. "
     "IMAGE BEFORE, when given, shows the object before this step: if LIVE looks like BEFORE, answer no. "
+    "The question names the features of DONE; use it as written. "
     + RULE + " "
 )
 _CLAUDE_VERDICT = (
@@ -687,11 +707,12 @@ _CLAUDE_VERDICT = (
 )
 CLAUDE_SYSTEMS: dict[str, str] = {
     "lean": _CLAUDE_SYSTEM_HEAD
-    + f'First write "differs": at most {LEAN_DIFFERS_WORDS} words on what LIVE lacks compared with DONE, '
-    'or "nothing". ' + _CLAUDE_VERDICT,
+    + f'First write "differs": at most {LEAN_DIFFERS_WORDS} words on {_DIFFERS_WHAT} between LIVE and DONE, '
+    'or "nothing"; never size, color, position or lighting. ' + _CLAUDE_VERDICT,
     "full": _CLAUDE_SYSTEM_HEAD
     + 'First write "seen": at most 8 words on LIVE (outline shape, orientation, visible parts). '
-    'Then "differs": at most 8 words on what LIVE lacks compared with DONE, or "nothing". ' + _CLAUDE_VERDICT,
+    f'Then "differs": at most 8 words on {_DIFFERS_WHAT} between LIVE and DONE, or "nothing"; '
+    "never size, color, position or lighting. " + _CLAUDE_VERDICT,
 }
 CLAUDE_SYSTEM = CLAUDE_SYSTEMS[CLAUDE_FORM]
 CLAUDE_FINAL = "Answer for IMAGE LIVE."

@@ -234,8 +234,10 @@ REGISTRY: tuple[Tunable, ...] = (
     T("HANDOVER_HELLO_GRACE_MS", 300, "float", "main.py",
       "ms a new camera has to send hello before its first state broadcast", 0, 5000),
     T("HANDOVER_WEB_DIST", None, "str", "main.py", "folder with the built web app; default <repo>/web/dist"),
-    T("HANDOVER_MIN_FRAME_GAP", 0.05, "float", "main.py",
-      "seconds between camera frames the hub accepts (0.05 lets 15 fps senders through)", 0, 5),
+    T("HANDOVER_MIN_FRAME_GAP", 0.04, "float", "main.py",
+      "seconds between camera frames the hub accepts (0.04 lets 15 fps senders through with jitter)", 0, 5),
+    T("HANDOVER_CHECK_INTERVAL_S", 1.0, "float", "main.py",
+      "seconds between frames offered to the vision model", 0.2, 10),
     T("HANDOVER_UI_FPS", 15, "int", "main.py", "live frames forwarded to each viewer per second, at most", 1, 30),
     T("HANDOVER_MAX_CAMERAS", 8, "int", "main.py", "camera connections allowed at once", 1, 64),
     T("HANDOVER_MAX_VIEWERS", 32, "int", "main.py", "UI connections allowed at once", 1, 256),
@@ -253,6 +255,9 @@ REGISTRY: tuple[Tunable, ...] = (
     T("HANDOVER_CLAUDE_TEACH_MODEL", "claude-haiku-5-5", "str", "teach.py",
       "Claude model for step extraction (frames only, no audio)"),
     T("HANDOVER_SELFTEST_TIMEOUT", 10.0, "float", "teach.py", "seconds per teach-time self-test check", 0.1, 120),
+    T("HANDOVER_MIN_STEP_S", 6.0, "float", "teach.py", "steps shorter than this are merged into a neighbour", 0.0, 600.0),
+    T("HANDOVER_AUTO_SELFTEST", True, "bool", "teach.py",
+      "run the self-test after every cut and recut; failing steps become manual"),
 )
 del T
 

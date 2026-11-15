@@ -1,6 +1,6 @@
 # HandOver contract (hub <-> web <-> iPhone app <-> capture)
 
-Revision 5, 2026-11-14 (lean scope). EXISTS items are implemented in server/ today and clients may rely on them. NEW items are to be built this weekend for a feature in docs/PLAN.md; clients must not assume one until its owner says it is merged. Nothing else exists or is planned. Change process: say it in the group, one person edits and bumps this Revision line, everyone pulls. Freeze 6 AM Sunday.
+Revision 6, 2026-11-14 (lean scope; live view at camera rate, adjustable check interval). EXISTS items are implemented in server/ today and clients may rely on them. NEW items are to be built this weekend for a feature in docs/PLAN.md; clients must not assume one until its owner says it is merged. Nothing else exists or is planned. Change process: say it in the group, one person edits and bumps this Revision line, everyone pulls. Freeze 6 AM Sunday.
 
 Compatibility: every NEW field is optional for the reader; readers ignore unknown fields and message types. A camera that only sends binary JPEGs keeps working.
 
@@ -24,6 +24,9 @@ Environment variables:
 | `HANDOVER_TEACH_MOCK` | unset | `1` = no Gemini, three placeholder steps | EXISTS |
 | `HANDOVER_GATE` | 1 | 0 = no motion gate | NEW (M5) |
 | `HANDOVER_BREAKER_SECONDS` | 30 | breaker open time | NEW (M6) |
+| `HANDOVER_CHECK_INTERVAL_S` | 1.0 | seconds between frames offered to the vision model (0.2 to 10); `set_check_interval` (7) overrides it at runtime | EXISTS |
+| `HANDOVER_MIN_STEP_S` | 6.0 | teach: steps shorter than this are merged into a neighbour (1 to 60) | NEW (teach.py) |
+| `HANDOVER_AUTO_SELFTEST` | 1 | teach: run the self-test after every cut and recut; failing steps become manual | NEW (teach.py) |
 | `HANDOVER_MOCK_MISTAKE` | unset | test only, mock mode only: `behind:<0-based step>` or `ahead:<0-based step>`; after 4 s on that step the hub sends `mistake` as in 7.2 with `source: "mock"`. Never set in a demo | NEW (M9) |
 
 ## 2. Lesson ids (EXISTS)
@@ -91,10 +94,12 @@ Senders: iPhone app, capture.html, replay.py.
 Client to hub:
 | Message | Fields | Status |
 |---|---|---|
-| binary | one JPEG (starts `FF D8`); about 1 fps, long side 640 to 1280. Frames over 2 MB are ignored (NEW) | EXISTS |
+| binary | one JPEG (starts `FF D8`); up to 15 fps, long side 640 to 1280. Frames over 2 MB, and frames closer than `HANDOVER_MIN_FRAME_GAP` (0.04 s) to the previous one, are ignored | EXISTS |
 | `hello` | `{"type":"hello","device_id":str,"name":str,"platform":"ios|web|replay","source":"glasses|phone|browser|file"}`, optional, first message; may repeat to update. Malformed hello is ignored | NEW (W4, W8, replay) |
 | `next` | `{"type":"next","reason":"button","from":int}`, only after hello; same `from` rule as `/ws/ui` | NEW (W8) |
 | `back` | `{"type":"back","from":int}`, only after hello | NEW (W8) |
+
+Rate (EXISTS): cameras may send up to 15 fps so the live view looks like video (capture.html sends 12 fps by default, long side 640, JPEG quality 0.55, and drops a frame when its socket is behind). The hub forwards at most `ui_fps` frames per second to viewers and offers the vision model at most one frame per `check_interval_s`; the motion gate and the heartbeat apply on top. Frames are held in memory only, never written to disk.
 
 A camera that never sends hello gets `name: "Camera <n>"`, `platform: "other"`, `source: "phone"`.
 
@@ -118,11 +123,12 @@ Client to hub (text JSON):
 | `{"type":"back","from":int}` | back | EXISTS |
 | `{"type":"goto","step":int}` | jump, 0-based, `< total` | EXISTS |
 | `{"type":"dismiss_mistake"}` | clears `state.mistake`, broadcasts state | NEW (M9) |
+| `{"type":"set_check_interval","seconds":float}` | seconds between frames offered to the vision model, clamped to 0.2..10, applied at once for the whole session (every viewer), broadcasts state with the new `check_interval_s`. Works with no lesson loaded. A non-number is ignored | EXISTS |
 
-Any message other than `select_lesson` with no lesson loaded gets `error` `no lesson selected`. Invalid JSON and unknown types are ignored.
+Any message other than `select_lesson` or `set_check_interval` with no lesson loaded gets `error` `no lesson selected`. Invalid JSON and unknown types are ignored.
 
 Hub to client:
-- Binary (EXISTS): newest live JPEG from the active camera, long side at most 960, quality 75, at most 4 per second, dropped when the client is more than 2 messages behind.
+- Binary (EXISTS): newest live JPEG from the active camera, long side at most 960 (a frame already that small is passed through as is, otherwise re-encoded at quality 75), at most `ui_fps` per second (`HANDOVER_UI_FPS`, default 15, at most 30). Each viewer keeps only the newest frame, so a viewer that is behind drops frames instead of queueing them.
 - `state` (EXISTS fields first), on connect and every change:
 ```json
 {"type":"state","lesson_id":"fortune-teller-v1","rev":1763154180123,"step":4,"total":8,"status":"watching",
@@ -130,7 +136,7 @@ Hub to client:
  "camera_connected":true,
  "camera":{"name":"Ray-Ban Meta via iPhone","platform":"ios","source":"glasses"},
  "check_offline":false,"check_offline_reason":null,
- "mistake":null}
+ "mistake":null,"check_interval_s":1.0,"ui_fps":15}
 ```
 | Field | Type | Status |
 |---|---|---|
@@ -145,6 +151,8 @@ Hub to client:
 | `check_offline` | bool: Gemini not in use although mode is gemini; UI shows "Checks off, use Next" | NEW (M6) |
 | `check_offline_reason` | `"no_key"`, `"rate_limited"`, `"errors"`, or null | NEW (M6) |
 | `mistake` | the current mistake object (7.2 fields minus `type`) or null; cleared on step change, `dismiss_mistake`, or a yes on this step | NEW (M9) |
+| `check_interval_s` | float: seconds between frames offered to the vision model, at least (`set_check_interval`, else `HANDOVER_CHECK_INTERVAL_S`). Optional for readers | EXISTS |
+| `ui_fps` | int: live frames per second forwarded to each viewer, at most (`HANDOVER_UI_FPS`). Optional for readers | EXISTS |
 
 - `advance` (EXISTS): `{"type":"advance","from":int,"to":int,"reason":"camera|button|voice"}`, sent right before the matching state; `to` may equal `total` (finished). UI plays the chime when reason is `camera`.
 - `mistake` (NEW, M9), sent once when the mistake check fires:
@@ -159,6 +167,7 @@ EXISTS: reference = current step's `ref_frame`. Live frame, reference and `check
 
 NEW (M5, M6, M9):
 - Motion gate: call only when the frame is still and changed since the last check; heartbeat call every 6 s.
+- Check cadence (EXISTS): whatever the camera rate, at most one frame per `check_interval_s` is offered to the model (confirming and pipelined checks included); a frame held back is looked at again when the interval is over.
 - Breaker: 3 consecutive errors or timeouts, or any 429, sets `check_offline` for `HANDOVER_BREAKER_SECONDS`, then one trial call. While open, no checks run; the learner uses Next.
 - Mistake check: after 5 s of settled consecutive no on a camera step, at most once per 10 s per step, one Gemini multiple-choice call over references k-1, k, k+1. Never in mock mode except the `HANDOVER_MOCK_MISTAKE` hook.
 

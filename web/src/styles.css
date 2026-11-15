@@ -157,6 +157,45 @@ a {
   border: 1px solid var(--border);
 }
 
+/* "Model sees: every 0.5 s / 1 s / 2 s": muted small text, the current choice brighter. */
+.check-rate {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.check-rate-item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+}
+
+.check-rate-sep {
+  opacity: 0.5;
+}
+
+.check-rate button {
+  appearance: none;
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.check-rate button:hover {
+  color: var(--text);
+}
+
+.check-rate button.on {
+  color: var(--text);
+  font-weight: 600;
+}
+
 .note.error {
   color: var(--red);
   border-color: rgba(255, 105, 97, 0.3);

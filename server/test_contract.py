@@ -32,7 +32,7 @@ from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosed
 
 REPO = Path(__file__).resolve().parent.parent
-PY = REPO / ".venv" / "bin" / "python"
+PY = REPO / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
 PORT, HTTPS_PORT = 8060, 8061
 MISTAKE_PORT, MISTAKE_HTTPS_PORT = 8062, 8063
 LESSON = "demo-v1"
@@ -363,7 +363,11 @@ TESTS: list[tuple[str, Callable]] = []
 
 def test(fn):
     TESTS.append((fn.__name__.removeprefix("test_"), fn))
+    fn.__test__ = False  # run by run_all() against the hub, not one by one by pytest
     return fn
+
+
+test.__test__ = False  # the decorator itself is not a pytest test either
 
 
 def check_state_types(st: dict) -> None:
@@ -388,6 +392,11 @@ def check_state_types(st: dict) -> None:
         assert isinstance(st["check_offline"], bool), st["check_offline"]
     if "mistake" in st and st["mistake"] is not None:
         assert isinstance(st["mistake"], dict) and "type" not in st["mistake"], st["mistake"]
+    if "check_interval_s" in st:  # seconds between frames offered to the model (set_check_interval)
+        ci = st["check_interval_s"]
+        assert isinstance(ci, (int, float)) and not isinstance(ci, bool) and 0.2 <= ci <= 10, f"check_interval_s {ci!r}"
+    if "ui_fps" in st:
+        assert is_int(st["ui_fps"]) and 1 <= st["ui_fps"] <= 30, f"ui_fps {st['ui_fps']!r}"
     if "check_mode" in st:  # proposed: who answers the checks; this hub runs mock
         assert st["check_mode"] == "mock", f"check_mode {st['check_mode']!r}"
     if "next_clip" in st and st["next_clip"] is not None:  # proposed: preload hint, a relative lesson path
@@ -429,6 +438,28 @@ async def test_camera_error_no_lesson_selected():
         assert m.get("message") == "no lesson selected", m
     finally:
         await cam.close()
+
+
+@test
+async def test_ui_set_check_interval():
+    """Section 7: set_check_interval works with no lesson, is clamped to 0.2..10 and shows in every state."""
+    ui = await Conn.open("/ws/ui")
+    try:
+        st = await ui.wait(is_type("state"))
+        assert st.get("check_interval_s") == 1.0, f"default check_interval_s {st.get('check_interval_s')!r}"
+        assert st.get("ui_fps") == 15, f"default ui_fps {st.get('ui_fps')!r}"
+        for sent, want in ((0.5, 0.5), (2, 2.0), (0.05, 0.2), (60, 10.0)):
+            await ui.send({"type": "set_check_interval", "seconds": sent})
+            st = await ui.wait(is_type("state"), what=f"state after set_check_interval {sent}")
+            check_state_types(st)
+            assert st["check_interval_s"] == want, f"sent {sent}: check_interval_s {st['check_interval_s']!r}"
+        for bad in ("1", True, None):
+            await ui.send({"type": "set_check_interval", "seconds": bad})
+        await expect_quiet(ui, what="set_check_interval with a non-number")
+    finally:
+        await ui.send({"type": "set_check_interval", "seconds": 1.0})  # the session is shared: put it back
+        await ui.wait(lambda m: is_type("state")(m) and m.get("check_interval_s") == 1.0, what="restored interval")
+        await ui.close()
 
 
 @test
@@ -484,6 +515,12 @@ async def test_rest_capture_page():
     assert status == 200, status
     assert headers.get("content-type", "").startswith("text/html"), headers.get("content-type")
     assert "no-cache" in headers.get("cache-control", ""), headers.get("cache-control")
+    page = body.decode("utf-8", "replace")
+    # Section 6 rate note: a display-rate sender (12 fps default, 6/12/15 choices, 640 px, quality 0.55) that
+    # shows the hub's check cadence.
+    for want in ('data-fps="12" class="sel"', 'data-fps="6"', 'data-fps="15"', "Live view", "MAX_SIDE = 640",
+                 "JPEG_QUALITY = 0.55", "check_interval_s", "Model sees 1 frame every", "bufferedAmount"):
+        assert want in page, f"capture page lacks {want!r}"
 
 
 @test
@@ -1259,6 +1296,11 @@ def main() -> int:
     print(f"\n{counts['ok']} ok, {counts['FAIL']} failed, {counts['SKIP']} skipped "
           f"in {time.monotonic() - started:.1f} s", flush=True)
     return 1 if counts["FAIL"] else 0
+
+
+def test_contract_suite() -> None:
+    """pytest entry: the whole suite against one hub; fails when any contract test fails."""
+    assert main() == 0, "contract tests failed; see the ok / FAIL lines above"
 
 
 if __name__ == "__main__":

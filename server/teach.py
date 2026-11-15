@@ -18,6 +18,7 @@ Exit codes: 0 ok, 1 something failed (ffmpeg, Gemini, files), 2 bad input or usa
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import logging
 import os
@@ -286,7 +287,22 @@ def lessons_root() -> Path:
 def _write_json(path: Path, data) -> None:
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    tmp.replace(path)
+    _retry(lambda: tmp.replace(path))  # Windows: the hub may be reading lesson.json at that moment
+
+
+SWAP_TRIES = 5      # Windows: a folder or file held open by the hub or a shell refuses a rename (WinError 32)
+SWAP_WAIT_S = 0.5
+
+
+def _retry(fn, tries: int = SWAP_TRIES, wait: float = SWAP_WAIT_S):
+    """fn(), retried on PermissionError (Windows sharing violations are usually brief). Re-raises the last one."""
+    for k in range(tries):
+        try:
+            return fn()
+        except PermissionError:
+            if k == tries - 1:
+                raise
+            time.sleep(wait)
 
 
 def _env_file() -> dict[str, str]:
@@ -499,6 +515,71 @@ def _crease_steps_manual(ex: Extraction) -> Extraction:
     so a camera check cannot judge it. The prompt says so; this enforces it from the step title."""
     steps = [st.model_copy(update={"check_question": "manual"}) if _CREASE_TITLE.search(st.title) else st
              for st in ex.steps]
+    return ex.model_copy(update={"steps": steps})
+
+
+MIN_STEP_S = 6.0  # default of HANDOVER_MIN_STEP_S
+
+
+def min_step_s() -> float:
+    """HANDOVER_MIN_STEP_S: steps shorter than this are merged into a neighbour (0 turns merging off)."""
+    return float(config.env_float("HANDOVER_MIN_STEP_S", MIN_STEP_S, min=0.0, max=600.0))
+
+
+def _is_flip(st: Step) -> bool:
+    return bool(_FLIP_WORDS.match(st.title.strip()))
+
+
+def _length(st: Step) -> float:
+    return parse_time(st.end) - parse_time(st.start)
+
+
+def _merge_short_steps(ex: Extraction, min_s: float | None = None) -> Extraction:
+    """New model extractions only: a step shorter than HANDOVER_MIN_STEP_S (default 6 s) is merged into the step
+    before it (the first step into the one after it). Frames-only extraction made 2 to 5 s steps out of
+    crease-and-unfold moves and a 2.6 s final step on a real take. The shortest step goes first, repeated until
+    none is left. A flip step is never merged and never absorbs another step (flipping is its own step).
+
+    The merged step keeps the longer step's title and common_mistake and the later step's ref_time (its end is
+    the later step's end). It is camera only if the surviving (longer) step was camera; its question is then the
+    later step's when that one is camera (it describes the merged end state), else the survivor's."""
+    min_s = min_step_s() if min_s is None else min_s
+    if min_s <= 0 or len(ex.steps) < 2:
+        return ex
+    items: list[tuple[list[int], Step]] = [([n], st) for n, st in enumerate(ex.steps, start=1)]
+    while len(items) > 1:
+        short = [k for k, (_, st) in enumerate(items) if _length(st) < min_s and not _is_flip(st)]
+        merged = False
+        for k in sorted(short, key=lambda k: (_length(items[k][1]), k)):
+            target = next((j for j in ((k - 1, k + 1) if k else (k + 1,))
+                           if 0 <= j < len(items) and not _is_flip(items[j][1])), None)
+            if target is None:
+                continue
+            i, j = sorted((k, target))
+            (m1, first), (m2, second) = items[i], items[j]
+            survivor = first if _length(first) >= _length(second) else second
+            other = second if survivor is first else first
+            if _is_manual(survivor.check_question):
+                question = "manual"
+            elif not _is_manual(second.check_question):
+                question = second.check_question
+            else:
+                question = survivor.check_question
+            step = survivor.model_copy(update={
+                "start": first.start, "end": second.end, "check_question": question,
+                "ref_time": second.ref_time, "common_mistake": survivor.common_mistake or other.common_mistake})
+            items[i:j + 1] = [(m1 + m2, step)]
+            merged = True
+            break
+        if not merged:
+            break
+    if len(items) == len(ex.steps):
+        return ex
+    new_of = {old: new for new, (members, _) in enumerate(items, start=1) for old in members}
+    steps = []
+    for new, (members, st) in enumerate(items, start=1):
+        pre = {new_of[p] for m in members for p in ex.steps[m - 1].prerequisites if p in new_of}
+        steps.append(st.model_copy(update={"prerequisites": sorted(p for p in pre if p < new)}))
     return ex.model_copy(update={"steps": steps})
 
 
@@ -996,6 +1077,13 @@ REF_END_GAP = 0.05     # stay this far before the step end so the frame belongs 
 REF_CANDIDATES = 8
 THUMB = 96             # stillness is measured on 96x96 gray thumbnails
 DARK = 16.0            # mean gray level below this counts as a black frame (fade, lens covered)
+# "Hands-free still": there is no hand detector in this repo, so frame difference is the only signal. Measured at
+# 10 fps on a real 2.5 min take: hands off the paper gives 0.1 to 0.4, hands holding or slowly folding 1 to 3,
+# folding 4 to 12. A frame at or below REF_STILL counts as hands free.
+REF_STILL = 0.8
+REF_STILL_FPS = 10.0
+REF_EXTEND = 2.5       # seconds past the step end searched when the window has no still frame (the pause
+                       # usually comes just after the boundary the model chose)
 
 
 def _floor_tenth(t: float) -> float:
@@ -1034,12 +1122,68 @@ def _brightness(img) -> float:
     return ImageStat.Stat(img).mean[0]
 
 
-def pick_ref_time(video: Path, a: float, b: float, hint: float | None = None) -> float | None:
+def pick_ref_time(video: Path, a: float, b: float, hint: float | None = None, *,
+                  extend: float = REF_EXTEND, duration: float | None = None) -> float | None:
     """The stillest, not black moment in the last 15% of [a, b], on the 0.1 s grid lesson.json uses.
 
     About 8 candidates are spread over that window and each is scored by how much it differs from the frames
     next to it. When the model's hint lies in the step and is nearly as still as the best candidate, the hint
-    wins, because the model also checked that hands are clear. Returns None when no frame could be sampled."""
+    wins, because the model also checked that hands are clear. Returns None when no frame could be sampled.
+
+    When that choice is not hands-free still (see REF_STILL), the window is scanned at 10 fps for a still frame;
+    when it has none, up to extend seconds past b (never past the video end, duration) are searched too, and
+    the first still pause there is returned: a time >= b, which the caller stores as a null ref_time. When
+    nothing is still anywhere, the stillest frame in the window stays."""
+    t = _pick_in_window(video, a, b, hint)
+    if t is None or extend <= 0:
+        return t
+    try:
+        better = _still_pick(video, a, b, t, extend, duration)
+    except RuntimeError:
+        better = None
+    return t if better is None else better
+
+
+def _still_pick(video: Path, a: float, b: float, chosen: float, extend: float,
+                duration: float | None) -> float | None:
+    """A hands-free still time when the chosen one is not still: in the window first, then after b. None keeps
+    the chosen time."""
+    end = b - REF_END_GAP
+    t0 = max(a, b - max((b - a) * REF_TAIL, REF_MIN_WINDOW))
+    limit = probe_duration(video) if duration is None else duration
+    t1 = max(end, min(b + extend, limit - 0.05))
+    frames = _gray_frames(video, max(a, min(t0, chosen - 0.15)), t1, REF_STILL_FPS)  # the hint may be earlier
+    if len(frames) < 2:
+        return None
+    scored = [(t, _motion(frames, i), _brightness(img)) for i, (t, img) in enumerate(frames)]
+
+    def still(c) -> bool:
+        return c[1] <= REF_STILL and c[2] >= DARK
+
+    near = min(scored, key=lambda c: abs(c[0] - chosen))
+    if abs(near[0] - chosen) <= 0.1 + 1e-6 and still(near):
+        return None  # the usual pick is already hands free
+    inside = [c for c in scored if t0 - 1e-6 <= c[0] < end and still(c)]
+    if inside:
+        best = min(inside, key=lambda c: (round(c[1], 1), -c[0]))
+        return max(quantize(a), min(_floor_tenth(best[0]), _floor_tenth(end - 0.1)))
+    run: list = []  # the first run of still frames after the window: the pause after the step
+    for c in scored:
+        if c[0] < end:
+            continue
+        if still(c):
+            run.append(c)
+        elif run:
+            break
+    if not run:
+        return None
+    best = min(run, key=lambda c: (round(c[1], 1), c[0]))
+    return max(quantize(b), _floor_tenth(best[0]))
+
+
+def _pick_in_window(video: Path, a: float, b: float, hint: float | None = None) -> float | None:
+    """The original rule: the stillest candidate in the last 15% of [a, b], or the model's hint when it is
+    nearly as still."""
     end = b - REF_END_GAP
     t0 = max(a, b - max((b - a) * REF_TAIL, REF_MIN_WINDOW))
     if end - t0 < 0.05:
@@ -1082,11 +1226,20 @@ def _grab_frame(video: Path, t: float, out: Path) -> None:
     part.replace(out)
 
 
-def _ref_frame(norm: Path, clip: Path, out: Path, a: float, b: float, ref_time: str, explicit: bool) -> str | None:
+def _ref_frame(norm: Path, clip: Path, out: Path, a: float, b: float, ref_time: str, explicit: bool,
+               duration: float | None = None) -> str | None:
     """Writes the reference frame for one step and returns its ref_time, or None for the clip's last frame.
 
     explicit (recut): a ref_time inside the step is used as is. Otherwise, and when it is empty or outside the
-    step (the step was moved), the stillest frame in the last 15% is chosen, preferring the model's hint."""
+    step (the step was moved), the stillest frame in the last 15% is chosen, preferring the model's hint (see
+    pick_ref_time). A still pause found just after the step end is also returned as None: ref_time must lie
+    inside the step (CONTRACT.md), and the same pause is found again on every recut."""
+    return _ref_frame_info(norm, clip, out, a, b, ref_time, explicit, duration)[0]
+
+
+def _ref_frame_info(norm: Path, clip: Path, out: Path, a: float, b: float, ref_time: str, explicit: bool,
+                    duration: float | None = None) -> tuple[str | None, str]:
+    """_ref_frame plus a short note on where the frame came from, for the progress line."""
     _last_frame(clip, out)  # the contract default, kept if nothing better can be grabbed
     t = None
     try:
@@ -1097,16 +1250,18 @@ def _ref_frame(norm: Path, clip: Path, out: Path, a: float, b: float, ref_time: 
         t = max(quantize(a), min(_floor_tenth(given), _floor_tenth(b - 0.1)))
     else:
         try:
-            t = pick_ref_time(norm, a, b, given)
+            t = pick_ref_time(norm, a, b, given, duration=duration)
         except RuntimeError:
             t = None
     if t is None:
-        return None
+        return None, "last frame"
     try:
         _grab_frame(norm, t, out)
     except RuntimeError:
-        return None
-    return fmt_mmss(t)
+        return None, "last frame"
+    if t >= b:
+        return None, f"pause at {fmt_mmss(t)} after the step end"
+    return fmt_mmss(t), fmt_mmss(t)
 
 
 def _spans(extraction: Extraction, duration: float) -> list[tuple[float, float]]:
@@ -1149,16 +1304,16 @@ def cut(lesson_dir: Path, extraction: Extraction, lesson_id: str | None = None, 
     spans = _spans(extraction, duration)
 
     tmp = lesson_dir / ".recut_tmp"
-    shutil.rmtree(tmp, ignore_errors=True)
+    _clear_tmp(tmp)  # a stale one from a failed earlier swap must not leak old files into this cut
     for sub in SUBDIRS:
-        (tmp / sub).mkdir(parents=True)
+        (tmp / sub).mkdir(parents=True, exist_ok=True)
 
     try:
-        steps_out = _cut_steps(norm, tmp, extraction, spans, keep, progress)
+        steps_out = _cut_steps(norm, tmp, extraction, spans, keep, progress, duration)
     except BaseException:
-        shutil.rmtree(tmp, ignore_errors=True)
+        _rmtree(tmp)
         raise
-    _swap_in(lesson_dir, tmp)
+    _swap_in(lesson_dir, tmp, progress)
 
     if keep is not None:
         lesson = dict(keep)
@@ -1175,18 +1330,79 @@ def cut(lesson_dir: Path, extraction: Extraction, lesson_id: str | None = None, 
 SUBDIRS = ("clips", "captions", "frames")
 
 
-def _swap_in(lesson_dir: Path, tmp: Path) -> None:
+def _rmtree(path: Path) -> bool:
+    """Deletes a folder, retrying while Windows reports it in use. True when it is gone."""
+    for k in range(SWAP_TRIES):
+        shutil.rmtree(path, ignore_errors=True)
+        if not path.exists():
+            return True
+        if k < SWAP_TRIES - 1:
+            time.sleep(SWAP_WAIT_S)
+    log.warning("could not remove %s (in use?)", path)
+    return False
+
+
+def _clear_tmp(tmp: Path) -> None:
+    """Removes a stale .recut_tmp. When a file in it stays locked, empties what it can so the cut starts clean."""
+    if not tmp.exists() or _rmtree(tmp):
+        return
+    for f in sorted(tmp.rglob("*"), reverse=True):
+        try:
+            f.unlink() if f.is_file() else None
+        except OSError:
+            pass
+    leftover = [f for f in tmp.rglob("*") if f.is_file()]
+    if leftover:
+        raise RuntimeError(f"{tmp} is left over from an earlier cut and {len(leftover)} file(s) in it are in use; "
+                           f"close whatever holds them and try again")
+
+
+def _copy_over(src: Path, dst: Path) -> None:
+    """Fallback when a folder cannot be renamed: copies src's files over dst's, file by file, and removes the
+    files of dst that src does not have (for example frames/09.jpg after a recut down to 8 steps)."""
+    dst.mkdir(parents=True, exist_ok=True)
+    names = set()
+    for f in sorted(src.iterdir()):
+        if f.is_file():
+            names.add(f.name)
+            _retry(lambda f=f: shutil.copyfile(f, dst / f.name))
+    for f in sorted(dst.iterdir()):
+        if f.is_file() and f.name not in names:
+            try:
+                _retry(f.unlink)
+            except OSError as e:
+                log.warning("stale %s could not be removed: %s", f, e)
+
+
+def _swap_in(lesson_dir: Path, tmp: Path, progress: Progress = noop) -> None:
     """Moves the old folders aside, the new ones in, then deletes the old ones. Works on Windows too, where a
-    folder cannot be renamed over an existing one."""
+    folder cannot be renamed over an existing one: each rename is retried on PermissionError (WinError 32, the
+    folder is open in the hub or a shell), and when it still fails the new files are copied over the old ones
+    file by file instead. .recut_tmp and .recut_old are removed at the end."""
     old = lesson_dir / ".recut_old"
-    shutil.rmtree(old, ignore_errors=True)
-    old.mkdir()
+    if not _rmtree(old):  # a locked leftover: park this swap's old folders next to it instead
+        old = lesson_dir / f".recut_old-{int(time.time() * 1000)}"
+    old.mkdir(exist_ok=True)
+    copied = []
     for sub in SUBDIRS:
-        if (lesson_dir / sub).exists():
-            (lesson_dir / sub).replace(old / sub)
-        (tmp / sub).replace(lesson_dir / sub)
-    shutil.rmtree(old, ignore_errors=True)
-    shutil.rmtree(tmp, ignore_errors=True)
+        cur, new = lesson_dir / sub, tmp / sub
+        if cur.exists():
+            try:
+                _retry(lambda: cur.replace(old / sub))
+            except PermissionError:
+                _copy_over(new, cur)
+                copied.append(sub)
+                continue
+        try:
+            _retry(lambda: new.replace(cur))
+        except PermissionError:
+            _copy_over(new, cur)
+            copied.append(sub)
+    if copied:
+        progress("cutting", f"{', '.join(copied)} in use; copied the new files over the old ones")
+        log.warning("recut swap: %s could not be renamed (in use); copied file by file", ", ".join(copied))
+    _rmtree(old)
+    _rmtree(tmp)
 
 
 def _is_manual(question: str) -> bool:
@@ -1195,7 +1411,7 @@ def _is_manual(question: str) -> bool:
 
 
 def _cut_steps(norm: Path, out_dir: Path, extraction: Extraction, spans: list[tuple[float, float]],
-               keep: dict | None = None, progress: Progress = noop) -> list[dict]:
+               keep: dict | None = None, progress: Progress = noop, duration: float | None = None) -> list[dict]:
     old_steps = (keep or {}).get("steps") or []
     steps_out = []
     total = len(spans)
@@ -1208,10 +1424,11 @@ def _cut_steps(norm: Path, out_dir: Path, extraction: Extraction, spans: list[tu
               "-movflags", "+faststart", str(clip)])
         length = probe_duration(clip)
         _write_vtt(out_dir / "captions" / f"{nn}.vtt", extraction.transcript, a, length)
-        ref_time = _ref_frame(norm, clip, out_dir / "frames" / f"{nn}.jpg", a, b, st.ref_time, keep is not None)
+        ref_time, ref_note = _ref_frame_info(norm, clip, out_dir / "frames" / f"{nn}.jpg", a, b, st.ref_time,
+                                             keep is not None, duration)
         manual = _is_manual(st.check_question)
         progress("cutting", f"step {n} of {total}  {fmt_mmss(a)} to {fmt_mmss(b)}  "
-                            f"reference {ref_time or 'last frame'}  [{'manual' if manual else 'camera'}]")
+                            f"reference {ref_note}  [{'manual' if manual else 'camera'}]")
         rewritten = {
             "n": n,
             "start": fmt_mmss(a),
@@ -1266,17 +1483,22 @@ def _lesson_extraction(lesson_dir: Path, lesson: dict) -> Extraction:
                       safety=_clean_list(lesson.get("safety")), tools=_clean_list(lesson.get("tools")))
 
 
-def recut(lesson_dir: Path, progress: Progress = noop) -> dict:
+def recut(lesson_dir: Path, progress: Progress = noop, *, auto: bool = True) -> dict:
     """Rebuilds clips, captions and frames from lesson.json (possibly hand-edited) and the saved transcript.
 
     Follows the Recut rule: every field recut does not own is kept, step 1 is never forced to manual, and a
-    step's ref_time is used when it lies inside the step (otherwise a new one is chosen and written)."""
+    step's ref_time is used when it lies inside the step (otherwise a new one is chosen and written).
+    auto: then the camera questions are rewritten from the new reference frames (teach provider) and the
+    automatic self-test runs (see questions_from_refs and _auto_self_test)."""
     lesson_dir = Path(lesson_dir)
     lesson = json.loads((lesson_dir / "lesson.json").read_text(encoding="utf-8"))
     if not isinstance(lesson, dict):
         raise ValueError("bad lesson.json: not an object")
     extraction = _lesson_extraction(lesson_dir, lesson)
-    return cut(lesson_dir, extraction, lesson.get("id"), lesson.get("title"), keep=lesson, progress=progress)
+    out = cut(lesson_dir, extraction, lesson.get("id"), lesson.get("title"), keep=lesson, progress=progress)
+    if auto:
+        out = _after_cut(lesson_dir, out, teach_provider(), progress)
+    return out
 
 
 # ---------------------------------------------------------------- 5. self-test (S-T)
@@ -1379,6 +1601,260 @@ def self_test_lesson(lesson_dir: Path, progress: Progress = noop) -> dict:
     return asyncio.run(self_test_lesson_async(lesson_dir, progress))
 
 
+def _run_async(make_coro):
+    """asyncio.run(make_coro()), in a worker thread when this thread already runs a loop."""
+    import asyncio
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(make_coro())
+    import concurrent.futures
+
+    with concurrent.futures.ThreadPoolExecutor(1) as pool:
+        return pool.submit(lambda: asyncio.run(make_coro())).result()
+
+
+def auto_selftest_on() -> bool:
+    """HANDOVER_AUTO_SELFTEST (default on): self-test every cut and recut, failing steps become manual."""
+    return bool(config.env_bool("HANDOVER_AUTO_SELFTEST", True))
+
+
+def _auto_self_test(lesson_dir: Path, lesson: dict, progress: Progress = noop) -> dict:
+    """After a cut or recut: runs the self-test (same calls and progress lines as --self-test) and makes every
+    camera step whose own reference does not pass its own question manual (check_type manual, check_question
+    "", the self_test result kept). Skipped when HANDOVER_AUTO_SELFTEST is off, offline (HANDOVER_NO_NETWORK),
+    in mock check mode (answers ignore the images) or without a key for the check provider. Steps whose check
+    call failed are left as they are. Never raises: a failure keeps the lesson as cut."""
+    if not auto_selftest_on():
+        return lesson
+    camera = [s.get("n", i + 1) for i, s in enumerate(lesson.get("steps") or []) if s.get("check_type") != "manual"]
+    if not camera:
+        return lesson
+    if config.get("HANDOVER_NO_NETWORK"):
+        progress("self-test", "HANDOVER_NO_NETWORK=1: automatic self-test skipped")
+        return lesson
+    try:
+        from server import check
+
+        if check.is_mock():
+            progress("self-test", "HANDOVER_CHECK=mock: automatic self-test skipped (mock answers ignore images)")
+            return lesson
+        if not check._key_for(check.provider()):
+            progress("self-test", f"no {check.provider()} key: automatic self-test skipped")
+            return lesson
+        progress("self-test", f"{len(camera)} camera steps in {lesson_dir}, check: {check.active_model()}")
+        t0 = time.time()
+        tested, errored = _run_async(lambda: _self_test(Path(lesson_dir), progress))
+    except Exception as e:
+        reason = scrub(f"{type(e).__name__}: {e}".splitlines()[0][:160])
+        progress("self-test", f"automatic self-test failed ({reason}); keeping the questions as they are")
+        log.warning("automatic self-test failed: %s", reason)
+        return lesson
+    made_manual = []
+    for i, s in enumerate(tested.get("steps") or []):
+        st = s.get("self_test")
+        if s.get("check_type") != "manual" and isinstance(st, dict) and st.get("own") != "yes":
+            s["check_type"] = "manual"
+            s["check_question"] = ""
+            made_manual.append(s.get("n", i + 1))
+    failed = [s.get("n", i + 1) for i, s in enumerate(tested.get("steps") or [])
+              if isinstance(s.get("self_test"), dict) and not s["self_test"].get("ok")]
+    _write_json(Path(lesson_dir) / "lesson.json", tested)
+    progress("self-test", f"self-test wrote lesson.json ({time.time() - t0:.1f} s)")
+    if errored:
+        progress("self-test", f"the check failed on steps {', '.join(map(str, errored))}, so they were not tested")
+    if failed:
+        progress("self-test", f"Steps that failed: {', '.join(map(str, failed))}")
+    if made_manual:
+        progress("self-test", f"Steps made manual (their own reference failed the question): "
+                              f"{', '.join(map(str, made_manual))}")
+    return tested
+
+
+# ---------------------------------------------------------------- 5b. check questions from the reference frames
+
+REF_QUESTION_PROMPT = """Each numbered step above has two photos of the same object during a hands-on task:
+BEFORE, the state when the step starts, and DONE, the state when the step is finished, plus the step's title.
+For each step write one yes/no check_question that a camera will ask about a photo of a learner's object.
+It must be clearly true of the DONE photo and clearly false of the BEFORE photo.
+Describe only the fold or assembly state you can see in DONE: the outline shape, the number of corners, which folds,
+creases or seams exist, how many layers or flaps there are and where they meet, which side faces up. Never mention
+size, color, position, rotation, lighting, hands, tools, the table or the background: the learner's material,
+camera angle and light differ. Ignore hands that cover part of the object. When the title and the photos
+disagree, trust the photos. One short sentence ending in "?". Return every step by its number."""
+REF_IMAGE_SIDE = 768   # long side of the images sent; enough to see folds, a fraction of the full frame's tokens
+REF_QUESTION_TOKENS = 4096
+
+
+def _small_jpeg(data: bytes) -> bytes:
+    from PIL import Image
+
+    with Image.open(io.BytesIO(data)) as im:
+        im = im.convert("RGB")
+        im.thumbnail((REF_IMAGE_SIDE, REF_IMAGE_SIDE))
+        buf = io.BytesIO()
+        im.save(buf, "JPEG", quality=85)
+        return buf.getvalue()
+
+
+def _ref_question_items(lesson_dir: Path, lesson: dict) -> list[dict]:
+    """For each camera step with both images: {"n", "title", "before", "done"} (JPEG bytes, shrunk). BEFORE is
+    the previous step's reference, or the video's frame at step 1's start for step 1. At most CLAUDE_MAX_FRAMES
+    images in all (two per step)."""
+    steps = lesson.get("steps") or []
+
+    def read(rel) -> bytes | None:
+        p = lesson_dir / str(rel or "")
+        return p.read_bytes() if rel and p.is_file() and p.stat().st_size > 0 else None
+
+    def ref(i: int) -> bytes | None:
+        return read(steps[i].get("ref_frame") or f"frames/{i + 1:02d}.jpg")
+
+    items = []
+    for i, s in enumerate(steps):
+        if s.get("check_type") == "manual" or len(items) >= CLAUDE_MAX_FRAMES // 2:
+            continue
+        done = ref(i)
+        if i > 0:
+            before = ref(i - 1)
+        else:
+            before = None
+            with tempfile.TemporaryDirectory() as tmp:
+                out = Path(tmp) / "first.jpg"
+                try:
+                    _grab_frame(lesson_dir / (lesson.get("video") or "norm.mp4"), parse_time(s.get("start") or 0), out)
+                    before = out.read_bytes()
+                except (RuntimeError, ValueError):
+                    before = None
+        if done and before:
+            items.append({"n": int(s.get("n", i + 1)), "title": str(s.get("title") or "").strip(),
+                          "before": _small_jpeg(before), "done": _small_jpeg(done)})
+    return items
+
+
+def _ref_questions_claude(items: list[dict]) -> dict[int, str]:
+    import base64
+
+    import anthropic
+
+    key = _anthropic_key()
+    if not key:
+        raise RuntimeError("no Anthropic key")
+    spend = _spend()
+    if not spend.allow():
+        raise RuntimeError("the Claude spending limit is reached")
+
+    def image(data: bytes) -> dict:
+        return {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
+                                            "data": base64.standard_b64encode(data).decode()}}
+
+    content: list[dict] = []
+    for it in items:
+        content += [{"type": "text", "text": f"Step {it['n']}: {it['title']}\nBEFORE:"}, image(it["before"]),
+                    {"type": "text", "text": f"Step {it['n']} DONE:"}, image(it["done"])]
+    content.append({"type": "text", "text": REF_QUESTION_PROMPT})
+    model = _claude_model()
+    response = anthropic.Anthropic(api_key=key).messages.create(
+        model=model, max_tokens=REF_QUESTION_TOKENS,
+        messages=[{"role": "user", "content": content}],
+        output_config={"format": {"type": "json_schema", "schema": _rephrase_schema()}},
+    )
+    spend.record(model, response.usage)
+    if getattr(response, "stop_reason", None) in ("refusal", "max_tokens"):
+        raise RuntimeError(f"Claude stopped: {response.stop_reason}")
+    text = next((b.text for b in response.content if getattr(b, "type", "") == "text"), "")
+    return {q.n: q.question for q in _RephraseAnswer.model_validate_json(text).questions}
+
+
+def _ref_questions_gemini(items: list[dict]) -> dict[int, str]:
+    from google import genai
+    from google.genai import types
+
+    parts = []
+    for it in items:
+        parts += [types.Part(text=f"Step {it['n']}: {it['title']}\nBEFORE:"),
+                  types.Part.from_bytes(data=it["before"], mime_type="image/jpeg"),
+                  types.Part(text=f"Step {it['n']} DONE:"),
+                  types.Part.from_bytes(data=it["done"], mime_type="image/jpeg")]
+    parts.append(types.Part(text=REF_QUESTION_PROMPT))
+    client = genai.Client(api_key=_api_key(), http_options=types.HttpOptions(api_version="v1beta", timeout=120_000))
+    resp = client.models.generate_content(
+        model=_model(), contents=[types.Content(role="user", parts=parts)],
+        config=types.GenerateContentConfig(response_mime_type="application/json",
+                                           response_json_schema=_rephrase_schema(),
+                                           max_output_tokens=REF_QUESTION_TOKENS))
+    return {q.n: q.question for q in _RephraseAnswer.model_validate_json(resp.text or "").questions}
+
+
+def _ref_questions_call(provider: str, items: list[dict]) -> dict[int, str]:
+    """The one model call: {step n: question}. Raises on any failure."""
+    return (_ref_questions_claude if provider == "claude" else _ref_questions_gemini)(items)
+
+
+def _usable_question(q) -> str | None:
+    q = " ".join(str(q or "").split())
+    if not q or _is_manual(q) or not q.endswith("?") or len(q) > 240 or color_words(q):
+        return None
+    return q
+
+
+def questions_from_refs(lesson_dir: Path, lesson: dict, provider: str, progress: Progress = noop) -> dict:
+    """Rewrites each camera step's check_question from its chosen reference frames, in ONE call to the teach
+    provider: per step its BEFORE image (the previous reference, or the first frame for step 1), its DONE image
+    (its own reference) and its title. Questions written from the proxy video failed 5 of 8 self-tests against
+    their own reference on a real take. An answer that is missing, empty, not a question or names a color keeps
+    that step's old question; a failed call, an unknown provider or HANDOVER_NO_NETWORK=1 keeps them all.
+    Writes lesson.json when anything changed and returns the lesson."""
+    lesson_dir = Path(lesson_dir)
+    if provider not in ("claude", "gemini"):
+        return lesson
+    if config.get("HANDOVER_NO_NETWORK"):
+        progress("questions", "HANDOVER_NO_NETWORK=1: keeping the extracted check questions")
+        return lesson
+    try:
+        items = _ref_question_items(lesson_dir, lesson)
+    except Exception as e:
+        log.warning("reference question images failed: %s", e)
+        return lesson
+    if not items:
+        return lesson
+    model = _claude_model() if provider == "claude" else _model()
+    progress("questions", f"Writing check questions for {len(items)} camera steps from their reference frames "
+                          f"with {model}")
+    try:
+        new = _ref_questions_call(provider, items)
+    except Exception as e:
+        reason = scrub(f"{type(e).__name__}: {e}".splitlines()[0][:160])
+        progress("questions", f"Question call failed ({reason}); keeping the extracted questions")
+        log.warning("reference question call failed: %s", reason)
+        return lesson
+    wanted = {it["n"] for it in items}
+    changed = 0
+    for i, s in enumerate(lesson.get("steps") or []):
+        n = s.get("n", i + 1)
+        if n not in wanted:
+            continue
+        q = _usable_question(new.get(n))
+        if q is None:
+            progress("questions", f"step {n}: no usable question came back; keeping the old one")
+            continue
+        if q != s.get("check_question"):
+            s["check_question"] = q
+            s.pop("self_test", None)  # it tested the old question
+            changed += 1
+    if changed:
+        _write_json(lesson_dir / "lesson.json", lesson)
+    progress("questions", f"{changed} of {len(items)} check questions rewritten from the reference frames")
+    return lesson
+
+
+def _after_cut(lesson_dir: Path, lesson: dict, provider: str, progress: Progress = noop) -> dict:
+    """Questions from the reference frames, then the automatic self-test."""
+    lesson = questions_from_refs(lesson_dir, lesson, provider, progress)
+    return _auto_self_test(lesson_dir, lesson, progress)
+
+
 # ---------------------------------------------------------------- 6. full pipeline
 
 def _sources_duration(srcs: list[Path]) -> float:
@@ -1443,12 +1919,22 @@ def build(srcs: list[Path], lesson_id: str, title: str, progress: Progress = noo
             progress("extracting", f"Finding steps with {_model()}")
             extraction = _gemini_transcript_mode(extract(norm, progress), norm, progress)
         extraction = _clean_extraction(extraction, duration)
-        extraction = _first_step_manual(_crease_steps_manual(_contiguous(_split_flips(extraction))))
+        extraction = _crease_steps_manual(_contiguous(_split_flips(extraction)))
+        if provider in ("claude", "gemini"):
+            before = len(extraction.steps)
+            extraction = _merge_short_steps(extraction)
+            if len(extraction.steps) < before:
+                progress("extracting", f"Merged steps shorter than {min_step_s():g} s: "
+                                       f"{before} steps became {len(extraction.steps)}")
+        extraction = _first_step_manual(extraction)
         if provider in ("claude", "gemini"):
             extraction = guard_colors(extraction, provider, progress)
 
     progress("cutting", f"Cutting {len(extraction.steps)} step clips")
     lesson = cut(lesson_dir, extraction, lesson_id, title, progress=progress)
+    if not steps_json and provider in ("claude", "gemini"):
+        # job statuses are a fixed list in the apps (queued ... cutting, done): report this under "cutting"
+        lesson = _after_cut(lesson_dir, lesson, provider, lambda st, msg: progress("cutting", f"{st}: {msg}"))
     progress("done", f"{len(lesson['steps'])} steps ready")
     return lesson
 
