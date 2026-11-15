@@ -358,6 +358,84 @@ def test_frames_are_binary_only_to_ui() -> None:
         assert to_camera and all(m.get("bytes") is None for m in to_camera)
 
 
+def test_jpeg_size_reads_the_header() -> None:
+    for size in ((640, 360), (1280, 720), (17, 3000)):
+        assert main.jpeg_size(jpeg((10, 20, 30), size)) == size
+    buf = io.BytesIO()
+    Image.new("RGB", (300, 200)).save(buf, format="JPEG", progressive=True)
+    assert main.jpeg_size(buf.getvalue()) == (300, 200)
+    for bad in (b"", b"\xff\xd8", b"not a jpeg", FRAME[:40]):
+        assert main.jpeg_size(bad) is None
+
+
+def test_fifteen_fps_in_gives_capped_ui_fps_and_normal_check_rate() -> None:
+    """A sender at 15 fps with about 640 px frames: viewers get the camera's own bytes (no re-encode) at no
+    more than HANDOVER_UI_FPS, the motion gate decodes at most 4 frames a second, and a still scene still gets
+    the normal check rate (one check when it settles, then the heartbeat), never one check per frame."""
+    make_lesson()
+    small = jpeg((90, 90, 90), (640, 360))
+    fake = FakeCheck(lambda ref: check.CheckResult("no", 0.9, 1))
+    seconds = 2.0
+    for fps in (15, 5):
+        with env(HANDOVER_GATE="1", HANDOVER_UI_FPS=str(fps), HANDOVER_MIN_FRAME_GAP=None), \
+                patched(check, check_frame=fake), hub() as c, c.websocket_connect("/ws/ui") as ui, \
+                c.websocket_connect("/ws/camera") as cam:
+            select(ui)
+            drain(ui, 0.2)
+            fake.calls.clear()
+            gated0 = main.metrics["frames_gated"]
+            start = time.monotonic()
+            sent = 0
+            while time.monotonic() - start < seconds:
+                cam.send_bytes(small)
+                sent += 1
+                time.sleep(1 / 15)
+            frames = [m["bytes"] for m in drain(ui, 0.3) if m.get("bytes")]
+            gated = main.metrics["frames_gated"] - gated0
+        assert sent >= 25, sent
+        assert frames and all(f == small for f in frames)  # forwarded as is
+        assert len(frames) <= fps * seconds + 2, (fps, len(frames))
+        assert len(frames) >= min(fps, 15) * seconds * 0.5, (fps, len(frames))  # and really near the cap
+        assert gated <= seconds / main.GATE_MIN_INTERVAL + 2, gated
+        assert len(fake.calls) <= 2, len(fake.calls)  # settled once; the 6 s heartbeat is not due yet
+
+
+def test_frame_to_ui_adds_little_latency() -> None:
+    """Passthrough path: from a frame arriving to it reaching a viewer's sender, well under 20 ms on average."""
+    make_lesson()
+    small = jpeg((40, 90, 140), (640, 360))
+    with env(HANDOVER_UI_FPS="30", HANDOVER_MIN_FRAME_GAP=None), hub() as c, c.websocket_connect("/ws/ui") as ui, \
+            c.websocket_connect("/ws/camera") as cam:
+        select(ui)
+        drain(ui, 0.2)
+        client = next(iter(main.engine.ui))
+        stamps: list[float] = []
+        orig = client.push
+
+        def push(msg: Any) -> None:
+            if isinstance(msg, bytes):
+                stamps.append(time.monotonic())
+            orig(msg)
+
+        client.push = push  # type: ignore[method-assign]
+        orig_on_frame = main.engine.on_frame
+        arrived: list[float] = []
+
+        def on_frame(data: bytes) -> None:
+            arrived.append(time.monotonic())
+            orig_on_frame(data)
+
+        main.engine.on_frame = on_frame  # type: ignore[method-assign]
+        for _ in range(10):
+            cam.send_bytes(small)
+            time.sleep(0.1)  # slower than the cap, so no frame waits for its slot
+        drain(ui, 0.2)
+    pairs = list(zip(arrived, stamps))
+    assert len(pairs) >= 8, (len(arrived), len(stamps))
+    delays = sorted(b - a for a, b in pairs)
+    assert delays[len(delays) // 2] < 0.02, delays
+
+
 # ---------------------------------------------------------------- check loop: gate, breaker, reason
 
 class FakeCheck:
@@ -682,9 +760,11 @@ def test_pipelined_stale_step_results_dropped() -> None:
     with env(HANDOVER_GATE="1", HANDOVER_FAST_PATH="0", HANDOVER_DEBOUNCE_N="2"), patched(check, check_frame=slow), \
             hub() as c, c.websocket_connect("/ws/ui") as ui, c.websocket_connect("/ws/camera") as cam:
         select(ui)
-        for _ in range(4):
+        for _ in range(8):  # the gate samples the newest frame every GATE_MIN_INTERVAL; settle, then pipeline
             cam.send_bytes(FRAME)
             time.sleep(0.12)
+            if slow.running == 2:
+                break
         wait_for(lambda: slow.running == 2, timeout=2)
         ui.send_json({"type": "goto", "step": 2})
         recv_json(ui, lambda m: is_state(m) and m["step"] == 2)
@@ -869,7 +949,7 @@ def test_understanding_both_must_say_yes_and_fills_progress() -> None:
     write_rubric(d)
     und = FakeUnderstand(latency=0.3)
     slow = SlowCheck(0.3, confidence=0.97)
-    with env(HANDOVER_UNDERSTAND="1", HANDOVER_GATE="0", HANDOVER_DEBOUNCE_N="2"), \
+    with env(HANDOVER_UNDERSTAND="1", HANDOVER_GATE="0", HANDOVER_DEBOUNCE_N="2", HANDOVER_UNDERSTAND_OVERRIDE_N="0"), \
             patched(check, check_frame=slow), patched(understand, understand_frame=und), \
             patched(main, VERIFIED_HOLD=0.1), hub() as c, c.websocket_connect("/ws/ui") as ui, \
             c.websocket_connect("/ws/camera") as cam:
@@ -891,6 +971,62 @@ def test_understanding_both_must_say_yes_and_fills_progress() -> None:
         assert main.engine.step == 1
         st = recv_json(ui, lambda m: is_state(m) and m["step"] == 1)
         assert st["progress"] is None and st["stage"] is None  # reset on step change
+
+
+def test_understand_override_after_n_check_yes() -> None:
+    """HANDOVER_UNDERSTAND=1: the check says yes at 0.9 on every frame, understanding keeps saying no (the live
+    run's rotated square). After HANDOVER_UNDERSTAND_OVERRIDE_N (3) such answers the check's verdict is accepted:
+    clients get reason camera (contract), the advance event says understand_override."""
+    from server import understand
+
+    d = make_lesson()
+    write_rubric(d)
+    und = FakeUnderstand()
+    fake = FakeCheck(lambda ref: check.CheckResult("yes", 0.9, 1))
+    events: list[dict] = []
+    with env(HANDOVER_UNDERSTAND="1", HANDOVER_GATE="0", HANDOVER_DEBOUNCE_N="2",
+             HANDOVER_UNDERSTAND_OVERRIDE_N=None, HANDOVER_UNDERSTAND_OVERRIDE_CONF=None), \
+            patched(check, check_frame=fake), patched(understand, understand_frame=und), \
+            patched(main, VERIFIED_HOLD=0.05, EVENT_SINKS=[events.append]), hub() as c, \
+            c.websocket_connect("/ws/ui") as ui, c.websocket_connect("/ws/camera") as cam:
+        select(ui)
+        i = 0
+        while main.engine.step == 0 and i < 40:
+            cam.send_bytes(jpeg((i * 5, 11, 11)))
+            i += 1
+            time.sleep(0.1)
+        adv = recv_json(ui, lambda m: m["type"] == "advance")
+        assert (adv["from"], adv["to"], adv["reason"]) == (0, 1, "camera"), adv
+    ev = next(e for e in events if e["kind"] == "advance")
+    assert (ev["from"], ev["to"], ev["reason"]) == (0, 1, "understand_override"), ev
+    checks = [e for e in events if e["kind"] == "check" and e["step"] == 0]
+    assert len(checks) >= 3, checks  # never before 3 check yes answers
+    assert main.metrics["understand_overrides"] >= 1
+
+
+def test_understand_override_counting() -> None:
+    """_override_due: only confident check yes answers with understanding not yes count; anything else from the
+    check resets; both yes leaves the count alone; 0 turns it off; the count resets on a step change."""
+    yes, low, no = (check.CheckResult("yes", 0.9, 1), check.CheckResult("yes", 0.79, 1),
+                    check.CheckResult("no", 0.9, 1))
+    u_no, u_yes, u_unsure = (check.CheckResult("no", 0.9, 1), check.CheckResult("yes", 0.9, 1),
+                             check.CheckResult("unsure", 0.0, 1))
+    make_lesson()
+    with env(HANDOVER_UNDERSTAND_OVERRIDE_N=None, HANDOVER_UNDERSTAND_OVERRIDE_CONF=None):
+        e = main.Engine()
+        e.select(LESSON)
+        got = [e._override_due(r, u) for r, u in
+               [(yes, u_no), (yes, u_unsure), (no, u_no), (yes, u_no), (low, u_no), (yes, u_no), (yes, u_yes),
+                (yes, u_no)]]
+        assert got == [False] * 8 and e.override_streak == 2, (got, e.override_streak)
+        assert e._override_due(yes, u_no) is True
+        e.go(1, "button")
+        assert e.override_streak == 0
+        with env(HANDOVER_UNDERSTAND_OVERRIDE_N="0"):
+            assert not any(e._override_due(yes, u_no) for _ in range(6))
+        with env(HANDOVER_UNDERSTAND_OVERRIDE_CONF="0.95"):
+            e.override_streak = 0
+            assert not any(e._override_due(yes, u_no) for _ in range(6)) and e.override_streak == 0
 
 
 def test_understanding_off_or_stale_is_todays_behavior() -> None:
@@ -1082,6 +1218,86 @@ def test_ahead_confirm_verdicts() -> None:
                 main.engine = main_engine
         assert got == want, (skip, nxt, own, got)
         assert len(fake.calls) == (2 if skip else 1), (skip, len(fake.calls))
+
+
+def _ahead_run(compare_conf: float, n_frames: int = 60) -> tuple[list[dict], list[dict], list[int]]:
+    """Step 0 with the live frame always matching step 1: the check of step 0 says no, the k+1 confirm says yes
+    0.95, the compare names step 1 at compare_conf. Returns (ui messages, events, steps seen)."""
+    make_lesson()
+    ref_next = (main.LESSONS / LESSON / "frames" / "02.jpg").read_bytes()
+    fake = FakeCheck(lambda ref: check.CheckResult("yes" if ref == ref_next else "no", 0.95, 1))
+    events: list[dict] = []
+    compares: list[int] = []
+
+    async def compare(live: bytes, pairs: list[tuple[int, bytes]], question: str | None = None) -> check.MatchResult:
+        compares.append(main.engine.step)
+        return check.MatchResult(main.engine.step + 1, compare_conf, 3)
+
+    msgs: list[dict] = []
+    with gemini(), env(HANDOVER_AHEAD_SKIP=None, HANDOVER_AHEAD_CONFIRM_N=None, HANDOVER_AHEAD_CONFIRM_CONF=None,
+                       HANDOVER_DEBOUNCE_N="5"), \
+            patched(check, check_frame=fake, compare_refs=compare), \
+            patched(main, EVENT_SINKS=[events.append], VERIFIED_HOLD=5.0), hub() as c, \
+            c.websocket_connect("/ws/ui") as ui, c.websocket_connect("/ws/camera") as cam:
+        main.engine.watch = mistake.MistakeWatch(settle_s=0.1, cooldown_s=0.3)
+        select(ui)
+        for i in range(n_frames):
+            cam.send_bytes(jpeg((i * 4 % 250, 60, 60)))
+            time.sleep(0.05)
+            if main.engine.step != 0:
+                break
+        time.sleep(0.2)
+        msgs = [json.loads(x["text"]) for x in drain(ui, 0.3) if x.get("text")]
+    return msgs, events, compares
+
+
+def test_ahead_confirm_moves_one_step_after_three_verdicts() -> None:
+    """The live run's stranded learner: "ahead, looks like step k+1" at 0.85, confirmed by the k+1 check, three
+    times in a row. The step moves to k+1 (never k+2), clients see reason camera, the event says ahead_confirm."""
+    msgs, events, compares = _ahead_run(0.85)
+    advances = [m for m in msgs if m.get("type") == "advance"]
+    assert [(a["from"], a["to"], a["reason"]) for a in advances] == [(0, 1, "camera")], advances
+    banners = [m for m in msgs if m.get("type") == "mistake"]
+    assert len(banners) == 2 and all(b["kind"] == "ahead" for b in banners), banners  # third verdict advances
+    ev = [e for e in events if e["kind"] == "advance"]
+    assert [(e["from"], e["to"], e["reason"]) for e in ev] == [(0, 1, "ahead_confirm")], ev
+    assert compares.count(0) == 3, compares
+    run_done = [e for e in events if e["kind"] == "run_done"]
+    assert run_done == []
+
+
+def test_false_ahead_at_07_never_advances() -> None:
+    """The live run's false "ahead, looks like step 6" at 0.7 on step 5: the banner may show (0.7 passes
+    HANDOVER_MISTAKE_MIN_CONF and the k+1 check confirmed it), but under HANDOVER_AHEAD_CONFIRM_CONF (0.8) it never
+    counts, so the step never moves however often it repeats."""
+    msgs, events, compares = _ahead_run(0.7, n_frames=80)
+    assert len(compares) >= 4, compares
+    banners = [m for m in msgs if m.get("type") == "mistake"]
+    assert len(banners) >= 4 and all(b["confidence"] == 0.7 for b in banners), banners
+    assert not [m for m in msgs if m.get("type") == "advance"], msgs
+    assert not [e for e in events if e["kind"] == "advance"]
+    assert main.engine.step == 0
+
+
+def test_ahead_confirm_streak_resets_and_bounds() -> None:
+    """_ahead_confirm_due: only confirmed ahead verdicts at 0.8 or more count; an unconfirmed one, a low one or
+    any other answer resets; 0 turns it off; it never moves more than one step."""
+    make_lesson()
+    with env(HANDOVER_AHEAD_CONFIRM_N=None, HANDOVER_AHEAD_CONFIRM_CONF=None):
+        e = main.Engine()
+        e.select(LESSON)
+        job = main.CheckJob(0, "q", b"", FRAME, e.version)
+        seq = [(True, 0.85), (True, 0.85), (False, 0.9), (True, 0.85), (True, 0.85), (True, 0.79), (True, 0.85),
+               (True, 0.85)]
+        assert [e._ahead_confirm_due(job, c, conf) for c, conf in seq] == [False] * 8 and e.step == 0
+        assert e._ahead_confirm_due(job, True, 0.85) is True
+        assert (e.step, e.ahead_streak) == (1, 0)
+        with env(HANDOVER_AHEAD_CONFIRM_N="0"):
+            job = main.CheckJob(1, "q", b"", FRAME, e.version)
+            assert not any(e._ahead_confirm_due(job, True, 0.99) for _ in range(6)) and e.step == 1
+        stale = main.CheckJob(0, "q", b"", FRAME, e.version)  # a verdict for a step already left
+        e.ahead_streak = 5
+        assert e._ahead_confirm_due(stale, True, 0.9) is False and e.step == 1
 
 
 def test_mock_ahead_banner_by_default_skip_when_enabled() -> None:
@@ -1310,6 +1526,20 @@ def test_databricks_adapter() -> None:
     assert chk["hub_run_id"] and isinstance(chk["rev"], int) and chk["hub_ts"].endswith("Z")
     assert "run_start" not in names and "run_end" not in names
     assert names[-1] == "upload" and fake.calls[-1] == ("upload", LESSON)
+
+
+def test_databricks_knows_every_engine_event_kind() -> None:
+    """Every event kind the engine emits reaches server.databricks under a kind it knows (no unknown_kind):
+    run_done and run_stop were missing. breaker goes out as check_offline; run_start and run_end come from
+    start_run and end_run. Reads KINDS only; nothing is sent."""
+    import re
+
+    from server import databricks
+
+    emitted = set(re.findall(r'self\.emit\("([a-z_]+)"', Path(main.__file__).read_text("utf-8")))
+    assert {"advance", "check", "mistake", "step_enter", "breaker", "run_done", "run_stop"} <= emitted, emitted
+    sent = {"check_offline" if k == "breaker" else k for k in emitted} | {"run_start", "run_end"}
+    assert sent <= databricks.KINDS, sent - databricks.KINDS
 
 
 def test_run_stops_on_delete_and_shutdown() -> None:

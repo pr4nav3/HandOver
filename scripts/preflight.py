@@ -84,7 +84,9 @@ def run(cmd: list[str], timeout: float = 5.0, cwd: Optional[Path] = None) -> tup
 
 
 def env_file(repo: Path = REPO) -> dict[str, str]:
-    """KEY=VALUE pairs from <repo>/.env, same rules as server/check.py."""
+    """KEY=VALUE pairs from <repo>/.env, same rules as server/databricks.py (_read_env_file): # comments,
+    optional export and quotes; an unquoted value ends at " #", a quoted one at its closing quote. Kept as a
+    copy, not an import, so preflight still runs when the server's imports are broken."""
     out: dict[str, str] = {}
     path = repo / ".env"
     try:
@@ -96,8 +98,20 @@ def env_file(repo: Path = REPO) -> dict[str, str]:
         if not line or line.startswith("#") or "=" not in line:
             continue
         k, v = line.split("=", 1)
-        out[k.strip().removeprefix("export ").strip()] = v.strip().strip('"').strip("'")
+        out[k.strip().removeprefix("export ").strip()] = env_value(v)
     return out
+
+
+def env_value(raw: str) -> str:
+    """One .env value, exactly as server/databricks.py _env_value reads it."""
+    v = raw.strip()
+    if v[:1] in ('"', "'"):
+        end = v.find(v[0], 1)
+        return v[1:end] if end > 0 else v[1:]
+    hash_at = v.find(" #")
+    if hash_at < 0:
+        hash_at = v.find("\t#")
+    return (v[:hash_at] if hash_at >= 0 else v).strip()
 
 
 def is_set(name: str, repo: Path = REPO) -> bool:

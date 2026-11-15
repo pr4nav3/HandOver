@@ -41,7 +41,7 @@
       "end": "00:48",
       "title": "Fold all four corners to center",
       "check_type": "camera",
-      "check_question": "Is the paper a square made of four triangular flaps, with seams running from the center out to each corner?",
+      "check_question": "Have all four corners been folded in so their points meet at the center, leaving a square covered by four triangular flaps whose edges run from the center out to each corner?",
       "prerequisites": [
         3
       ],
@@ -65,7 +65,7 @@
       "end": "01:12",
       "title": "Fold four corners to center again",
       "check_type": "camera",
-      "check_question": "Is the paper a small square with four triangular flaps whose points meet at the center?",
+      "check_question": "Have the four corners been folded in to the center again, leaving a square covered by four triangular flaps whose points meet at the center?",
       "prerequisites": [
         5
       ],

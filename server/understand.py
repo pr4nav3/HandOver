@@ -283,7 +283,13 @@ RUBRIC_SYSTEM = (
     "You write a visual rubric for a camera that watches a learner repeat a hands-on task, one step at a time. "
     "For each step you get its title, the expert's narration (when there is any), the yes or no check question, "
     "and photos from the expert's video: START (as the step begins), MID (halfway) and DONE (finished). "
-    "Describe only what a camera can see: shapes, outlines, colors, which side faces up, layers, positions. "
+    "Describe only what a camera can see: shapes, outlines, corners, folds, seams, layers, which side faces up, "
+    "and where parts sit relative to each other. "
+    "Every cue must hold at any rotation, position and size: the learner's object may be turned to any angle, "
+    "moved, or nearer or farther than in the photos. Describe what changed (corners meet in the middle, a flap "
+    "lies on top, a part stands up), never orientation in the picture (no diamond against square for one shape, "
+    "no left, right, top or bottom of the image) and never size in the picture. "
+    "Do not name colors: the learner's material and light differ. "
     "Never rely on sound, hands, motion or the expert's words alone. "
     "stages: 2 to 4 visible sub-stages in order, from the first visible change after START up to DONE; the last "
     "stage is the finished state. START itself is never a stage: stage 0 is the first visible change. Each has a "
@@ -547,7 +553,9 @@ UNDERSTAND_SYSTEM = (
     "You get the step's rubric (numbered stages with their visible cues, the done cue, and likely mistakes with "
     "their visible signs) and photos from the expert: BEFORE (the end of the previous step, when given), START, "
     "MID and DONE. Then LIVE, the camera now. "
-    "Hands, shadows, background, lighting, rotation, scale and camera angle do not matter. "
+    "Hands, shadows, background, lighting, rotation, scale and camera angle do not matter: the same shape turned "
+    "to any angle, moved, or at another size matches a cue (a square turned 45 degrees looks like a diamond "
+    "and still counts). "
     'First write "seen": at most 8 words on LIVE (outline, orientation, visible parts). '
     'Then "differs": at most 8 words on what LIVE lacks compared with DONE, or "nothing". '
     'Then "stage": the number of the latest stage whose cue is visible in LIVE, or -1 if LIVE still looks like '

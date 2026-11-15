@@ -500,7 +500,8 @@ async def _mock_check(ref_jpeg: bytes, step_started_at: Optional[float]) -> Chec
 RULE = (
     "Answer yes only if every feature in the question is visible in LIVE. "
     "If any feature is missing or hidden answer no or unsure. "
-    "Hands, shadows, background, rotation and scale do not matter."
+    "Hands, shadows, background, rotation and scale do not matter: the same shape turned to any angle, moved, "
+    "or at another size matches DONE (a square turned 45 degrees looks like a diamond and still counts)."
 )
 
 PROMPT = (

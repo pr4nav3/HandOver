@@ -38,7 +38,7 @@ With no lesson: `watching`, `step 0`, `total 0`, `rev 0`.
 
 ### Mistake overlay (live)
 
-Not a status. A separate `mistake` field in `state` (CONTRACT 7), set when the mistake check fires and cleared on step change, `dismiss_mistake`, or a yes on this step. `behind` and `ahead` never move the step; only `HANDOVER_AHEAD_SKIP=1` lets a doubly confirmed `ahead` skip to k+2. With `HANDOVER_LIVE_MISTAKES=1`, understanding can also raise an advisory `live` mistake with a `label`; it never moves the step. See [checks.md](checks.md#5-mistake-check).
+Not a status. A separate `mistake` field in `state` (CONTRACT 7), set when the mistake check fires and cleared on step change, `dismiss_mistake`, or a yes on this step. `behind` never moves the step. `ahead` moves it only in two cases: `HANDOVER_AHEAD_CONFIRM_N` (3) confirmed ahead verdicts in a row for step k+1, each at `HANDOVER_AHEAD_CONFIRM_CONF` (0.8) or more, move it to k+1 with reason `ahead_confirm` (recovery after a missed advance, on by default, never more than one step); and `HANDOVER_AHEAD_SKIP=1` (off) lets a doubly confirmed `ahead` skip to k+2. With `HANDOVER_LIVE_MISTAKES=1`, understanding can also raise an advisory `live` mistake with a `label`; it never moves the step. See [checks.md](checks.md#5-mistake-check).
 
 ### Extra state fields (live, proposed in the contract)
 
@@ -60,6 +60,7 @@ All moves go through `go(to, reason)`.
 | Finish | `to == total` sets done and keeps `step = total - 1` |
 | Order of messages | `advance {from, to, reason}`, then `state` |
 | Reasons | `camera`, `button`, `voice`. Any other reason from a client counts as `button` |
+| Camera recoveries | `ahead_confirm` and `understand_override` are camera advances: clients get reason `camera` (the contract's values, so the chime plays), while the `advance` event, the log line and the `advances_<reason>` counter keep the specific reason, and `run_done.camera_steps` counts them |
 | On every change | Debouncer reset, `last_check` cleared, `verified` and `checking` off, step clock restarted, frames taken before the step began are skipped |
 
 Commands from `/ws/ui`:
@@ -113,15 +114,30 @@ A recut from the command line (`python -m server.teach --recut`) does not tell a
 | No hello | `name: "Camera <n>"`, `platform: "other"`, `source: "unknown"` (never guessed) |
 | `platform` in hello | `ios`, `android`, `web`, `macos`, `windows`, `linux`, `replay`; any other string becomes `other` and the hello still counts |
 | Same `device_id` reconnects | Older socket closed with code 4000 `replaced` |
-| Frames over 2 MB, or closer than 0.2 s (`HANDOVER_MIN_FRAME_GAP`) | Ignored. 0.2 s allows the clients' 2 fps |
+| Frames over 2 MB, or closer than 0.05 s (`HANDOVER_MIN_FRAME_GAP`) | Ignored. 0.05 s lets 15 fps senders through; a 640 px frame at JPEG quality 0.5 is about 30 to 60 KB, far under 2 MB |
 
 Frames stay in memory. The engine never writes them to disk.
+
+## Live picture to viewers
+
+Senders may send 12 to 15 fps at about 640 px for a smooth picture on the big screen. That does not raise AI cost: checks still sample.
+
+| Rule | Detail |
+|---|---|
+| Rate to viewers | At most `HANDOVER_UI_FPS` (15, range 1 to 30) frames per second, always the newest frame |
+| No re-encode | A frame whose long side is already 960 px or less (read from its JPEG header, `jpeg_size`, no decode) is forwarded byte for byte. A larger frame is downscaled to 960 px at quality 75 in a worker thread |
+| No queue | Each viewer keeps only its newest frame (`UIClient.push`) and has its own sender task, so a slow viewer skips frames without delaying the others; a viewer whose send stalls for 5 s is closed with 1011 |
+| Checks | Unchanged: motion gate, heartbeat and a free slot, on the newest frame. Never one check per frame |
+| Gate cost | The gate decodes the newest frame at most every 0.25 s (`GATE_MIN_INTERVAL`), so at most 4 decodes a second however fast the camera sends. With `HANDOVER_GATE=0` nothing is decoded |
+| Counters | `frames_in`, `frames_too_fast`, `frames_gated`, `ui_frames_passthrough`, `ui_frames_downscaled`, `frames_replaced_slow_client` in `Engine.snapshot()["counters"]` (not exposed over HTTP yet) |
+
+Measured with `scripts/latency_bench.py --ui --fps 15` (in-process, newest frame handed to a stand-in viewer): 15 fps in gives 15 fps out. Arrival to viewer is 0.1 ms p50 for a 640 px frame (forwarded as is) and 15 ms p50 for a 1280 px frame (downscaled).
 
 ## Check loop
 
 - Runs only on a camera step, with a camera connected, a readable `ref_frame`, and not during `verified`.
 - Up to `HANDOVER_MAX_INFLIGHT` (2) checks at once, each on a different settled frame; answers are debounced in frame order. See [checks.md](checks.md#3-debounce-and-confirm).
-- With `HANDOVER_UNDERSTAND=1` and a rubric entry for the step, an understanding call runs beside each check on the same frame; the debounce sees yes only when both say yes.
+- With `HANDOVER_UNDERSTAND=1` and a rubric entry for the step, an understanding call runs beside each check on the same frame; the debounce sees yes only when both say yes. Bounded fallback: after `HANDOVER_UNDERSTAND_OVERRIDE_N` (3) check yes answers in a row at `HANDOVER_UNDERSTAND_OVERRIDE_CONF` (0.8) or more while understanding did not say yes, the check's verdict is accepted and the step advances with reason `understand_override` (see [checks.md](checks.md#3-debounce-and-confirm)).
 - If the step changed while a check ran, or the step is already verified, its result is thrown away.
 - A viewer that connects as `/ws/ui?frames=0` (a phone that is itself the camera) gets all text messages and no live frames.
 - `state` from check results goes out only when it differs from the last state sent, so two checks giving the same answer send one state. Commands (`select_lesson` and the rest) always get their state.
@@ -148,10 +164,13 @@ What this shows:
 |---|---|---|
 | `VERIFIED_HOLD` | 0.8 s (`HANDOVER_VERIFIED_HOLD`) | `main.py` |
 | `CHECKING_SHOW_AFTER` | 1.5 s | `main.py` |
-| `UI_FRAME_MIN_INTERVAL` | 0.25 s (at most 4 frames per second to viewers) | `main.py` |
-| `UI_FRAME_MAX_SIDE` | 960 px, JPEG quality 75 | `main.py` |
+| UI frame rate | 15 per second at most (`HANDOVER_UI_FPS`) | `main.py` |
+| `GATE_MIN_INTERVAL` | 0.25 s (the motion gate decodes at most 4 frames per second) | `main.py` |
+| `UI_FRAME_MAX_SIDE` | 960 px; smaller frames go out as is, larger ones are re-encoded at JPEG quality 75 | `main.py` |
 | Viewer frame drop | When a viewer has more than 2 queued messages | `main.py`, `UIClient.push` |
 | Check timeout | 3 s (`HANDOVER_CHECK_TIMEOUT`) | `check.py` |
 | Debounce | 2 yes at 0.8 or more on different frames, or one yes at 0.92 (`HANDOVER_DEBOUNCE_N`, `HANDOVER_MIN_CONF`, `HANDOVER_FAST_CONF`) | `main.py`, `FrameDebouncer` |
 | Checks at once | 2 (`HANDOVER_MAX_INFLIGHT`) | `main.py` |
+| Ahead recovery | 3 confirmed ahead verdicts in a row at 0.8 or more (`HANDOVER_AHEAD_CONFIRM_N`, `HANDOVER_AHEAD_CONFIRM_CONF`) | `main.py`, `_ahead_confirm_due` |
+| Understanding fallback | 3 check yes answers in a row at 0.8 or more while understanding says no (`HANDOVER_UNDERSTAND_OVERRIDE_N`, `HANDOVER_UNDERSTAND_OVERRIDE_CONF`) | `main.py`, `_override_due` |
 | Active camera silence | 5 s | `main.py` |

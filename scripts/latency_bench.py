@@ -21,6 +21,10 @@ or more advances), the same with an answer below the fast-path bar, and the same
 (a stand-in understanding call of the same latency beside each check; both must say yes). A last row shows a knob this
 change does not touch (HANDOVER_GATE_STILL_FRAMES=1) for comparison only.
 
+--ui measures the live picture instead: frames go to the engine at --fps (use 15, as the new senders) for a few
+seconds, and it reports how many reach a stand-in viewer (at most HANDOVER_UI_FPS), and the time from a frame
+arriving to it being handed to the viewer, for a 640 px frame (forwarded as is) and a 1280 px frame (downscaled).
+
 Prints a table and writes scripts/out/latency-<time>.md. --code points at another checkout's folder (one
 that holds server/) to measure older code the same way; unknown settings are then simply ignored.
 """
@@ -198,6 +202,64 @@ def fmt(vals: list[float]) -> str:
     return f"{statistics.median(vals):.2f} / {p(vals, 0.9):.2f}"
 
 
+async def ui_trial(main, frame: bytes, fps: float, seconds: float) -> tuple[int, int, list[float]]:
+    """Frames sent, frames handed to the viewer, and arrival-to-viewer delays in seconds (newest frame each)."""
+    engine = main.Engine()
+    main.engine = engine
+    arrived: dict[int, float] = {}  # engine frame number -> when it arrived
+    delays: list[float] = []
+
+    class Viewer:
+        frames = True
+
+        def push(self, msg) -> None:
+            if isinstance(msg, bytes) and engine.frame_seq in arrived:
+                delays.append(time.monotonic() - arrived[engine.frame_seq])
+
+    engine.ui.add(Viewer())  # type: ignore[arg-type]
+    loop_task = asyncio.create_task(engine.ui_frame_loop())
+    sent = 0
+    start = time.monotonic()
+    while time.monotonic() - start < seconds:
+        engine.on_frame(frame)
+        sent += 1
+        arrived[engine.frame_seq] = time.monotonic()
+        await asyncio.sleep(1 / fps)
+    await asyncio.sleep(0.2)
+    loop_task.cancel()
+    return sent, len(delays), delays
+
+
+def ui_bench(a) -> int:
+    tmp = Path(tempfile.mkdtemp(prefix="handover-latency-"))
+    isolate(tmp)
+    sys.path.insert(0, str(a.code.resolve()))
+    from server import config, main  # noqa: E402
+
+    seconds = 4.0
+    rows = []
+    try:
+        for label, size in (("640 px, forwarded as is", (640, 360)), ("1280 px, downscaled to 960", (1280, 720))):
+            sent, got, delays = asyncio.run(ui_trial(main, jpeg(DONE_COLOR, size), a.fps, seconds))
+            rows.append(f"| {label} | {sent / seconds:.1f} | {got / seconds:.1f} | "
+                        f"{p(delays, 0.5) * 1000:.1f} / {p(delays, 0.9) * 1000:.1f} |")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    stamp = dt.datetime.now()
+    text = "\n".join([f"# UI frame bench, {stamp:%Y-%m-%d %H:%M:%S}", "",
+                      f"- In-process engine, frames sent at {a.fps:g} fps for {seconds:g} s, "
+                      f"HANDOVER_UI_FPS {config.get('HANDOVER_UI_FPS')}",
+                      "- Delay: frame arriving to it being handed to the viewer's sender (newest frame only), "
+                      "p50 / p90 in ms", "",
+                      "| Frame | Sent fps | To viewer fps | Delay p50 / p90 (ms) |", "|---|---|---|---|", *rows, ""])
+    print(text)
+    OUT.mkdir(parents=True, exist_ok=True)
+    out = OUT / f"latency-ui-{stamp:%Y%m%d-%H%M%S}.md"
+    out.write_text(text, encoding="utf-8")
+    print(f"Report: {out}")
+    return 0
+
+
 def main_cli() -> int:
     ap = argparse.ArgumentParser(prog="scripts/latency_bench.py", description=__doc__.split("\n\n")[0])
     ap.add_argument("--trials", type=int, default=8, help="trials per config (default 8)")
@@ -206,9 +268,12 @@ def main_cli() -> int:
     ap.add_argument("--seed", type=int, default=7, help="random seed for the camera phase (default 7)")
     ap.add_argument("--code", type=Path, default=REPO, help="folder that holds server/ (default this repo)")
     ap.add_argument("--only", type=int, nargs="*", help="run only these config rows (1-based)")
+    ap.add_argument("--ui", action="store_true", help="measure the live picture to viewers instead (use --fps 15)")
     a = ap.parse_args()
     if a.trials < 1 or a.fps <= 0:
         ap.error("--trials must be 1 or more and --fps above 0")
+    if a.ui:
+        return ui_bench(a)
 
     tmp = Path(tempfile.mkdtemp(prefix="handover-latency-"))
     latency = mock_latency_s()

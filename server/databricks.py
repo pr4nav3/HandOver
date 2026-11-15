@@ -72,7 +72,8 @@ LESSON_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")  # CONTRACT.md se
 MAX_RETRIES = 3  # a failed batch is retried this many times, then dropped (the JSONL keeps it)
 HTTP_TIMEOUT = 45.0  # wait_timeout is 30 s on the server side
 IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
-KINDS = {"run_start", "run_end", "step_enter", "check", "advance", "mistake", "check_offline"}
+KINDS = {"run_start", "run_end", "run_done", "run_stop", "step_enter", "check", "advance", "mistake",
+         "check_offline"}
 
 
 # ---------------------------------------------------------------- config (read at import, no side effects)

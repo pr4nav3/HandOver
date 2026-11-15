@@ -29,7 +29,7 @@
       "end": "00:39",
       "title": "Unscrew the nut three to four turns",
       "check_type": "camera",
-      "check_question": "Is the nut on the far side backed off, with a gap between it and the fork end?",
+      "check_question": "Is the nut on the side opposite the lever backed off, with a gap between it and the fork end?",
       "prerequisites": [
         2
       ],
@@ -54,7 +54,7 @@
       "end": "01:05",
       "title": "Lower the fork onto the axle",
       "check_type": "camera",
-      "check_question": "Is the axle seated at the top of both fork ends, with the wheel centered between the fork blades?",
+      "check_question": "Is the axle seated all the way into the slots of both fork ends, with the wheel centered between the fork blades?",
       "prerequisites": [
         4
       ],

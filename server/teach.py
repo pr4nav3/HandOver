@@ -152,7 +152,8 @@ For each step give:
 - check_question: one yes/no question about the visible state of the object right after the step is done,
   answerable from a single camera photo, for example "Is the paper a smaller square with four triangular
   flaps meeting at the center?". A "yes" must mean the step is done. Describe the state by shape, outline,
-  number of corners, flaps, folds or seams, and which way the object faces. Never use color: the learner's
+  number of corners, flaps, folds or seams, and which side is up. It must hold at any rotation, position
+  and size: the learner's camera sees the object at its own angle. Never use color: the learner's
   material and light may differ. The question must tell this step's result apart from the previous step's
   result. If the result of the step cannot be seen in a photo (for example a crease that is made and then
   unfolded, a felt tension, a sound, a smell), write exactly: manual
@@ -513,7 +514,7 @@ COLOR_WORDS = {
 _COLOR_RE = "|".join(sorted(COLOR_WORDS, key=len, reverse=True))
 _COLOR_STRIP = re.compile(rf"\b(?:{_COLOR_RE})(?:-colou?red)?\b\s*", re.IGNORECASE)
 REPHRASE_PROMPT = """Rewrite each yes/no check question below so it asks about shape, outline, layers, flaps or which
-side faces up, never color. Keep each one a yes/no question about the same finished state of the step, one
+side faces up, never color or rotation. Keep each one a yes/no question about the same finished state of the step, one
 sentence ending in "?". Return every question by its number."""
 
 
