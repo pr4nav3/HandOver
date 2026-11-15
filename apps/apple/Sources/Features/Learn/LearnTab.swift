@@ -89,9 +89,6 @@ struct LearnRunScreen: View {
                   onClose: { end() }, onLibrary: { end() }, onChangeCamera: { flow.changeCamera() },
                   notice: notice, ownChip: ownChip, clips: clips)
             .task(id: runKey) { await run() }
-            .onChange(of: flow.glasses?.frame) { _, frame in
-                if active == .glasses, let frame { glassesSender.push(frame) }
-            }
             .onChange(of: flow.glasses?.state) { _, state in
                 guard active == .glasses, let state, GlassesFallback.shouldFallBack(state) else { return }
                 fellBack = true
@@ -110,6 +107,7 @@ struct LearnRunScreen: View {
     private func stopAll() {
         phone.stop()
         glassesSender.stop()
+        flow.glasses?.onFrame = nil
     }
 
     /// Starts the chosen camera and stops the other. Runs again when the camera or the app's state changes.
@@ -124,10 +122,14 @@ struct LearnRunScreen: View {
             stopAll()
         case .phone:
             glassesSender.stop()
+            flow.glasses?.onFrame = nil
             await phone.start { model.makeCameraSocket(source: .phone) }
         case .glasses:
             phone.stop()
             let glasses = flow.glassesController()
+            // Frames go straight to the sender; this screen does not redraw for each one.
+            let sender = glassesSender
+            glasses.onFrame = { sender.push($0) }
             if !glasses.state.isStreaming && !glasses.state.isBusy { glasses.connect() }
             await glassesSender.startPushing { model.makeCameraSocket(source: .glasses) }
             // No video from the glasses in time: use the phone camera and say so.
@@ -143,10 +145,10 @@ struct LearnRunScreen: View {
             return AnyView(Image(decorative: stillCamera, scale: 1).resizable().aspectRatio(contentMode: .fit))
         }
         if active == .glasses {
-            if let frame = flow.glasses?.frame {
-                return AnyView(Image(decorative: frame, scale: 1).resizable().aspectRatio(contentMode: .fit))
+            guard let glasses = flow.glasses else {
+                return AnyView(TilePlaceholder(symbol: "eyeglasses", text: "Connecting to glasses"))
             }
-            return AnyView(TilePlaceholder(symbol: "eyeglasses", text: "Connecting to glasses"))
+            return AnyView(GlassesTile(glasses: glasses))
         }
         switch phone.phase {
         case .streaming:
@@ -207,6 +209,19 @@ struct LearnRunScreen: View {
             NSWorkspace.shared.open(url)
         }
         #endif
+    }
+}
+
+/// The glasses' newest frame in the tile. The only view that reads the frame, so each one redraws just this.
+private struct GlassesTile: View {
+    var glasses: GlassesController
+
+    var body: some View {
+        if let frame = glasses.frame {
+            Image(decorative: frame, scale: 1).resizable().aspectRatio(contentMode: .fit)
+        } else {
+            TilePlaceholder(symbol: "eyeglasses", text: "Connecting to glasses")
+        }
     }
 }
 

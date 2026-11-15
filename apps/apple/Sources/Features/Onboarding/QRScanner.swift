@@ -12,6 +12,9 @@ struct QRCameraView {
         private var lastCode: String?
         private let preview = AVCaptureVideoPreviewLayer()
 
+        /// Session work (inputs, outputs, start and stop) runs in order on this queue, never on the main thread.
+        private let sessionQueue = DispatchQueue(label: "com.handover.qr.session", qos: .userInitiated)
+
         func start() {
             #if os(macOS)
             wantsLayer = true
@@ -20,25 +23,36 @@ struct QRCameraView {
             layer.addSublayer(preview)
             #endif
             preview.videoGravity = .resizeAspectFill
+            // Joined before the camera is added, so the preview's connection forms on the session queue.
             preview.session = session
-            guard let device = CameraCapture.defaultDevice(),
-                  let input = try? AVCaptureDeviceInput(device: device), session.canAddInput(input) else { return }
-            session.addInput(input)
+            guard let device = CameraCapture.defaultDevice() else { return }
             #if os(iOS)
             followRotation(of: device)
             #endif
             let output = AVCaptureMetadataOutput()
-            guard session.canAddOutput(output) else { return }
-            session.addOutput(output)
             output.setMetadataObjectsDelegate(self, queue: .main)
-            if output.availableMetadataObjectTypes.contains(.qr) { output.metadataObjectTypes = [.qr] }
-            let box = SessionBox(session: session)
-            DispatchQueue.global(qos: .userInitiated).async { box.session.startRunning() }
+            let parts = SessionParts(session: session, device: device, output: output)
+            sessionQueue.async { [weak self] in
+                let session = parts.session
+                guard let input = try? AVCaptureDeviceInput(device: parts.device) else { return }
+                session.beginConfiguration()
+                guard session.canAddInput(input) else { session.commitConfiguration(); return }
+                session.addInput(input)
+                guard session.canAddOutput(parts.output) else { session.commitConfiguration(); return }
+                session.addOutput(parts.output)
+                if parts.output.availableMetadataObjectTypes.contains(.qr) { parts.output.metadataObjectTypes = [.qr] }
+                session.commitConfiguration()
+                session.startRunning()
+                #if os(iOS)
+                // The preview's connection exists now; turn it to the angle that may have arrived before it.
+                DispatchQueue.main.async { MainActor.assumeIsolated { self?.applyAngle() } }
+                #endif
+            }
         }
 
         func stop() {
             let box = SessionBox(session: session)
-            DispatchQueue.global(qos: .userInitiated).async { box.session.stopRunning() }
+            sessionQueue.async { box.session.stopRunning() }
         }
 
         /// Lets the same code be read again (after a bad code was dismissed).
@@ -70,7 +84,7 @@ struct QRCameraView {
             })
         }
 
-        private func applyAngle() {
+        fileprivate func applyAngle() {
             guard let angle else { return }
             preview.connection?.apply(rotation: angle)
         }
@@ -88,6 +102,13 @@ struct QRCameraView {
     }
 
     private struct SessionBox: @unchecked Sendable { let session: AVCaptureSession }
+
+    /// The capture objects handed to the session queue, which is the only place that touches them after setup.
+    private struct SessionParts: @unchecked Sendable {
+        let session: AVCaptureSession
+        let device: AVCaptureDevice
+        let output: AVCaptureMetadataOutput
+    }
 }
 
 #if os(macOS)

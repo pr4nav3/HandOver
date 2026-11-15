@@ -149,16 +149,22 @@ At teach time each step's question is asked against its own reference (expect ye
 .venv/bin/python -m server.voice lessons/<id> --dry-run          # write and print the script only
 .venv/bin/python -m server.voice lessons/<id> --mode auto        # replace when the take has no narration, else duck
 .venv/bin/python -m server.voice lessons/<id> --undo             # put the original clips and captions back
+.venv/bin/python -m server.voice lessons/<id> --script lessons/<id>/review/voice.json --mode replace
+.venv/bin/python -m server.voice --cues web/public/voice         # the Learn screen's spoken cues
+.venv/bin/python -m server.voice --audition "TEXT" --voices af_heart,af_bella,am_adam --out DIR [--speed 0.95]
 ```
 
 | Part | How |
 |---|---|
-| Script | One Claude call (`HANDOVER_VOICE_SCRIPT_MODEL`, default Haiku) with each step's title, question, tip, a middle frame and the reference frame. One or two calm, concrete sentences per step, at most 2.5 words per second of clip and never more than 22 words. Fix the wording in `SYSTEM` in voice.py, not in the output |
-| Speech | Kokoro (kokoro-onnx, CPU), voice `HANDOVER_VOICE` (af_heart). Model files (354 MB) download once to `~/.cache/handover/kokoro`; espeak-ng comes from the espeakng-loader wheel, so nothing else to install on Windows. macOS `say` is the fallback on a Mac only |
+| Hand-written | `--script FILE`, `{"steps": {"1": "line", "2": "line"}}` with 1-based step numbers. Each line is cleaned and split like Claude's; a line over its clip's word limit is kept whole and the overflow printed. Steps not in the file get Claude's script, or their title with `HANDOVER_NO_NETWORK=1` (no Claude call at all then) |
+| Script | One Claude call (`HANDOVER_VOICE_SCRIPT_MODEL`, default Haiku) with each step's title, question, tip, a middle frame and the reference frame. One or two calm, concrete sentences per step, a calm coach's warmth, contractions allowed, no exclamation marks or praise words, at most 2.5 words per second of clip and never more than 22 words. Fix the wording in `SYSTEM` in voice.py, not in the output |
+| Speech | Kokoro (kokoro-onnx, CPU), voice `HANDOVER_VOICE` (af_heart). Model files (354 MB) download once to `~/.cache/handover/kokoro`; espeak-ng comes from the espeakng-loader wheel, so nothing else to install on Windows. macOS `say` is the fallback on a Mac only. Speed `HANDOVER_VOICE_SPEED` (default 0.95); sentences are spoken one at a time with 0.35 s between them |
+| Provider | `HANDOVER_TTS_PROVIDER=kokoro` (default) or `elevenlabs`: `ELEVENLABS_API_KEY` (environment or `.env`), voice `HANDOVER_ELEVEN_VOICE` (default Sarah, `EXAVITQu4vr4xnSDxMaL`), `HANDOVER_ELEVEN_MODEL` (`eleven_multilingual_v2` or `eleven_turbo_v2_5`). Decoded to the same WAV, so mixing, captions and cues are unchanged. No key, `HANDOVER_NO_NETWORK=1` or a failed call logs one line and uses Kokoro |
+| Cues | `--cues web/public/voice` writes the six Learn cues (`APP_CUES` in voice.py, same lines in `web/src/cues.ts`) as mono 48 kbps mp3, each under 20 KB, in the lesson voice. Vite copies them to `web/dist/voice/`; Learn plays `/voice/<name>.mp3` and falls back to browser speech when a file is missing |
 | Mix | `duck`: take audio at -18 dB under the voice; `replace`: voice only. Voice normalized to -16 LUFS |
 | Captions | `captions/NN.vtt` rewritten with one cue per spoken sentence, timed from the synthesized audio |
 | Undo | `clips/NN.orig.mp4` and `captions/NN.orig.vtt` keep the originals; `--undo` restores them and removes the field |
-| lesson.json | Top-level `voiceover: {engine, voice, model, script_model, mode}` |
+| lesson.json | Top-level `voiceover: {engine, voice, model, tts, script_model, mode, steps}`; `tts` is `kokoro:<voice>` or `elevenlabs:<voice id>`, `steps` is `{"1": {"script_source": "file" \| "claude" \| "title"}}` per voiced step |
 
 A recut (CLI or hub) drops the `voiceover` field and the backups, because the recut clips carry the take's own audio: run the voiceover again after every recut (`make_lesson.ps1` does).
 
