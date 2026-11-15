@@ -319,7 +319,11 @@ data class SelectLessonCommand(val id: String, val token: String? = null, val ty
 data class DismissMistakeCommand(val type: String = "dismiss_mistake")
 
 @Serializable
-data class EndLessonCommand(val type: String = "end_lesson")
+data class EndLessonCommand(
+    @SerialName("lesson_id") val lessonId: String? = null,
+    @SerialName("run_id") val runId: String? = null,
+    val type: String = "end_lesson",
+)
 
 // ---------------------------------------------------------------- timestamps
 

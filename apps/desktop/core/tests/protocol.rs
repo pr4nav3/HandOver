@@ -199,7 +199,11 @@ fn client_messages_match_contract() {
     assert_eq!(ClientMessage::Back { from: Some(2) }.to_json(), r#"{"type":"back","from":2}"#);
     assert_eq!(ClientMessage::Goto { step: 0 }.to_json(), r#"{"type":"goto","step":0}"#);
     assert_eq!(ClientMessage::DismissMistake.to_json(), r#"{"type":"dismiss_mistake"}"#);
-    assert_eq!(ClientMessage::EndLesson.to_json(), r#"{"type":"end_lesson"}"#);
+    assert_eq!(ClientMessage::EndLesson { lesson_id: None, run_id: None }.to_json(), r#"{"type":"end_lesson"}"#);
+    assert_eq!(
+        ClientMessage::EndLesson { lesson_id: Some("l".into()), run_id: Some("r".into()) }.to_json(),
+        r#"{"type":"end_lesson","lesson_id":"l","run_id":"r"}"#
+    );
 }
 
 #[test]
