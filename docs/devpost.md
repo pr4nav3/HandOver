@@ -4,7 +4,7 @@ BEFORE YOU PASTE (delete this comment; it is not for Devpost)
 1. Search this file for "[[" and fill or delete every placeholder. The full list is in "Submission checklist" at the bottom.
 2. Lines marked IF: keep only if the condition is true at submit time, then delete the IF marker.
 3. Rule check: no "first", no "only", no savings figure, no user count, no past winners, competitors are Dozuki and Retrocausal and nobody else. Every number below comes from the repo or is a placeholder.
-4. Model names: the live check runs on Claude Haiku when an Anthropic key is in .env (HANDOVER_CHECK_PROVIDER=auto), Gemini otherwise. Confirm which one the demo hub shows in state.check_mode before pasting. docs/pitch.md still says Gemini for checks; the two must match on judging day.
+4. Model names: the live check runs on Claude Haiku when an Anthropic key is in .env (HANDOVER_CHECK_PROVIDER=auto), Gemini otherwise. Confirm which one the demo hub shows in state.check_mode before pasting. docs/pitch.md uses the same wording; keep the two matching on judging day.
 -->
 
 # Devpost fields (paste these first)
@@ -92,13 +92,14 @@ HandOver has two sides.
 | Hub on a Windows laptop, Learn screen in Chrome | Native iPhone, iPad and Mac app (250 tests) |
 | Learner camera: a phone on the capture page [[IF GLASSES: or Meta glasses]] | Android app (306 tests) and Tauri desktop app (33 tests) |
 | Fortune teller lesson, folded by the judge, advanced by real model checks | Glasses as the live learner camera: the toolkit code compiles, but streaming from the iPhone needs a paid Apple Developer team, and a free team was rejected [[delete if the glasses were demoed live]] |
-| Teach view of the [[bike lesson / fortune teller]] lesson, clips playing | Produced course videos (`server/produce.py`) |
-| [[IF CATCH: the skipped-step catch named on screen and spoken]] | Accounts, courses, organizations and the lesson editor (switched off in the demo build) |
+| Teach view of the fortune teller lesson, clips playing | Produced course videos (`server/produce.py`) |
+| [[IF CATCH: the skipped-flip catch named on screen and spoken]] | Accounts, courses, organizations and the lesson editor (switched off in the demo build) |
 | Done screen with time per step against the expert | Understanding mode (a per-step rubric as a second vote), behind a switch and off by default |
 | [[IF DBX: Databricks dashboard and one Genie answer, from our own rehearsal runs]] | Skipping ahead two steps on an "ahead" verdict: built, off by default because a wrong skip is worse than a missed catch |
 | Fallbacks, if needed: a replay with a visible Recording tag, "Checks off, use Next" | |
+| [[IF BIKE REC: Showcase, pre-recorded and labeled Recording: the bike front wheel check lesson, with a learner closing the quick release the wrong way and the warning spoken]] | |
 
-Lessons on disk are cut from our own takes. [[Say whether any step boundary or question was fixed by hand.]] The fortune teller lesson in the repo has [[3]] of [[9]] steps checked by the camera; the rest are manual by design.
+Lessons on disk are cut from our own takes. [[Say whether any step boundary or question was fixed by hand.]] The fortune teller lesson in the repo has [[3]] of [[9]] steps checked by the camera; the rest are manual by design. At the table the judge starts at step 5 on paper we pre-folded through step 4, so a visit fits in four minutes. The bike front wheel check is the showcase: a recording, not done live.
 
 ## Challenges we ran into
 
@@ -175,8 +176,8 @@ The hub never saves your camera frames. It keeps the newest frame in memory, ask
 - [ ] [[CATCH RATE]]: planted skipped steps caught out of the number tried. If not run, delete the bullet.
 - [ ] [[IF GLASSES]]: glasses used as the live learner camera? If not, delete; if yes, also delete the "paid Apple team" row.
 - [ ] [[IF CATCH]] and [[IF DBX]]: keep only what was shown working on the demo laptop.
-- [ ] [[bike lesson / fortune teller]]: which lesson the Teach view shows. `front-wheel-v1` is not in the repo yet.
-- [ ] [[3]] of [[9]]: camera-checked steps in the demo lesson (today's `fortune-teller-v1` has 3 of 9; update if a v2 replaces it).
+- [ ] Teach view shows the fortune teller (the live demo). The bike is the pre-recorded showcase: keep the [[IF BIKE REC]] row only if `front-wheel-v1` and its recording play on the demo laptop.
+- [ ] [[3]] of [[9]]: camera-checked steps in the demo lesson (today's `fortune-teller-v1` has 3 of 9; Soham's v2 template plans 7 of 9, steps 4 and 8 manual [[confirm after v2 is cut]]).
 - [ ] Hand edits: say whether any step boundary or question was fixed by hand.
 - [ ] [[confirm which provider cut the demo lessons]] (Gemini or Claude), and the check provider shown in `state.check_mode`.
 - [ ] Tagline: keep "on Meta glasses" only if the demo lessons were recorded on the glasses.
